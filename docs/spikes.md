@@ -56,6 +56,10 @@ Aun así el plugin usa hooks `command` (`emit.sh`) y no `http`. Motivo: un hook 
 
 En la captura con Haiku 5.5 en `-p` no aparecieron con ninguna de las tres vías. Sin esas herramientas no hay lista de tareas compartida ni evento `TaskCompleted`, y la puerta de tests no se dispara nunca. `office.sh` exporta `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` en todas las sesiones de la oficina; el spike 4 tiene que confirmar en una sesión interactiva que el jefe de planta ve `TaskCreate`.
 
+### Marketplace local
+
+La documentación de marketplaces dice que un marketplace añadido desde un directorio local con `source` relativo lee los ficheros del plugin en vivo: los cambios valen en la siguiente sesión o tras `/reload-plugins`. El modo `office.sh --dev` del plan (cargar además `--plugin-dir`) no hace falta y duplicaría los hooks, así que no existe.
+
 ### 5. `claude agents --json`
 
 Lista también las sesiones interactivas (`"kind": "interactive"`), con `sessionId`, `name`, `cwd`, `status` (`waiting`, `busy`, `idle`) y `waitingFor` (`permission prompt`, `input needed`). Sirve de plan B para el direccionamiento.
@@ -72,6 +76,6 @@ brew upgrade --cask claude-code
 
 Requieren `bun run setup` hecho y `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`. Con el hub arrancado (`bun run hub`), cada evento queda en `~/.config/agent-office/office.db` y, con `AGENT_OFFICE_RAW=1`, en `hub/test/fixtures/raw/`.
 
-3. Roles: `cd ~/Projects/mobile && CLAUDE_CODE_ENABLE_TODO_TOOLS=1 AGENT_OFFICE_ROLE=office-lead-mobile claude --agent office-lead-mobile --name lead-mobile`. Pedir "spawn a teammate using the office-dev-mobile agent type". Mirar `~/.claude/teams/*/config.json` y si los eventos del teammate traen `team_name` y `agent_type`.
+3. Roles: `bun run office`, o a mano `~/.config/agent-office/sessions/lead-mobile.sh`. Pedir "spawn a teammate using the office-dev-mobile agent type". Mirar `~/.claude/teams/*/config.json` y si los eventos del teammate traen `team_name` y `agent_type`. Confirmar también que `--agent office:director` arranca el agente del plugin (con prefijo) en `~/.config/agent-office/sessions/director.sh`.
 4. Identidad y dueño: en esa sesión, crear una tarea, asignarla al teammate y cerrarla. Confirmar que `TaskCreate` existe, la forma de `tool_input` de `TaskUpdate` (`taskId`, `owner`, `status`) y los campos de `TaskCreated` y `TaskCompleted`.
 5. Topología: director en `workspace/` y dos jefes de planta; el director escribe a `lead-mobile` por nombre. Comprobar si un teammate in-process aparece en `ListAgents` de otra sesión.
