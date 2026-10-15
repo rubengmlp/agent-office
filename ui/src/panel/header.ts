@@ -28,7 +28,7 @@ export function mountHeader(host: HTMLElement, store: Store): void {
         el('span', 'chip', floor?.label ?? agent.floor),
         el('span', 'muted', since),
       ),
-      agent.detail ? el('p', 'panel-detail', agent.detail) : null,
+      ...(agent.detail ? [el('p', 'panel-detail', agent.detail)] : []),
     );
   });
 }
