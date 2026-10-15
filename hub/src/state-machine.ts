@@ -37,7 +37,7 @@ export type Classified = {
   ended: boolean;
   sessionEnded: boolean;
   spawnCall: SpawnCall | null;
-  spawned: { toolUseId: string; agentId: string } | null;
+  spawned: { toolUseId: string; agentId: string; teammate: boolean } | null;
   task: TaskInfo | null;
   teammate: string | null;
   team: string | null;
@@ -60,6 +60,7 @@ export const READ_TOOLS = new Set([
 ]);
 export const SPAWN_TOOLS = new Set(['Agent', 'Task']);
 export const BLOCK_PREFIX = /^\s*BLOQUEADO\s*:/i;
+export const DONE_PREFIX = /^\s*HECHO\s*:/i;
 
 export function text(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null;
@@ -274,7 +275,7 @@ function postTool(base: Classified, e: HookEvent, input: Record<string, unknown>
     const agentId = idText(response.agentId) ?? idText(response.agent_id);
     return {
       ...base,
-      spawned: agentId && e.tool_use_id ? { toolUseId: e.tool_use_id, agentId } : null,
+      spawned: agentId && e.tool_use_id ? { toolUseId: e.tool_use_id, agentId, teammate: response.status === 'teammate_spawned' } : null,
       summary: 'subagente en marcha',
     };
   }

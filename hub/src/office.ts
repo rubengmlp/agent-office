@@ -17,7 +17,7 @@ import { publicDetail, publicSummary, publicText, storedPayload } from './privac
 import { detectStack, profileFor, type Profiles } from './profiles';
 import { QuestionDesk, parseQuestions } from './questions';
 import { inOfficeScope, isLeadRole, roleKind } from './scope';
-import { classify, idText, record, short, text, type Classified, type SpawnCall } from './state-machine';
+import { DONE_PREFIX, classify, idText, record, short, text, type Classified, type SpawnCall } from './state-machine';
 import type {
   ActivityView,
   AgentState,
@@ -42,6 +42,8 @@ type AgentRuntime = {
   parentKey: string | null;
   name: string | null;
   role: string | null;
+  spawnType: string | null;
+  teammate: boolean;
   team: string | null;
   floor: string;
   floorKind: FloorKind;
@@ -109,6 +111,7 @@ const MAX_MESSAGES = 200;
 const FORGET_ENDED_MS = 10 * 60_000;
 const RESTORE_WINDOW_MS = 24 * 60 * 60_000;
 const MAX_SPAWNS = 500;
+const TEAM_CACHE_MS = 5000;
 const EMPTY_META: HookMeta = { socket: null, token: null, role: null, name: null };
 
 export function isHookEvent(value: unknown): value is HookEvent {
@@ -129,9 +132,11 @@ export class Office {
   private readonly sessions = new Map<string, SessionRuntime>();
   private readonly spawnCalls = new Map<string, SpawnCall>();
   private readonly spawnedAgents = new Map<string, SpawnCall>();
+  private readonly teammateIds = new Map<string, true>();
   private readonly activity: ActivityView[] = [];
   private readonly messages: MessageView[] = [];
   private readonly listeners = new Set<(msg: ServerMessage) => void>();
+  private readonly teamCache = new Map<string, { at: number; members: Record<string, unknown>[] }>();
   private readonly now: () => number;
   private readonly deliverFn: typeof deliver;
   private readonly sql: ReturnType<typeof prepare>;
@@ -185,19 +190,29 @@ export class Office {
     const session = this.touchSession(e, meta, now);
     const kind = session.floorKind;
     const c = classify(e, profileFor(this.profiles, session.stack));
+    if (c.event === 'SubagentStop' && !this.agents.has(c.agentKey)) {
+      this.sql.insertEvent.run(now, e.session_id, c.agentKey, session.floor, c.event, null, null, null, storedPayload(e, kind));
+      return;
+    }
     const agent = this.touchAgent(e, c, session, now);
 
     let nextState = c.state;
+    let ended = c.ended;
+    if (c.event === 'SubagentStop' && agent.teammate) {
+      nextState = 'idle';
+      ended = false;
+    }
     if (nextState === null && (c.event === 'PostToolUse' || c.event === 'PostToolUseFailure') && agent.state === 'asking') {
       nextState = 'working';
     }
-    if (c.ended) agent.endedAt = now;
+    if (ended) agent.endedAt = now;
     else if (agent.endedAt !== null) agent.endedAt = null;
     if (nextState && nextState !== agent.state) {
       agent.state = nextState;
       agent.stateSince = now;
     }
-    if (c.detail) agent.detail = publicDetail(c, kind);
+    if (c.event === 'SubagentStop' && agent.teammate) agent.detail = 'esperando';
+    else if (c.detail) agent.detail = publicDetail(c, kind);
     if (c.tool && c.event === 'PreToolUse') agent.tool = c.tool;
     if (c.blocked) agent.blockedReason = kind === 'observed' ? 'bloqueado' : c.blocked;
     else if (c.unblock) agent.blockedReason = null;
@@ -294,6 +309,34 @@ export class Office {
     return decision;
   }
 
+  gateMessage(e: HookEvent): GateDecision {
+    if (!isHookEvent(e) || e.tool_name !== 'SendMessage') return { pass: true, reason: 'no es un mensaje' };
+    const body = text(record(e.tool_input).message) ?? '';
+    if (!DONE_PREFIX.test(body)) return { pass: true, reason: 'no es un aviso de fin' };
+    const now = this.now();
+    const session = this.touchSession(e, EMPTY_META, now);
+    const senderRole = text(e.agent_type) ?? this.agents.get(e.agent_id ?? e.session_id)?.role ?? session.role;
+    if (!isLeadRole(senderRole)) return { pass: true, reason: 'solo cuenta el aviso de un jefe de planta' };
+    const team = teamOfSession(session.sessionId);
+    const decision = decideGate({
+      officeTeam: true,
+      floorManaged: session.floorKind === 'managed',
+      owner: null,
+      lastOwnerEdit: this.lastEdit(session.floor, this.ownerKeys(null, team, session)),
+      lastTesterGreen: this.sql.lastTesterGreen.get(session.floor)?.ts ?? null,
+    });
+    this.sql.insertGate.run(now, team, null, decision.pass ? 'pass' : 'block', decision.reason);
+    this.pushActivity({
+      ts: now,
+      agentKey: e.agent_id ?? session.sessionId,
+      event: 'GateMessage',
+      tool: 'SendMessage',
+      state: null,
+      summary: decision.pass ? `aviso de fin aceptado: ${short(body, 60)}` : 'aviso de fin bloqueado: falta tester',
+    });
+    return decision;
+  }
+
   async order(sessionId: string, body: string): Promise<OrderResult> {
     const session = this.sessions.get(sessionId);
     if (!session || session.endedAt !== null) return 'not-found';
@@ -383,6 +426,11 @@ export class Office {
         changed = true;
       }
     }
+    const title = text(e.session_title);
+    if (title && !session.name) {
+      session.name = title;
+      changed = true;
+    }
     const team = text(e.team_name);
     if (team && team !== session.team) {
       session.team = team;
@@ -415,6 +463,8 @@ export class Office {
         parentKey: c.parentKey,
         name: null,
         role: null,
+        spawnType: null,
+        teammate: false,
         team: null,
         floor: session.floor,
         floorKind: session.floorKind,
@@ -435,24 +485,33 @@ export class Office {
     agent.floor = session.floor;
     agent.floorKind = session.floorKind;
     if (c.parentKey && !agent.parentKey) agent.parentKey = c.parentKey;
-    if (c.role) agent.role = c.role;
-    else if (isMain && session.role) agent.role = session.role;
     if (isMain && session.name) agent.name = session.name;
     if (c.team) agent.team = c.team;
     if (c.teammate && (e.hook_event_name === 'TeammateIdle' || e.agent_id)) agent.name = c.teammate;
 
     if (c.spawnCall?.toolUseId) remember(this.spawnCalls, c.spawnCall.toolUseId, c.spawnCall);
     if (c.spawned) {
+      if (c.spawned.teammate) remember(this.teammateIds, c.spawned.agentId, true);
       const call = this.spawnCalls.get(c.spawned.toolUseId);
       if (call) {
         this.spawnCalls.delete(c.spawned.toolUseId);
         remember(this.spawnedAgents, c.spawned.agentId, call);
-        const target = this.agents.get(c.spawned.agentId);
-        if (target) this.applySpawn(target, call);
+      }
+      const target = this.agents.get(c.spawned.agentId);
+      if (target) {
+        if (c.spawned.teammate) target.teammate = true;
+        if (call) this.applySpawn(target, call);
+        this.emitAgent(target, now);
       }
     }
+    if (this.teammateIds.has(agent.key) || e.hook_event_name === 'TeammateIdle') agent.teammate = true;
     const call = this.spawnedAgents.get(agent.key);
     if (call) this.applySpawn(agent, call);
+    if (!isMain && !agent.spawnType) {
+      const memberName = agent.name ?? c.role;
+      if (memberName) agent.spawnType = this.teamMemberType(agent.team ?? teamOfSession(e.session_id), memberName);
+    }
+    agent.role = agent.spawnType ?? c.role ?? agent.role ?? (isMain ? session.role : null);
 
     if (agent.team && !agent.parentKey) {
       const lead = this.leadSession(agent.team);
@@ -463,7 +522,10 @@ export class Office {
 
   private applySpawn(agent: AgentRuntime, call: SpawnCall): void {
     if (!agent.name && call.name) agent.name = call.name;
-    if (!agent.role && call.subagentType) agent.role = call.subagentType;
+    if (call.subagentType) {
+      agent.spawnType = call.subagentType;
+      agent.role = call.subagentType;
+    }
   }
 
   private touchedFloor(filePath: string, ownFloor: string): string | null {
@@ -493,7 +555,7 @@ export class Office {
 
   private recipientKey(to: string, from: AgentRuntime): string | null {
     if (this.agents.has(to)) return to;
-    if (to === 'main') {
+    if (to === 'main' || to === 'team-lead') {
       if (from.parentKey) return from.parentKey;
       return from.team ? (this.leadSession(from.team)?.sessionId ?? null) : null;
     }
@@ -546,20 +608,35 @@ export class Office {
     return [...keys];
   }
 
-  private teamMemberIds(team: string, name: string): string[] {
+  private teamMembers(team: string): Record<string, unknown>[] {
+    const now = this.now();
+    const cached = this.teamCache.get(team);
+    if (cached && now - cached.at < TEAM_CACHE_MS) return cached.members;
+    let members: Record<string, unknown>[] = [];
     const file = join(this.opts.claudeHome, 'teams', team, 'config.json');
-    if (!existsSync(file)) return [];
     try {
-      const members = record(JSON.parse(readFileSync(file, 'utf8'))).members;
-      if (!Array.isArray(members)) return [];
-      return members
-        .map((m) => record(m))
-        .filter((m) => m.name === name)
-        .map((m) => idText(m.agentId) ?? idText(m.agent_id) ?? idText(m.id))
-        .filter((id): id is string => id !== null);
+      if (existsSync(file)) {
+        const raw = record(JSON.parse(readFileSync(file, 'utf8'))).members;
+        members = Array.isArray(raw) ? raw.map((m) => record(m)) : [];
+      }
     } catch {
-      return [];
+      members = [];
     }
+    this.teamCache.set(team, { at: now, members });
+    return members;
+  }
+
+  private teamMemberIds(team: string, name: string): string[] {
+    return this.teamMembers(team)
+      .filter((m) => m.name === name)
+      .map((m) => idText(m.agentId) ?? idText(m.agent_id) ?? idText(m.id))
+      .filter((id): id is string => id !== null);
+  }
+
+  private teamMemberType(team: string, name: string): string | null {
+    const member = this.teamMembers(team).find((m) => m.name === name);
+    const type = member ? (text(member.agentType) ?? text(member.agent_type)) : null;
+    return type && type !== 'team-lead' ? type : null;
   }
 
   private lastEdit(floor: string, keys: string[]): number | null {
