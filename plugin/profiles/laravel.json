@@ -1,0 +1,7 @@
+{
+  "label": "Laravel",
+  "skill": "laravel-senior-backend",
+  "testRegex": "\\bphp\\s+artisan\\s+test\\b|\\bphpunit\\b|\\bpest\\b",
+  "checkRegex": "\\bpint\\b|\\bphpstan\\b",
+  "testCommand": "php artisan test --filter=<Clase>"
+}

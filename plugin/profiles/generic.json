@@ -1,0 +1,7 @@
+{
+  "label": "Genérico",
+  "skill": null,
+  "testRegex": "\\btest\\b",
+  "checkRegex": "\\blint\\b",
+  "testCommand": "el comando de tests que documente el repositorio"
+}

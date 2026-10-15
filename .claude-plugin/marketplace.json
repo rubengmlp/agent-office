@@ -1,0 +1,14 @@
+{
+  "name": "agent-office",
+  "description": "Marketplace local de Agent Office",
+  "owner": {
+    "name": "victorsanblas-qynvo"
+  },
+  "plugins": [
+    {
+      "name": "office",
+      "source": "./plugin",
+      "description": "Envía los eventos de cada sesión al hub local de Agent Office, retiene preguntas para el panel, aplica la puerta de tests y aporta el director y el revisor."
+    }
+  ]
+}

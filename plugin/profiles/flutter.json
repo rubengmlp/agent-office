@@ -1,0 +1,7 @@
+{
+  "label": "Flutter",
+  "skill": "senior-flutter",
+  "testRegex": "\\bflutter\\s+test\\b",
+  "checkRegex": "\\bflutter\\s+analyze\\b|layering_guard|ds_guard",
+  "testCommand": "flutter test <ruta del test>"
+}

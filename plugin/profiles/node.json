@@ -1,0 +1,7 @@
+{
+  "label": "Node",
+  "skill": null,
+  "testRegex": "\\b(vitest|jest)\\b|\\b(npm|pnpm|yarn|bun)\\s+(run\\s+)?test\\b",
+  "checkRegex": "\\beslint\\b|\\bprettier\\s+--check\\b|\\btsc\\b",
+  "testCommand": "npx vitest run <spec>"
+}
