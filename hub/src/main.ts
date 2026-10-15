@@ -1,0 +1,93 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import {
+  PROFILES_DIR,
+  PUBLIC_DIR,
+  RAW_FIXTURES_DIR,
+  WORKSPACE_DIR,
+  loadConfig,
+  paths,
+  readKey,
+  writePortFile,
+  type Paths,
+} from './config';
+import { configTargets, watchTargets } from './config-watch';
+import { dbRegistry, openDb } from './db';
+import { Office } from './office';
+import { loadProfiles } from './profiles';
+import { prune } from './prune';
+import { startRecording } from './recorder';
+import { startServer } from './server';
+
+const DAY_MS = 86_400_000;
+const TICK_MS = 5000;
+
+export function main(argv: string[]): void {
+  const p = paths();
+  const key = readKey(p);
+  if (!key) {
+    console.error('No hay key de Agent Office. Ejecuta primero: bun run setup');
+    process.exit(1);
+  }
+  let config = loadConfig(p);
+  writePortFile(p, config.port);
+  const db = openDb(p.db);
+  const office = new Office({
+    db,
+    config,
+    profiles: loadProfiles(PROFILES_DIR),
+    workspaceDir: WORKSPACE_DIR,
+    claudeHome: p.claudeHome,
+    registry: dbRegistry(db),
+    rawDir: process.env.AGENT_OFFICE_RAW === '1' ? RAW_FIXTURES_DIR : null,
+  });
+  const recorder = process.env.AGENT_OFFICE_RECORD ? startRecording(office, process.env.AGENT_OFFICE_RECORD) : null;
+  const { stop } = startServer({
+    office,
+    port: config.port,
+    key: () => key,
+    publicDir: PUBLIC_DIR,
+    dev: process.env.AGENT_OFFICE_DEV === '1',
+  });
+  const stopWatching = watchTargets(configTargets(p.home, PROFILES_DIR), () => {
+    try {
+      config = loadConfig(p);
+      office.reload(config, loadProfiles(PROFILES_DIR));
+      console.log('Configuración recargada');
+    } catch (error) {
+      console.error(`No se pudo recargar la configuración: ${(error as Error).message}`);
+    }
+  });
+  prune(db, Date.now(), config.retentionDays);
+  const pruneTimer = setInterval(() => prune(db, Date.now(), config.retentionDays), DAY_MS);
+  const tickTimer = setInterval(() => office.tick(), TICK_MS);
+
+  const url = `http://127.0.0.1:${config.port}`;
+  console.log(`Agent Office escuchando en ${url}`);
+  if (!existsSync(join(PUBLIC_DIR, 'index.html'))) console.log('La interfaz no está compilada: bun run build');
+  if (process.env.AGENT_OFFICE_RECORD) console.log(`Grabando en ${process.env.AGENT_OFFICE_RECORD}`);
+  if (argv.includes('--open')) openSessions(p, url);
+
+  const shutdown = () => {
+    clearInterval(pruneTimer);
+    clearInterval(tickTimer);
+    stopWatching();
+    recorder?.stop();
+    stop();
+    db.close();
+    process.exit(0);
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+}
+
+function openSessions(p: Paths, url: string): void {
+  if (process.platform === 'darwin') Bun.spawn(['open', url]);
+  if (!existsSync(p.officeSh)) {
+    console.log('No hay sesiones que abrir: añade una planta con bun run floor add <ruta>');
+    return;
+  }
+  Bun.spawn(['sh', p.officeSh], { stdout: 'inherit', stderr: 'inherit' });
+}
+
+if (import.meta.main) main(process.argv.slice(2));
