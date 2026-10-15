@@ -1,5 +1,8 @@
 {
   "name": "office",
   "version": "0.1.0",
-  "description": "Agent Office: eventos de sesión hacia el hub local, preguntas al panel, puerta de tests, director y revisor."
+  "description": "Agent Office: eventos de sesión hacia el hub local, preguntas al panel, puerta de tests, director y revisor.",
+  "author": {
+    "name": "victorsanblas-qynvo"
+  }
 }
