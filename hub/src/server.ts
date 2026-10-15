@@ -61,6 +61,12 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
     return c.text(decision.pass ? 'pass' : `block:${decision.reason}`);
   });
 
+  app.post('/gate-message', requireKey, async (c) => {
+    const event = await readJson(c);
+    const decision = isHookEvent(event) ? office.gateMessage(event) : { pass: true, reason: '' };
+    return c.text(decision.pass ? 'pass' : `block:${decision.reason}`);
+  });
+
   app.get('/api/state', requireKey, (c) => c.json(office.snapshot()));
 
   app.post('/api/answers/:id', requireKey, async (c) => {

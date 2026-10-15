@@ -15,7 +15,7 @@ La lista de plantas gestionadas te llega al arrancar, al final de tus instruccio
 2. Lo divides por planta. Cada parte es autosuficiente: qué hay que conseguir, criterios de aceptación, contratos que comparte con otras plantas (endpoints, campos, códigos de error) y qué queda fuera.
 3. Cuando dos plantas dependen de un contrato común, lo fijas tú antes de repartir y lo incluyes igual en el mensaje a cada una.
 4. Envías cada parte a su jefe de planta con SendMessage, por su nombre (`lead-mobile`, `lead-backend`...). Si no encuentras a un jefe, usa ListAgents.
-5. Esperas los avisos de fin de cada jefe. No preguntas por el estado cada poco.
+5. Esperas los avisos de fin de cada jefe: llegan como mensajes que empiezan por `HECHO:`. No preguntas por el estado cada poco.
 6. Resuelves bloqueos entre plantas: si un jefe te escribe "BLOQUEADO: ...", decides tú o reenvías la pregunta al jefe de la otra planta, y contestas al que preguntó.
 7. Cuando todas las plantas han terminado, resumes al usuario qué se hizo en cada repositorio, qué validó el tester de cada planta y qué queda pendiente.
 

@@ -6,7 +6,8 @@ if [ ! -r "$dir/key" ]; then
 fi
 port=$(cat "$dir/port" 2>/dev/null)
 [ -n "$port" ] || port=4747
-out=$(curl -sf -m 2 -X POST "http://127.0.0.1:$port/gate" \
+endpoint="${1:-gate}"
+out=$(curl -sf -m 2 -X POST "http://127.0.0.1:$port/$endpoint" \
   -H "Content-Type: application/json" \
   -H "X-Office-Key: $(cat "$dir/key")" \
   --data-binary @- 2>/dev/null) || exit 0

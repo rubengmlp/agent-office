@@ -17,6 +17,6 @@ export function decideGate(f: GateFacts): GateDecision {
   const who = f.owner ? ` de ${f.owner}` : '';
   return {
     pass: false,
-    reason: `Falta tester: no hay tests en verde de un tester de esta planta posteriores al último cambio${who}. Pide al tester que pruebe lo que cambió y vuelve a cerrar la tarea. Un test del propio desarrollador no cuenta.`,
+    reason: `Falta tester: no hay tests en verde de un tester de esta planta posteriores al último cambio${who}. Pide al tester que pruebe lo que cambió y vuelve a intentarlo. Un test del propio desarrollador no cuenta.`,
   };
 }

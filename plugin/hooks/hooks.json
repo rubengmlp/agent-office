@@ -42,6 +42,16 @@
             "timeout": 900
           }
         ]
+      },
+      {
+        "matcher": "SendMessage",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/gate.sh\" gate-message",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -162,7 +172,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/gate.sh\"",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/gate.sh\" gate",
             "timeout": 5
           }
         ]

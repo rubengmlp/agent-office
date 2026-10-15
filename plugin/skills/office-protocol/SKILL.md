@@ -27,7 +27,13 @@ Se envía por SendMessage al jefe directo. La oficina pinta al agente como bloqu
 
 ## Cuándo está terminada una tarea
 
-Cuando el tester de la planta ha pasado los tests después del último cambio del desarrollador. Un test que ejecuta el propio desarrollador no cuenta. La oficina bloquea el cierre de la tarea si falta ese test, y el jefe de planta recibe el motivo.
+Cuando el tester de la planta ha pasado los tests después del último cambio del desarrollador. Un test que ejecuta el propio desarrollador no cuenta.
+
+El jefe de planta avisa al director con un mensaje que empieza por:
+
+HECHO: <qué se hizo> — validado por <tester y comando> — pendiente: <qué queda>
+
+La oficina comprueba la puerta de tests al enviar ese mensaje y al completar una tarea. Si falta el tester, el mensaje no sale o la tarea no se cierra, y el jefe recibe el motivo.
 
 ## Estado
 
