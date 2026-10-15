@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { cpSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { PROFILES_DIR, TEMPLATES_DIR, loadConfig, type Paths } from '../src/config';
-import { FloorError, agentFile, listFloors, planFloor, regenerateAll, removeFloor, render, writeFloor } from '../src/floor-cli';
+import { TemplateError, agentPath } from '../src/agents';
+import { DEFAULT_ROLES, PROFILES_DIR, TEMPLATES_DIR, loadConfig, saveConfig, type Paths } from '../src/config';
+import { FloorError, agentFile, listFloors, planFloor, regenerateAgents, regenerateAll, removeFloor, render, writeFloor } from '../src/floor-cli';
 import { detectStack, loadProfiles } from '../src/profiles';
-import { fakePaths, makeRepo, tempDir } from './helpers';
+import { fakePaths, floor, makeRepo, tempDir, testConfig } from './helpers';
 
 const profiles = loadProfiles(PROFILES_DIR);
 
@@ -15,6 +16,7 @@ describe('floor CLI', () => {
   beforeEach(() => {
     ctx = tempDir();
     p = fakePaths(ctx.dir);
+    saveConfig(p, testConfig({ docsRepo: join(ctx.dir, 'docs'), departments: { redaccion: true, mantenimiento: true } }));
   });
   afterEach(() => ctx.cleanup());
 
@@ -34,12 +36,12 @@ describe('floor CLI', () => {
       expect(readFileSync(agentFile(p, role, 'mobile'), 'utf8')).not.toContain('{{');
     }
 
-    expect(loadConfig(p).floors.mobile).toEqual({ path: plan.path, stack: 'flutter', managed: true });
+    expect(loadConfig(p).floors.mobile).toEqual(floor(plan.path));
     const launcher = readFileSync(join(p.sessionsDir, 'lead-mobile.sh'), 'utf8');
     expect(launcher).toContain("'--agent' 'office-lead-mobile'");
     expect(launcher).toContain('export CLAUDE_CODE_ENABLE_TODO_TOOLS=1');
     expect(launcher).toContain("export AGENT_OFFICE_ROLE='office-lead-mobile'");
-    expect(readFileSync(p.officeSh, 'utf8')).toContain("NAMES='director lead-mobile'");
+    expect(readFileSync(p.officeSh, 'utf8')).toContain("NAMES='director lead-mobile lead-redaccion lead-mantenimiento'");
     expect(readFileSync(p.directorFloors, 'utf8')).toContain('`mobile`: Flutter');
   });
 
@@ -86,7 +88,7 @@ describe('floor CLI', () => {
     expect(existsSync(agentFile(p, 'lead', 'mobile'))).toBe(false);
     expect(existsSync(join(p.sessionsDir, 'lead-mobile.sh'))).toBe(false);
     expect(loadConfig(p).floors.mobile?.managed).toBe(false);
-    expect(readFileSync(p.officeSh, 'utf8')).toContain("NAMES='director'");
+    expect(readFileSync(p.officeSh, 'utf8')).toContain("NAMES='director lead-redaccion lead-mantenimiento'");
     expect(() => removeFloor(p, profiles, 'nope')).toThrow(FloorError);
   });
 
@@ -100,6 +102,57 @@ describe('floor CLI', () => {
     expect(readFileSync(agentFile(p, 'lead', 'mobile'), 'utf8')).toContain('VERSIÓN 2');
   });
 
+  test('every agent carries the model and effort of its role', () => {
+    const config = loadConfig(p);
+    config.roles = { ...DEFAULT_ROLES, dev: { model: 'haiku', effort: 'low' }, redactor: { model: 'claude-opus-5-5', effort: 'max' } };
+    saveConfig(p, config);
+    writeFloor(p, profiles, planFloor(p, profiles, makeRepo(ctx.dir, 'mobile', { 'pubspec.yaml': '' })));
+    const dev = readFileSync(agentFile(p, 'dev', 'mobile'), 'utf8');
+    expect(dev).toContain('model: haiku\neffort: low');
+    expect(readFileSync(agentFile(p, 'lead', 'mobile'), 'utf8')).toContain('model: sonnet\neffort: medium');
+    expect(readFileSync(agentPath(p, 'office-director'), 'utf8')).toContain('model: opus\neffort: high');
+    expect(readFileSync(agentPath(p, 'office-redactor'), 'utf8')).toContain('model: claude-opus-5-5\neffort: max');
+    expect(readFileSync(agentPath(p, 'office-revisor-planes'), 'utf8')).toContain('tools: Read, Grep, Glob, SendMessage');
+    for (const name of ['office-director', 'office-reviewer', 'office-lead-redaccion', 'office-redactor', 'office-revisor-planes', 'office-lead-mantenimiento', 'office-artesano', 'office-revisor-skills']) {
+      const content = readFileSync(agentPath(p, name), 'utf8');
+      expect(content).toContain(`name: ${name}`);
+      expect(content).not.toContain('{{');
+    }
+    expect(readFileSync(agentPath(p, 'office-lead-redaccion'), 'utf8')).toContain(join(ctx.dir, 'docs'));
+    expect(readFileSync(agentPath(p, 'office-lead-redaccion'), 'utf8')).toContain('`mobile`: Flutter');
+    expect(readFileSync(agentPath(p, 'office-lead-mantenimiento'), 'utf8')).toContain(p.skillsDir);
+  });
+
+  test('turning a department off removes its agents and its launcher', () => {
+    writeFloor(p, profiles, planFloor(p, profiles, makeRepo(ctx.dir, 'mobile')));
+    expect(existsSync(agentPath(p, 'office-artesano'))).toBe(true);
+    const config = loadConfig(p);
+    config.departments.mantenimiento = false;
+    saveConfig(p, config);
+    const result = regenerateAgents(p, profiles);
+    expect(result.floors).toEqual([{ slug: 'mobile' }]);
+    expect(result.files).toBe(3 + 5);
+    for (const name of ['office-lead-mantenimiento', 'office-artesano', 'office-revisor-skills']) expect(existsSync(agentPath(p, name))).toBe(false);
+    expect(existsSync(agentPath(p, 'office-redactor'))).toBe(true);
+    expect(existsSync(join(p.sessionsDir, 'lead-mantenimiento.sh'))).toBe(false);
+    expect(existsSync(join(p.sessionsDir, 'lead-redaccion.sh'))).toBe(true);
+  });
+
+  test('a floor whose folder disappeared is reported and the rest is regenerated', () => {
+    const config = loadConfig(p);
+    config.floors.gone = floor(join(ctx.dir, 'gone'));
+    saveConfig(p, config);
+    const result = regenerateAgents(p, profiles);
+    expect(result.floors[0]?.error).toContain('No existe');
+    expect(existsSync(agentPath(p, 'office-director'))).toBe(true);
+  });
+
+  test('department names are reserved', () => {
+    const repo = makeRepo(ctx.dir, 'redaccion');
+    expect(() => planFloor(p, profiles, repo)).toThrow(FloorError);
+    expect(() => planFloor(p, profiles, makeRepo(ctx.dir, 'x'), 'mantenimiento')).toThrow(FloorError);
+  });
+
   test('listing shows each floor with its kind', () => {
     expect(listFloors(p, profiles)).toContain('No hay plantas');
     writeFloor(p, profiles, planFloor(p, profiles, makeRepo(ctx.dir, 'mobile', { 'pubspec.yaml': '' })));
@@ -110,7 +163,7 @@ describe('floor CLI', () => {
 describe('templates and stacks', () => {
   test('rendering refuses unknown variables', () => {
     expect(render('hola {{slug}}', { slug: 'x' })).toBe('hola x');
-    expect(() => render('hola {{nadie}}', {})).toThrow(FloorError);
+    expect(() => render('hola {{nadie}}', {})).toThrow(TemplateError);
   });
 
   test('stack detection', () => {

@@ -1,8 +1,9 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { STACKS } from './config';
 import type { Profile, Stack } from './types';
 
-export const STACKS: readonly Stack[] = ['flutter', 'laravel', 'node', 'generic'];
+export { STACKS };
 
 export type CompiledProfile = Profile & { stack: Stack; test: RegExp; check: RegExp };
 

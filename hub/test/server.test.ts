@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { startServer } from '../src/server';
-import { harness } from './helpers';
+import { floor, harness } from './helpers';
 
 const KEY = 'k'.repeat(64);
 
@@ -37,7 +37,7 @@ describe('hub server', () => {
 
   beforeAll(async () => {
     mkdirSync(repo, { recursive: true });
-    h.config.floors.mobile = { path: repo, stack: 'flutter', managed: true };
+    h.config.floors.mobile = floor(repo);
     const publicDir = join(h.root, 'public');
     mkdirSync(publicDir, { recursive: true });
     writeFileSync(join(publicDir, 'index.html'), '<!doctype html><html><head><title>Agent Office</title></head><body></body></html>');

@@ -6,7 +6,7 @@ import { realPath } from '../src/floors';
 import { Office } from '../src/office';
 import { loadProfiles } from '../src/profiles';
 import type { AgentView, HookMeta } from '../src/types';
-import { ev, harness, loadFixture, type Harness } from './helpers';
+import { ev, floor, harness, loadFixture, type Harness } from './helpers';
 
 const LEAD = '22222222-bbbb-4ccc-8ddd-000000000002';
 const TEAM = 'session-22222222';
@@ -20,7 +20,7 @@ const agent = (key: string): AgentView | undefined => h.office.snapshot().agents
 function managedRepo(name = 'mobile'): string {
   const repo = join(h.root, name);
   mkdirSync(repo, { recursive: true });
-  h.config.floors[name] = { path: repo, stack: 'flutter', managed: true };
+  h.config.floors[name] = floor(repo);
   return repo;
 }
 
@@ -340,11 +340,13 @@ describe('configuration reload', () => {
     h.office.ingest(ev('s-1', repo, 'SessionStart', {}));
     expect(h.office.snapshot().floors.find((f) => f.slug === 'repo')?.kind).toBe('observed');
     h.office.reload(
-      { ...h.config, floors: { repo: { path: realPath(repo), stack: 'flutter', managed: true } } },
+      { ...h.config, floors: { repo: floor(realPath(repo)) } },
       loadProfiles(PROFILES_DIR),
     );
     expect(h.office.snapshot().floors.find((f) => f.slug === 'repo')?.kind).toBe('managed');
-    expect(h.messages.at(-1)?.type).toBe('floors');
+    const types = h.messages.map((m) => m.type);
+    expect(types).toContain('floors');
+    expect(types.at(-1) === 'settings' || types.at(-1) === 'documents').toBe(true);
   });
 });
 

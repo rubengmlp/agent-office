@@ -1,9 +1,10 @@
 import { existsSync } from 'node:fs';
 import {
-  DEFAULT_CONFIG,
   PROFILES_DIR,
   REPO_ROOT,
   createKeyIfMissing,
+  defaultConfig,
+  docsRepoPath,
   ensureHome,
   loadConfig,
   paths,
@@ -11,9 +12,9 @@ import {
   saveConfig,
   writePortFile,
 } from './config';
-import { askYesNo, expandHome, FloorError, planFloor, writeFloor } from './floor-cli';
+import { ensureDocsRepo } from './docs-repo';
+import { askYesNo, expandHome, FloorError, planFloor, regenerateAgents, writeFloor } from './floor-cli';
 import { realPath } from './floors';
-import { writeOfficeScripts } from './office-sh';
 import { loadProfiles } from './profiles';
 
 const CANDIDATE_FLOORS = ['~/Projects/mobile', '~/Projects/backend'];
@@ -39,8 +40,10 @@ async function setup(argv: string[]): Promise<void> {
   const { created } = createKeyIfMissing(p);
   console.log(created ? `Key creada en ${p.key}` : `Key existente en ${p.key}`);
   if (!existsSync(p.config)) {
-    saveConfig(p, structuredClone(DEFAULT_CONFIG));
+    saveConfig(p, defaultConfig());
     console.log(`Configuración creada en ${p.config}`);
+  } else {
+    saveConfig(p, loadConfig(p));
   }
   writePortFile(p, loadConfig(p).port);
 
@@ -69,12 +72,24 @@ async function setup(argv: string[]): Promise<void> {
       console.log(error.message);
     }
   }
-  writeOfficeScripts(p, loadConfig(p), profiles);
+  const config = loadConfig(p);
+  if (config.departments.redaccion || config.departments.mantenimiento) {
+    const root = docsRepoPath(config);
+    if (existsSync(root) || (await confirm(`¿Crear el repositorio de documentos de Redacción y Mantenimiento en ${root}?`))) {
+      const docs = ensureDocsRepo(root);
+      console.log(docs.initialized ? `Repositorio de documentos creado en ${root}` : `Repositorio de documentos en ${root}`);
+    } else {
+      console.log(`Sin repositorio de documentos: los departamentos no podrán trabajar hasta que lo crees (bun run setup) o los desactives en Ajustes.`);
+    }
+  }
+  const generated = regenerateAgents(p, profiles);
+  for (const r of generated.floors) if (r.error) console.log(`${r.slug}: ${r.error}`);
+  console.log(`${generated.files} agentes escritos en ${p.agentsDir} con el modelo y el esfuerzo de cada rol`);
 
   console.log('');
   console.log('Siguientes pasos:');
   console.log('  bun run build     compila la interfaz');
-  console.log('  bun run office    arranca el hub, abre la oficina y las sesiones del director y los jefes de planta');
+  console.log('  bun run office    arranca el hub, abre la oficina y las sesiones del director, los jefes de planta y los departamentos');
   console.log('  bun run hub       solo el hub');
   console.log('Las sesiones que abre office.sh activan agent teams y las herramientas de tareas solo para ellas: tu configuración global no cambia.');
 }

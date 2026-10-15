@@ -1,21 +1,47 @@
 import { describe, expect, test } from 'bun:test';
 import { statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { PROFILES_DIR, createKeyIfMissing, loadConfig, normalizeConfig, saveConfig } from '../src/config';
+import { DEFAULT_ROLES, PROFILES_DIR, createKeyIfMissing, loadConfig, normalizeConfig, saveConfig } from '../src/config';
 import { configTargets, watchTargets } from '../src/config-watch';
 import { openDb } from '../src/db';
 import { decideGate } from '../src/gate';
-import { directorFloorsText, officeScript, sessionScript, sq } from '../src/office-sh';
+import { directorFloorsText, modelArgs, officeScript, sessionScript, sessionSpecs, sq } from '../src/office-sh';
 import { loadProfiles } from '../src/profiles';
 import { prune } from '../src/prune';
-import { inOfficeScope, roleKind } from '../src/scope';
+import { departmentOf, inOfficeScope, roleFromName, roleIdOf, roleKind } from '../src/scope';
 import { hostAllowed, injectKey, keyMatches, originAllowed } from '../src/security';
-import { fakePaths, tempDir } from './helpers';
+import { fakePaths, floor, tempDir, testConfig } from './helpers';
 
 describe('config', () => {
   test('defaults fill missing or invalid values', () => {
-    const c = normalizeConfig({ floors: { a: { path: '/x', stack: 'rust' }, b: { nope: 1 } }, port: -1 });
-    expect(c).toEqual({ floors: { a: { path: '/x', stack: 'generic', managed: true } }, blockedAfterMinutes: 5, retentionDays: 14, port: 4747 });
+    const c = normalizeConfig({
+      floors: { a: { path: '/x', stack: 'rust', baseBranch: '../evil' }, b: { nope: 1 }, c: { path: '/c', baseBranch: 'main' } },
+      port: -1,
+      roles: { dev: { model: 'haiku', effort: 'max' }, tester: { model: 'bad model!', effort: 'turbo' }, nadie: { model: 'opus' } },
+      review: { maxRounds: 99 },
+      memory: { maxLessons: 10, maxContextChars: 10 },
+      departments: { redaccion: false },
+    });
+    expect(c.floors).toEqual({
+      a: { path: '/x', stack: 'generic', managed: true, baseBranch: 'develop' },
+      c: { path: '/c', stack: 'generic', managed: true, baseBranch: 'main' },
+    });
+    expect(c.port).toBe(4747);
+    expect(c.roles.dev).toEqual({ model: 'haiku', effort: 'max' });
+    expect(c.roles.tester).toEqual(DEFAULT_ROLES.tester);
+    expect(c.roles.director).toEqual({ model: 'opus', effort: 'high' });
+    expect(c.review.maxRounds).toBe(4);
+    expect(c.memory).toEqual({ maxLessons: 10, maxLessonsPerSession: 3, maxContextChars: 4000 });
+    expect(c.departments).toEqual({ redaccion: false, mantenimiento: true });
+    expect(c.docsRepo).toBe('~/Projects/office-docs');
+  });
+
+  test('a v1 config gains the v2 defaults without losing its floors', () => {
+    const c = normalizeConfig({ floors: { mobile: { path: '/m', stack: 'flutter', managed: true } }, blockedAfterMinutes: 7, retentionDays: 14, port: 4800 });
+    expect(c.floors.mobile).toEqual(floor('/m'));
+    expect(c.blockedAfterMinutes).toBe(7);
+    expect(c.port).toBe(4800);
+    expect(c.roles).toEqual(DEFAULT_ROLES);
   });
 
   test('the key is created once with private permissions', () => {
@@ -102,12 +128,42 @@ describe('security', () => {
 describe('scope and roles', () => {
   test('role kinds', () => {
     expect(roleKind('office:director')).toBe('director');
+    expect(roleKind('office-director')).toBe('director');
     expect(roleKind('office-lead-mobile')).toBe('lead');
     expect(roleKind('office-dev-mobile')).toBe('dev');
     expect(roleKind('office-tester-mobile')).toBe('tester');
     expect(roleKind('office:reviewer')).toBe('reviewer');
+    expect(roleKind('office-reviewer')).toBe('reviewer');
+    expect(roleKind('office-lead-redaccion')).toBe('lead');
+    expect(roleKind('office-redactor')).toBe('writer');
+    expect(roleKind('office-revisor-planes')).toBe('planReviewer');
+    expect(roleKind('office-artesano')).toBe('skillwright');
+    expect(roleKind('office-revisor-skills')).toBe('skillReviewer');
     expect(roleKind('Explore')).toBe('intern');
     expect(roleKind(null)).toBe('intern');
+  });
+
+  test('role ids and departments', () => {
+    expect(roleIdOf('office-lead-mantenimiento')).toBe('lead');
+    expect(roleIdOf('office-dev-backend')).toBe('dev');
+    expect(roleIdOf('office-revisor-planes')).toBe('revisor-planes');
+    expect(roleIdOf('Explore')).toBeNull();
+    expect(departmentOf('office-redactor')).toBe('redaccion');
+    expect(departmentOf('office-lead-mantenimiento')).toBe('mantenimiento');
+    expect(departmentOf('office-lead-mobile')).toBeNull();
+  });
+
+  test('teammate names map to their type by prefix only on the right floor', () => {
+    expect(roleFromName('dev-mobile', 'mobile', 'managed')).toBe('office-dev-mobile');
+    expect(roleFromName('tester-mobile', 'mobile', 'managed')).toBe('office-tester-mobile');
+    expect(roleFromName('reviewer-mobile', 'mobile', 'managed')).toBe('office-reviewer');
+    expect(roleFromName('redactor-login', 'redaccion', 'redaccion')).toBe('office-redactor');
+    expect(roleFromName('revisor-planes-login-r2', 'redaccion', 'redaccion')).toBe('office-revisor-planes');
+    expect(roleFromName('artesano-pdf', 'mantenimiento', 'mantenimiento')).toBe('office-artesano');
+    expect(roleFromName('revisor-skills-pdf-r1', 'mantenimiento', 'mantenimiento')).toBe('office-revisor-skills');
+    expect(roleFromName('redactor-login', 'mobile', 'managed')).toBeNull();
+    expect(roleFromName('dev-mobile', 'kapper', 'observed')).toBeNull();
+    expect(roleFromName('developer', 'mobile', 'managed')).toBeNull();
   });
 
   test('only office sessions on managed floors or in the direction are in scope', () => {
@@ -116,6 +172,8 @@ describe('scope and roles', () => {
     expect(inOfficeScope({ floorKind: 'direccion', sessionRole: 'office:director', leadRole: null })).toBe(true);
     expect(inOfficeScope({ floorKind: 'observed', sessionRole: 'office-lead-mobile', leadRole: null })).toBe(false);
     expect(inOfficeScope({ floorKind: 'managed', sessionRole: 'Explore', leadRole: null })).toBe(false);
+    expect(inOfficeScope({ floorKind: 'redaccion', sessionRole: 'office-lead-redaccion', leadRole: null })).toBe(true);
+    expect(inOfficeScope({ floorKind: 'mantenimiento', sessionRole: null, leadRole: 'office-lead-mantenimiento' })).toBe(true);
   });
 });
 
@@ -140,27 +198,63 @@ describe('launch scripts', () => {
   test('the director gets its floor list and every session exports the office variables', () => {
     const { dir, cleanup } = tempDir();
     const p = fakePaths(dir);
-    const script = sessionScript({
-      name: 'director',
-      cwd: '/r/workspace',
-      role: 'office:director',
-      agent: 'office:director',
-      extraArgs: ['--append-system-prompt-file', p.directorFloors],
-    });
+    const script = sessionScript(
+      {
+        name: 'director',
+        cwd: '/r/workspace',
+        role: 'office-director',
+        agent: 'office-director',
+        extraArgs: ['--append-system-prompt-file', p.directorFloors, ...modelArgs({ model: 'opus', effort: 'high' })],
+        needsHub: false,
+      },
+      4747,
+    );
     expect(script).toContain("cd '/r/workspace' || exit 1");
     expect(script).toContain('export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1');
     expect(script).toContain(`'--append-system-prompt-file' '${p.directorFloors}'`);
     expect(script).toContain(`'--settings' '{"subagentPromptCacheTtl":"1h"}'`);
+    expect(script).toContain("'--model' 'opus' '--effort' 'high'");
+    expect(script).not.toContain('/health');
     expect(script.trimEnd().endsWith('"$@"')).toBe(true);
-    const office = officeScript([{ name: 'director', cwd: '/r', role: 'r', agent: 'a', extraArgs: [] }], p);
+    const office = officeScript([{ name: 'director', cwd: '/r', role: 'r', agent: 'a', extraArgs: [], needsHub: false }], p);
     expect(office).toContain('tmux new-session -d -s agent-office');
     expect(office).toContain('tell application \\"Terminal\\" to do script');
-    const floors = directorFloorsText(
-      { floors: { mobile: { path: '/m', stack: 'flutter', managed: true }, old: { path: '/o', stack: 'node', managed: false } }, blockedAfterMinutes: 5, retentionDays: 14, port: 4747 },
-      loadProfiles(PROFILES_DIR),
-    );
-    expect(floors).toContain('`mobile`: Flutter, repositorio /m. Jefe de planta: sesión `lead-mobile`.');
+    const config = testConfig({ floors: { mobile: floor('/m'), old: floor('/o', false, 'node') }, departments: { redaccion: true, mantenimiento: false } });
+    const floors = directorFloorsText(config, loadProfiles(PROFILES_DIR));
+    expect(floors).toContain('`mobile`: Flutter, repositorio /m, rama base `develop`. Jefe de planta: sesión `lead-mobile`.');
     expect(floors).not.toContain('old');
+    expect(floors).toContain('Redacción: sesión `lead-redaccion`');
+    expect(floors).not.toContain('Mantenimiento: sesión');
+    cleanup();
+  });
+
+  test('inherit sends no model flag and the effort always goes', () => {
+    expect(modelArgs({ model: 'inherit', effort: 'low' })).toEqual(['--effort', 'low']);
+    expect(modelArgs({ model: 'claude-opus-5-5', effort: 'xhigh' })).toEqual(['--model', 'claude-opus-5-5', '--effort', 'xhigh']);
+  });
+
+  test('department leads open in their folder, check the hub first and only Mantenimiento gets the skills folder', () => {
+    const { dir, cleanup } = tempDir();
+    const p = fakePaths(dir);
+    const config = testConfig({
+      docsRepo: '/docs',
+      departments: { redaccion: true, mantenimiento: true },
+      floors: { mobile: floor('/m') },
+      roles: { ...DEFAULT_ROLES, lead: { model: 'haiku', effort: 'low' } },
+    });
+    const specs = sessionSpecs(config, p, '/ws');
+    expect(specs.map((s) => s.name)).toEqual(['director', 'lead-mobile', 'lead-redaccion', 'lead-mantenimiento']);
+    const redaccion = specs.find((s) => s.name === 'lead-redaccion')!;
+    const mantenimiento = specs.find((s) => s.name === 'lead-mantenimiento')!;
+    expect(redaccion).toMatchObject({ cwd: '/docs/redaccion', agent: 'office-lead-redaccion', needsHub: true });
+    expect(redaccion.extraArgs).not.toContain('--add-dir');
+    expect(mantenimiento).toMatchObject({ cwd: '/docs/taller', agent: 'office-lead-mantenimiento', needsHub: true });
+    expect(mantenimiento.extraArgs.slice(0, 2)).toEqual(['--add-dir', p.skillsDir]);
+    expect(specs.find((s) => s.name === 'lead-mobile')!.extraArgs).toEqual(['--model', 'haiku', '--effort', 'low']);
+    const script = sessionScript(redaccion, 4747);
+    expect(script).toContain("curl -sf -m 2 'http://127.0.0.1:4747/health'");
+    expect(script.indexOf('/health')).toBeLessThan(script.indexOf('exec claude'));
+    expect(script).toContain("export AGENT_OFFICE_ROLE='office-lead-redaccion'");
     cleanup();
   });
 });

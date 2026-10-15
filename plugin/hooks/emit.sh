@@ -17,7 +17,7 @@ out=$(curl -sf -m "$max" -X POST "http://127.0.0.1:$port/$endpoint" \
   -H "X-Office-Role: ${AGENT_OFFICE_ROLE:-}" \
   -H "X-Office-Name: ${AGENT_OFFICE_NAME:-}" \
   --data-binary @- 2>/dev/null)
-if [ "$endpoint" = ask ] && [ -n "$out" ]; then
+if [ -n "$out" ]; then
   printf '%s\n' "$out"
 fi
 exit 0

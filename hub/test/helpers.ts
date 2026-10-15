@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PROFILES_DIR, paths, type Paths } from '../src/config';
+import { PROFILES_DIR, defaultConfig, paths, type Paths } from '../src/config';
 import type { Database } from 'bun:sqlite';
 import { openDb } from '../src/db';
 import { memoryRegistry } from '../src/floors';
@@ -44,11 +44,22 @@ export type Harness = {
   cleanup: () => void;
 };
 
-export function harness(overrides: Partial<OfficeOptions> & { floors?: OfficeConfig['floors'] } = {}): Harness {
+export function testConfig(overrides: Partial<OfficeConfig> = {}): OfficeConfig {
+  return { ...defaultConfig(), docsRepo: '/nonexistent/office-docs', departments: { redaccion: false, mantenimiento: false }, ...overrides };
+}
+
+export function floor(path: string, managed = true, stack: OfficeConfig['floors'][string]['stack'] = 'flutter') {
+  return { path, stack, managed, baseBranch: 'develop' };
+}
+
+export function harness(
+  overrides: Partial<OfficeOptions> & { floors?: OfficeConfig['floors']; configure?: (config: OfficeConfig, root: string) => void } = {},
+): Harness {
   const { dir, cleanup } = tempDir();
   const workspace = join(dir, 'workspace');
   mkdirSync(workspace, { recursive: true });
-  const config: OfficeConfig = { floors: overrides.floors ?? {}, blockedAfterMinutes: 5, retentionDays: 14, port: 4747 };
+  const config = testConfig({ floors: overrides.floors ?? {}, docsRepo: join(dir, 'docs') });
+  overrides.configure?.(config, dir);
   const clock = {
     now: 1_800_000_000_000,
     advance(ms: number) {
@@ -56,6 +67,7 @@ export function harness(overrides: Partial<OfficeOptions> & { floors?: OfficeCon
     },
   };
   const db = openDb(':memory:');
+  const { configure: _configure, floors: _floors, ...options } = overrides;
   const office = new Office({
     db,
     config,
@@ -66,7 +78,7 @@ export function harness(overrides: Partial<OfficeOptions> & { floors?: OfficeCon
     gitRoot: (cwd) => cwd,
     stackOf: () => 'flutter',
     now: () => clock.now,
-    ...overrides,
+    ...options,
   });
   const messages: ServerMessage[] = [];
   office.subscribe((msg) => messages.push(msg));
@@ -75,4 +87,44 @@ export function harness(overrides: Partial<OfficeOptions> & { floors?: OfficeCon
 
 export function ev(sessionId: string, cwd: string, hook: string, extra: Partial<HookEvent> = {}): HookEvent {
   return { session_id: sessionId, cwd, hook_event_name: hook, ...extra };
+}
+
+export const GIT_ENV = {
+  GIT_AUTHOR_NAME: 'office',
+  GIT_AUTHOR_EMAIL: 'office@test',
+  GIT_COMMITTER_NAME: 'office',
+  GIT_COMMITTER_EMAIL: 'office@test',
+};
+
+export function useGitIdentity(): void {
+  Object.assign(process.env, GIT_ENV);
+}
+
+export function git(cwd: string, ...args: string[]): string {
+  const r = Bun.spawnSync(['git', '-C', cwd, ...args], { stdout: 'pipe', stderr: 'pipe', env: { ...process.env, ...GIT_ENV } });
+  if (r.exitCode !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr.toString()}`);
+  return r.stdout.toString().trim();
+}
+
+export function originAndClone(root: string, name = 'mobile'): { seed: string; origin: string; repo: string } {
+  const seed = join(root, `${name}-seed`);
+  const origin = join(root, `${name}-origin.git`);
+  const repo = join(root, name);
+  mkdirSync(seed, { recursive: true });
+  git(seed, 'init', '-q', '-b', 'develop');
+  writeFileSync(join(seed, 'README.md'), '# app\n');
+  git(seed, 'add', '.');
+  git(seed, 'commit', '-q', '-m', 'inicio');
+  git(root, 'clone', '-q', '--bare', seed, origin);
+  git(root, 'clone', '-q', origin, repo);
+  git(repo, 'checkout', '-q', '-b', 'feature/local');
+  return { seed, origin, repo };
+}
+
+export function pushCommit(seed: string, origin: string, file: string, content: string, message: string): string {
+  writeFileSync(join(seed, file), content);
+  git(seed, 'add', '.');
+  git(seed, 'commit', '-q', '-m', message);
+  git(seed, 'push', '-q', origin, 'develop');
+  return git(seed, 'rev-parse', 'HEAD');
 }

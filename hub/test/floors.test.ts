@@ -1,9 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { DIRECCION, FloorResolver, UNKNOWN_FLOOR, gitMainRoot, isInside, memoryRegistry, realPath, slugify } from '../src/floors';
-import type { OfficeConfig } from '../src/types';
-import { tempDir } from './helpers';
+import { DIRECCION, FloorResolver, MANTENIMIENTO, REDACCION, UNKNOWN_FLOOR, gitMainRoot, isInside, memoryRegistry, realPath, slugify } from '../src/floors';
+import { floor, tempDir, testConfig } from './helpers';
 
 function git(cwd: string, ...args: string[]): void {
   const r = Bun.spawnSync(['git', '-c', 'user.email=office@test', '-c', 'user.name=office', '-C', cwd, ...args], {
@@ -39,7 +38,7 @@ describe('floors', () => {
   });
 
   test('observed floors are created on the fly, one per repository', () => {
-    const config: OfficeConfig = { floors: {}, blockedAfterMinutes: 5, retentionDays: 14, port: 4747 };
+    const config = testConfig();
     const resolver = new FloorResolver(() => config, workspace, memoryRegistry());
     expect(resolver.resolve(join(mobile, 'lib'))).toMatchObject({ slug: 'mobile', kind: 'observed', path: mobile });
     expect(resolver.resolve(worktree).slug).toBe('mobile');
@@ -50,18 +49,33 @@ describe('floors', () => {
   });
 
   test('a configured floor wins and keeps its kind', () => {
-    const config: OfficeConfig = {
-      floors: { app: { path: mobile, stack: 'flutter', managed: true } },
-      blockedAfterMinutes: 5,
-      retentionDays: 14,
-      port: 4747,
-    };
+    const config = testConfig({ floors: { app: floor(mobile) } });
     const resolver = new FloorResolver(() => config, workspace, memoryRegistry());
     expect(resolver.resolve(worktree)).toMatchObject({ slug: 'app', kind: 'managed', stack: 'flutter' });
     resolver.resolve(plain);
     const views = resolver.views();
-    expect(views[0]).toMatchObject({ slug: DIRECCION, kind: 'direccion', label: 'Dirección' });
+    expect(views[0]).toMatchObject({ slug: DIRECCION, kind: 'direccion', label: 'Dirección', building: 'principal' });
     expect(views.map((v) => v.slug)).toEqual([DIRECCION, 'app', 'plain']);
+  });
+
+  test('department folders of the documents repository resolve before the git root', () => {
+    const docs = join(root, 'office-docs');
+    const fuentes = join(docs, 'redaccion', '.fuentes', 'plan-a', 'mobile');
+    for (const d of [join(docs, 'redaccion', 'planes'), join(docs, 'taller', 'skills', 'x'), fuentes]) mkdirSync(d, { recursive: true });
+    const config = testConfig({ docsRepo: docs, departments: { redaccion: true, mantenimiento: true }, floors: { app: floor(mobile) } });
+    const resolver = new FloorResolver(() => config, workspace, memoryRegistry(), () => mobile);
+    expect(resolver.resolve(join(docs, 'redaccion', 'planes'))).toMatchObject({ slug: REDACCION, kind: 'redaccion' });
+    expect(resolver.resolve(fuentes)).toMatchObject({ slug: REDACCION, kind: 'redaccion' });
+    expect(resolver.resolve(join(docs, 'taller', 'skills', 'x'))).toMatchObject({ slug: MANTENIMIENTO, kind: 'mantenimiento' });
+    const views = resolver.views();
+    expect(views.map((v) => [v.slug, v.kind, v.building])).toEqual([
+      [DIRECCION, 'direccion', 'principal'],
+      [REDACCION, 'redaccion', 'principal'],
+      [MANTENIMIENTO, 'mantenimiento', 'mantenimiento'],
+      ['app', 'managed', 'principal'],
+    ]);
+    config.departments.mantenimiento = false;
+    expect(resolver.views().map((v) => v.slug)).not.toContain(MANTENIMIENTO);
   });
 
   test('slugs and containment', () => {

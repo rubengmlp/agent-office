@@ -1,15 +1,27 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { existsSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { basename, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
-import { PROFILES_DIR, TEMPLATES_DIR, loadConfig, paths, saveConfig, writeAtomic, type Paths } from './config';
-import { DIRECCION, UNKNOWN_FLOOR, realPath, slugify } from './floors';
+import {
+  agentPath,
+  floorAgentDocs,
+  floorAgentName,
+  FLOOR_ROLES,
+  TemplateError,
+  writeAgentDocs,
+  writeFixedAgents,
+  type FloorRole,
+} from './agents';
+import { DEFAULT_BASE_BRANCH, PROFILES_DIR, TEMPLATES_DIR, expandHome, loadConfig, paths, saveConfig, type Paths } from './config';
+import { RESERVED_SLUGS, realPath, slugify } from './floors';
 import { writeOfficeScripts } from './office-sh';
 import { detectStack, loadProfiles, profileFor, type CompiledProfile, type Profiles } from './profiles';
 import type { Stack } from './types';
 
-export const ROLES = ['lead', 'dev', 'tester'] as const;
-export type Role = (typeof ROLES)[number];
+export { expandHome };
+export { render, skillLine } from './agents';
+
+export const ROLES = FLOOR_ROLES;
+export type Role = FloorRole;
 
 export class FloorError extends Error {}
 
@@ -22,34 +34,31 @@ export type FloorPlan = {
   existing: string[];
 };
 
-export function expandHome(path: string): string {
-  if (path === '~') return homedir();
-  return path.startsWith('~/') ? join(homedir(), path.slice(2)) : path;
-}
+export type RegenerateResult = { slug: string; error?: string };
 
 export function agentFile(p: Paths, role: Role, slug: string): string {
-  return join(p.agentsDir, `office-${role}-${slug}.md`);
+  return agentPath(p, floorAgentName(role, slug));
 }
 
-export function skillLine(profile: CompiledProfile): string {
-  return profile.skill
-    ? `Invoca la skill \`${profile.skill}\` con la herramienta Skill antes de abrir ningún fichero.`
-    : 'Este repositorio no tiene una skill propia: lee su CLAUDE.md antes de abrir ningún fichero.';
-}
-
-export function render(template: string, vars: Record<string, string>): string {
-  return template.replace(/\{\{(\w+)\}\}/g, (_match, name: string) => {
-    const value = vars[name];
-    if (value === undefined) throw new FloorError(`La plantilla usa una variable sin valor: ${name}`);
-    return value;
-  });
+export function detectBaseBranch(dir: string): string {
+  const git = (args: string[]): string | null => {
+    try {
+      const r = Bun.spawnSync(['git', '-C', dir, ...args], { stdout: 'pipe', stderr: 'ignore' });
+      return r.exitCode === 0 ? r.stdout.toString().trim() || null : null;
+    } catch {
+      return null;
+    }
+  };
+  if (git(['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${DEFAULT_BASE_BRANCH}`])) return DEFAULT_BASE_BRANCH;
+  const head = git(['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);
+  return head?.startsWith('origin/') ? head.slice('origin/'.length) : DEFAULT_BASE_BRANCH;
 }
 
 export function checkSlug(slug: string): string {
   if (!/^[a-z0-9][a-z0-9-]*$/.test(slug)) {
     throw new FloorError(`"${slug}" no vale como nombre de planta: usa minúsculas, números y guiones.`);
   }
-  if (slug === DIRECCION || slug === UNKNOWN_FLOOR) throw new FloorError(`"${slug}" es un nombre reservado.`);
+  if (RESERVED_SLUGS.includes(slug)) throw new FloorError(`"${slug}" es un nombre reservado.`);
   return slug;
 }
 
@@ -84,44 +93,55 @@ export function planFloor(
   }
   const stack = detectStack(path);
   const profile = profileFor(profiles, stack);
-  const vars = {
-    slug,
-    path,
-    label: profile.label,
-    testCommand: profile.testCommand,
-    skillLine: skillLine(profile),
-  };
-  const files = ROLES.map((role) => ({
-    role,
-    file: agentFile(p, role, slug),
-    content: render(readFileSync(join(templatesDir, `${role}.md.tpl`), 'utf8'), vars),
+  const files = floorAgentDocs(p, config, profiles, slug, { path, stack }, templatesDir).map((doc) => ({
+    role: doc.floorRole,
+    file: doc.file,
+    content: doc.content,
   }));
   return { slug, path, stack, profile, files, existing: files.map((f) => f.file).filter((f) => existsSync(f)) };
 }
 
-export function writeFloor(p: Paths, profiles: Profiles, plan: FloorPlan): string {
-  mkdirSync(p.agentsDir, { recursive: true });
-  for (const f of plan.files) writeAtomic(f.file, f.content, 0o644);
+export function writeFloor(p: Paths, profiles: Profiles, plan: FloorPlan, templatesDir = TEMPLATES_DIR): string {
+  writeAgentDocs(p, plan.files);
   const config = loadConfig(p);
-  config.floors[plan.slug] = { path: plan.path, stack: plan.stack, managed: true };
+  const previous = config.floors[plan.slug];
+  config.floors[plan.slug] = {
+    path: plan.path,
+    stack: plan.stack,
+    managed: true,
+    baseBranch: previous?.baseBranch ?? detectBaseBranch(plan.path),
+  };
   saveConfig(p, config);
+  writeFixedAgents(p, config, profiles, templatesDir);
   writeOfficeScripts(p, config, profiles);
   return `cd ${plan.path} && claude --agent office-lead-${plan.slug} --name lead-${plan.slug}`;
 }
 
-export function regenerateAll(p: Paths, profiles: Profiles, templatesDir = TEMPLATES_DIR): { slug: string; error?: string }[] {
-  const results: { slug: string; error?: string }[] = [];
-  for (const [slug, floor] of Object.entries(loadConfig(p).floors)) {
+export function regenerateAgents(
+  p: Paths,
+  profiles: Profiles,
+  templatesDir = TEMPLATES_DIR,
+): { floors: RegenerateResult[]; files: number } {
+  const config = loadConfig(p);
+  const floors: RegenerateResult[] = [];
+  let files = 0;
+  for (const [slug, floor] of Object.entries(config.floors)) {
     if (!floor.managed) continue;
     try {
-      writeFloor(p, profiles, planFloor(p, profiles, floor.path, slug, templatesDir));
-      results.push({ slug });
+      if (!existsSync(floor.path)) throw new FloorError(`No existe ${floor.path}`);
+      files += writeAgentDocs(p, floorAgentDocs(p, config, profiles, slug, floor, templatesDir));
+      floors.push({ slug });
     } catch (error) {
-      results.push({ slug, error: (error as Error).message });
+      floors.push({ slug, error: (error as Error).message });
     }
   }
-  writeOfficeScripts(p, loadConfig(p), profiles);
-  return results;
+  files += writeFixedAgents(p, config, profiles, templatesDir);
+  writeOfficeScripts(p, config, profiles);
+  return { floors, files };
+}
+
+export function regenerateAll(p: Paths, profiles: Profiles, templatesDir = TEMPLATES_DIR): RegenerateResult[] {
+  return regenerateAgents(p, profiles, templatesDir).floors;
 }
 
 export function removeFloor(p: Paths, profiles: Profiles, slug: string): string[] {
@@ -138,6 +158,7 @@ export function removeFloor(p: Paths, profiles: Profiles, slug: string): string[
   }
   config.floors[slug] = { ...floor, managed: false };
   saveConfig(p, config);
+  writeFixedAgents(p, config, profiles);
   writeOfficeScripts(p, config, profiles);
   return removed;
 }
@@ -181,9 +202,11 @@ async function cli(argv: string[]): Promise<void> {
   const positional = rest.filter((arg, i) => !arg.startsWith('--') && rest[i - 1] !== '--slug');
 
   if (command === 'add' && flag('--all')) {
-    for (const r of regenerateAll(p, profiles)) {
+    const result = regenerateAgents(p, profiles);
+    for (const r of result.floors) {
       console.log(r.error ? `${r.slug}: ${r.error}` : `${r.slug}: agentes regenerados`);
     }
+    console.log(`${result.files} agentes escritos en ${p.agentsDir}`);
     return;
   }
   if (command === 'add' && positional[0]) {
@@ -213,7 +236,7 @@ async function cli(argv: string[]): Promise<void> {
 
 if (import.meta.main) {
   cli(process.argv.slice(2)).catch((error: unknown) => {
-    if (error instanceof FloorError) {
+    if (error instanceof FloorError || error instanceof TemplateError) {
       console.error(error.message);
       process.exit(1);
     }

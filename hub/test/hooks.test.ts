@@ -6,6 +6,7 @@ import { tempDir } from './helpers';
 
 const EMIT = join(PLUGIN_DIR, 'hooks', 'emit.sh');
 const GATE = join(PLUGIN_DIR, 'hooks', 'gate.sh');
+const GUARD = join(PLUGIN_DIR, 'hooks', 'guard.sh');
 const KEY = 'hook-test-key';
 
 type Seen = { path: string; headers: Record<string, string>; body: string };
@@ -42,9 +43,13 @@ describe('hook scripts', () => {
       async fetch(req) {
         const path = new URL(req.url).pathname;
         seen.push({ path, headers: Object.fromEntries(req.headers.entries()), body: await req.text() });
-        if (path === '/gate' || path === '/gate-message') return new Response(gateAnswer);
+        const body = seen.at(-1)?.body ?? '';
+        if (path === '/gate' || path === '/gate-message' || path === '/guard') return new Response(gateAnswer);
         if (path === '/ask') return new Response('{"hookSpecificOutput":{"hookEventName":"PreToolUse"}}');
-        return new Response('esto no debe llegar a Claude');
+        if (path === '/events' && body.includes('SubagentStart')) {
+          return new Response('{"hookSpecificOutput":{"hookEventName":"SubagentStart","additionalContext":"Lecciones"}}');
+        }
+        return new Response(null, { status: 200 });
       },
     });
     for (const d of [home, emptyHome, downHome]) mkdirSync(d, { recursive: true });
@@ -89,6 +94,25 @@ describe('hook scripts', () => {
     expect(request.headers['x-office-token']).toBe('tok-1');
     expect(request.headers['x-office-role']).toBe('office-lead-mobile');
     expect(request.headers['x-office-name']).toBe('lead-mobile');
+  });
+
+  test('emit prints the memory the hub sends back for a starting agent', async () => {
+    const result = await runHook(EMIT, ['events'], home, '{"hook_event_name":"SubagentStart","session_id":"s-1"}');
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout).hookSpecificOutput.additionalContext).toBe('Lecciones');
+  });
+
+  test('guard blocks with the reason and passes everything else, also with the hub down', async () => {
+    gateAnswer = 'block:Guardia de Agent Office: Redacción solo escribe dentro de /docs/redaccion.';
+    const blocked = await runHook(GUARD, [], home, '{"hook_event_name":"PreToolUse","tool_name":"Write"}', { AGENT_OFFICE_ROLE: 'office-lead-redaccion' });
+    expect(blocked.code).toBe(2);
+    expect(blocked.stderr).toContain('Redacción solo escribe');
+    expect(seen.at(-1)?.path).toBe('/guard');
+    expect(seen.at(-1)?.headers['x-office-role']).toBe('office-lead-redaccion');
+    gateAnswer = 'pass';
+    expect((await runHook(GUARD, [], home, '{"hook_event_name":"PreToolUse","tool_name":"Write"}')).code).toBe(0);
+    expect((await runHook(GUARD, [], downHome, '{"hook_event_name":"PreToolUse","tool_name":"Write"}')).code).toBe(0);
+    expect((await runHook(GUARD, [], emptyHome, '{}')).code).toBe(0);
   });
 
   test('emit ask prints the hub decision for Claude Code', async () => {

@@ -2,8 +2,10 @@ import { readFileSync, statSync } from 'node:fs';
 import { join, normalize, resolve, sep } from 'node:path';
 import type { Server, ServerWebSocket } from 'bun';
 import { Hono, type Context, type Next } from 'hono';
+import { isRoleId } from './memory';
 import { isHookEvent, type Office } from './office';
 import { hostAllowed, injectKey, keyMatches, originAllowed } from './security';
+import type { SettingsService } from './settings';
 import { record, text } from './state-machine';
 import type { ClientMessage, HookMeta, ServerMessage } from './types';
 
@@ -15,6 +17,7 @@ export type ServerOptions = {
   key: () => string;
   publicDir: string;
   dev?: boolean;
+  settings?: SettingsService;
 };
 
 export type RunningServer = { server: Server<WsData>; stop: () => void };
@@ -41,10 +44,18 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
     await next();
   };
 
+  app.get('/health', (c) => c.text('ok'));
+
   app.post('/events', requireKey, async (c) => {
     const event = await readJson(c);
-    if (isHookEvent(event)) office.ingest(event, metaOf(c));
-    return c.body(null, 200);
+    const output = isHookEvent(event) ? office.ingest(event, metaOf(c)) : null;
+    return output ? c.body(output, 200, { 'Content-Type': 'application/json' }) : c.body(null, 200);
+  });
+
+  app.post('/guard', requireKey, async (c) => {
+    const event = await readJson(c);
+    const decision = isHookEvent(event) ? office.guard(event, metaOf(c)) : { pass: true, reason: '' };
+    return c.text(decision.pass ? 'pass' : `block:${decision.reason}`);
   });
 
   app.post('/ask', requireKey, async (c) => {
@@ -91,6 +102,65 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
     if (result === 'ok') return c.json({ ok: true });
     if (result === 'not-found') return c.json({ error: 'Sesión no encontrada' }, 404);
     return c.json({ error: 'No se pudo entregar la orden' }, 502);
+  });
+
+  app.get('/api/settings', requireKey, (c) => {
+    if (!opts.settings) return c.json({ error: 'Ajustes no disponibles' }, 503);
+    return c.json(opts.settings.view());
+  });
+
+  app.post('/api/settings', requireKey, async (c) => {
+    if (!opts.settings) return c.json({ ok: false, error: 'Ajustes no disponibles' }, 503);
+    const result = opts.settings.update(await readJson(c));
+    return c.json(result, result.ok ? 200 : 400);
+  });
+
+  app.get('/api/memory/:floor/:role', requireKey, (c) => {
+    const floor = c.req.param('floor') ?? '';
+    const role = c.req.param('role');
+    if (!floor || floor.length > 80 || !isRoleId(role)) return c.json({ error: 'Planta o rol no válidos' }, 400);
+    return c.json(office.memoryView(floor, role));
+  });
+
+  app.post('/api/memory', requireKey, async (c) => {
+    const result = office.addLesson(await readJson(c));
+    if (result.ok) return c.json({ lesson: result.lesson });
+    return c.json({ error: result.error }, result.status === 409 ? 409 : 400);
+  });
+
+  app.delete('/api/memory/:id', requireKey, (c) => {
+    const id = Number(c.req.param('id'));
+    if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'id no válido' }, 400);
+    return office.removeLesson(id) ? c.json({ ok: true }) : c.json({ error: 'Lección no encontrada' }, 404);
+  });
+
+  app.get('/api/reports/:agentKey', requireKey, (c) => {
+    const report = office.report(c.req.param('agentKey') ?? '');
+    return report ? c.json(report) : c.json({ error: 'No hay informe de ese agente' }, 404);
+  });
+
+  app.get('/api/documents', requireKey, (c) => c.json(office.documents()));
+
+  app.get('/api/documents/content', requireKey, (c) => {
+    const content = office.documentContent(c.req.query('path') ?? '');
+    return content ? c.json(content) : c.json({ error: 'Documento no encontrado' }, 404);
+  });
+
+  app.post('/api/documents/discard', requireKey, async (c) => {
+    const path = text(record(await readJson(c)).path);
+    if (!path) return c.json({ error: 'path es obligatorio' }, 400);
+    const result = await office.discardDocument(path);
+    if (result === 'ok') return c.json({ ok: true });
+    if (result === 'closed') return c.json({ error: 'El plan ya está entregado o descartado' }, 409);
+    return c.json({ error: 'Plan no encontrado' }, 404);
+  });
+
+  app.post('/api/redaccion/sync', requireKey, async (c) => {
+    holdRequest(c.req.raw);
+    const result = await office.syncSources(await readJson(c));
+    const asText = c.req.query('format') === 'text';
+    if (!result.ok) return asText ? c.text(`ERROR: ${result.error}\n`, 400) : c.json({ error: result.error }, 400);
+    return asText ? c.text(`${result.text}\n`) : c.json(result);
   });
 
   app.get('*', (c) => serveStatic(c.req.path, opts));

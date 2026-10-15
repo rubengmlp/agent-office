@@ -18,6 +18,7 @@ import { loadProfiles } from './profiles';
 import { prune } from './prune';
 import { startRecording } from './recorder';
 import { startServer } from './server';
+import { createSettings } from './settings';
 
 const DAY_MS = 86_400_000;
 const TICK_MS = 5000;
@@ -42,14 +43,7 @@ export function main(argv: string[]): void {
     rawDir: process.env.AGENT_OFFICE_RAW === '1' ? RAW_FIXTURES_DIR : null,
   });
   const recorder = process.env.AGENT_OFFICE_RECORD ? startRecording(office, process.env.AGENT_OFFICE_RECORD) : null;
-  const { stop } = startServer({
-    office,
-    port: config.port,
-    key: () => key,
-    publicDir: PUBLIC_DIR,
-    dev: process.env.AGENT_OFFICE_DEV === '1',
-  });
-  const stopWatching = watchTargets(configTargets(p.home, PROFILES_DIR), () => {
+  const reload = () => {
     try {
       config = loadConfig(p);
       office.reload(config, loadProfiles(PROFILES_DIR));
@@ -57,9 +51,24 @@ export function main(argv: string[]): void {
     } catch (error) {
       console.error(`No se pudo recargar la configuración: ${(error as Error).message}`);
     }
+  };
+  const settings = createSettings(p, () => loadProfiles(PROFILES_DIR), reload);
+  const { stop } = startServer({
+    office,
+    port: config.port,
+    key: () => key,
+    publicDir: PUBLIC_DIR,
+    dev: process.env.AGENT_OFFICE_DEV === '1',
+    settings,
   });
-  prune(db, Date.now(), config.retentionDays);
-  const pruneTimer = setInterval(() => prune(db, Date.now(), config.retentionDays), DAY_MS);
+  const stopWatching = watchTargets(configTargets(p.home, PROFILES_DIR), reload);
+  office.start();
+  const daily = () => {
+    prune(db, Date.now(), config.retentionDays);
+    office.expireSources().catch((error: unknown) => console.error(`No se pudieron retirar fuentes antiguas: ${(error as Error).message}`));
+  };
+  daily();
+  const pruneTimer = setInterval(daily, DAY_MS);
   const tickTimer = setInterval(() => office.tick(), TICK_MS);
 
   const url = `http://127.0.0.1:${config.port}`;
@@ -72,6 +81,7 @@ export function main(argv: string[]): void {
     clearInterval(pruneTimer);
     clearInterval(tickTimer);
     stopWatching();
+    office.stop();
     recorder?.stop();
     stop();
     db.close();
