@@ -10,20 +10,20 @@ const KEY = 'hook-test-key';
 
 type Seen = { path: string; headers: Record<string, string>; body: string };
 
-function runHook(script: string, args: string[], home: string, stdin: string, env: Record<string, string> = {}) {
+async function runHook(script: string, args: string[], home: string, stdin: string, env: Record<string, string> = {}) {
   const started = Date.now();
-  const result = Bun.spawnSync(['sh', script, ...args], {
+  const proc = Bun.spawn(['sh', script, ...args], {
     stdin: new TextEncoder().encode(stdin),
     env: { ...process.env, AGENT_OFFICE_HOME: home, ...env },
     stdout: 'pipe',
     stderr: 'pipe',
   });
-  return {
-    code: result.exitCode,
-    stdout: result.stdout.toString(),
-    stderr: result.stderr.toString(),
-    ms: Date.now() - started,
-  };
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  return { code, stdout, stderr, ms: Date.now() - started };
 }
 
 describe('hook scripts', () => {
@@ -59,22 +59,22 @@ describe('hook scripts', () => {
     cleanup();
   });
 
-  test('without a key both scripts do nothing', () => {
-    expect(runHook(EMIT, ['events'], emptyHome, '{}')).toMatchObject({ code: 0, stdout: '' });
-    expect(runHook(GATE, [], emptyHome, '{}')).toMatchObject({ code: 0, stdout: '' });
+  test('without a key both scripts do nothing', async () => {
+    expect(await runHook(EMIT, ['events'], emptyHome, '{}')).toMatchObject({ code: 0, stdout: '' });
+    expect(await runHook(GATE, [], emptyHome, '{}')).toMatchObject({ code: 0, stdout: '' });
   });
 
-  test('with the hub down both scripts exit 0 quickly', () => {
-    const emit = runHook(EMIT, ['events'], downHome, '{"hook_event_name":"Stop"}');
-    const gate = runHook(GATE, [], downHome, '{"hook_event_name":"TaskCompleted"}');
+  test('with the hub down both scripts exit 0 quickly', async () => {
+    const emit = await runHook(EMIT, ['events'], downHome, '{"hook_event_name":"Stop"}');
+    const gate = await runHook(GATE, [], downHome, '{"hook_event_name":"TaskCompleted"}');
     expect(emit).toMatchObject({ code: 0, stdout: '' });
     expect(gate.code).toBe(0);
     expect(gate.ms).toBeLessThan(3000);
   });
 
-  test('emit forwards the event with key, socket, token, role and name, and prints nothing', () => {
+  test('emit forwards the event with key, socket, token, role and name, and prints nothing', async () => {
     const event = '{"hook_event_name":"SessionStart","session_id":"s-1"}';
-    const result = runHook(EMIT, ['events'], home, event, {
+    const result = await runHook(EMIT, ['events'], home, event, {
       CLAUDE_CODE_MESSAGING_SOCKET: '/tmp/cc-socks/1.sock',
       CLAUDE_CODE_MESSAGING_TOKEN: 'tok-1',
       AGENT_OFFICE_ROLE: 'office-lead-mobile',
@@ -91,21 +91,21 @@ describe('hook scripts', () => {
     expect(request.headers['x-office-name']).toBe('lead-mobile');
   });
 
-  test('emit ask prints the hub decision for Claude Code', () => {
-    const result = runHook(EMIT, ['ask'], home, '{"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion"}');
+  test('emit ask prints the hub decision for Claude Code', async () => {
+    const result = await runHook(EMIT, ['ask'], home, '{"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion"}');
     expect(result.code).toBe(0);
     expect(result.stdout.trim()).toBe('{"hookSpecificOutput":{"hookEventName":"PreToolUse"}}');
   });
 
-  test('gate exits 2 with the reason when the hub blocks', () => {
+  test('gate exits 2 with the reason when the hub blocks', async () => {
     gateAnswer = 'block:Falta tester: pide al tester que pruebe.';
-    const result = runHook(GATE, [], home, '{"hook_event_name":"TaskCompleted"}');
+    const result = await runHook(GATE, [], home, '{"hook_event_name":"TaskCompleted"}');
     expect(result.code).toBe(2);
     expect(result.stderr.trim()).toBe('Falta tester: pide al tester que pruebe.');
   });
 
-  test('gate exits 0 when the hub passes', () => {
+  test('gate exits 0 when the hub passes', async () => {
     gateAnswer = 'pass';
-    expect(runHook(GATE, [], home, '{"hook_event_name":"TaskCompleted"}').code).toBe(0);
+    expect((await runHook(GATE, [], home, '{"hook_event_name":"TaskCompleted"}')).code).toBe(0);
   });
 });
