@@ -368,6 +368,7 @@ export class Office {
       if (this.view(agent, now).state !== agent.sentState) this.emitAgent(agent, now);
     }
     for (const session of [...this.sessions.values()]) {
+      if (session.endedAt === null && session.socket && !existsSync(session.socket)) this.endSession(session, now);
       if (session.endedAt !== null && now - session.endedAt > FORGET_ENDED_MS) this.sessions.delete(session.sessionId);
     }
   }
@@ -753,6 +754,10 @@ export class Office {
 
   private restoreSessions(): void {
     for (const row of this.sql.openSessions.all(this.now() - RESTORE_WINDOW_MS)) {
+      if (!row.socket || !existsSync(row.socket)) {
+        this.sql.endSession.run(this.now(), row.session_id);
+        continue;
+      }
       const floor = this.floors.resolve(row.cwd);
       this.sessions.set(row.session_id, {
         sessionId: row.session_id,
@@ -816,6 +821,7 @@ function prepare(db: Database) {
     openSessions: db.query<SessionRow, [number]>(
       'SELECT session_id, cwd, role, name, socket, token, team, started_at, updated_at FROM sessions WHERE ended_at IS NULL AND updated_at > ?',
     ),
+    endSession: db.query('UPDATE sessions SET ended_at = ? WHERE session_id = ?'),
     insertEdit: db.query('INSERT INTO edits (ts, agent_key, floor, path) VALUES (?, ?, ?, ?)'),
     insertTest: db.query('INSERT INTO test_runs (ts, agent_key, role, floor, ok, command) VALUES (?, ?, ?, ?, ?, ?)'),
     lastTesterGreen: db.query<{ ts: number | null }, [string]>(

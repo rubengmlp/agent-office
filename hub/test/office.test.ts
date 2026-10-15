@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PROFILES_DIR } from '../src/config';
 import { realPath } from '../src/floors';
+import { Office } from '../src/office';
 import { loadProfiles } from '../src/profiles';
 import type { AgentView, HookMeta } from '../src/types';
 import { ev, harness, loadFixture, type Harness } from './helpers';
@@ -444,5 +445,40 @@ describe('completion gate on HECHO messages', () => {
     const repo = managedRepo();
     h.office.ingest(ev(LEAD, repo, 'SessionStart', { agent_type: 'office-lead-mobile' }), leadMeta);
     expect(h.office.gateMessage(done(repo)).pass).toBe(true);
+  });
+});
+
+describe('session liveness', () => {
+  test('a session whose socket disappears is ended on the next tick', () => {
+    h = harness();
+    const repo = managedRepo();
+    const socket = join(h.root, 'lead.sock');
+    writeFileSync(socket, '');
+    h.office.ingest(ev(LEAD, repo, 'SessionStart', {}), { ...leadMeta, socket });
+    h.office.tick();
+    expect(h.office.snapshot().sessions.find((s) => s.sessionId === LEAD)?.endedAt).toBeNull();
+    rmSync(socket);
+    h.office.tick();
+    expect(h.office.snapshot().sessions.find((s) => s.sessionId === LEAD)?.endedAt).not.toBeNull();
+    expect(agent(LEAD)?.state).toBe('done');
+  });
+
+  test('a restart only restores sessions whose socket still exists', () => {
+    h = harness();
+    const repo = managedRepo();
+    const live = join(h.root, 'live.sock');
+    writeFileSync(live, '');
+    h.office.ingest(ev('live-1', repo, 'SessionStart', {}), { ...leadMeta, socket: live });
+    h.office.ingest(ev('dead-1', repo, 'SessionStart', {}), { ...leadMeta, socket: join(h.root, 'gone.sock') });
+    const restarted = new Office({
+      db: h.db,
+      config: h.config,
+      profiles: loadProfiles(PROFILES_DIR),
+      workspaceDir: h.workspace,
+      claudeHome: join(h.root, 'claude-home'),
+      gitRoot: (cwd) => cwd,
+      now: () => h.clock.now,
+    });
+    expect(restarted.snapshot().sessions.map((s) => s.sessionId)).toEqual(['live-1']);
   });
 });
