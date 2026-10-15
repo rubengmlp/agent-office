@@ -13,7 +13,7 @@ type Seen = { path: string; headers: Record<string, string>; body: string };
 function runHook(script: string, args: string[], home: string, stdin: string, env: Record<string, string> = {}) {
   const started = Date.now();
   const result = Bun.spawnSync(['sh', script, ...args], {
-    stdin: new Blob([stdin]),
+    stdin: new TextEncoder().encode(stdin),
     env: { ...process.env, AGENT_OFFICE_HOME: home, ...env },
     stdout: 'pipe',
     stderr: 'pipe',
