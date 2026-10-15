@@ -1,0 +1,171 @@
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { startServer } from '../src/server';
+import { harness } from './helpers';
+
+const KEY = 'k'.repeat(64);
+
+async function freePort(): Promise<number> {
+  const probe = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('') });
+  const port = Number(probe.port);
+  probe.stop(true);
+  return port;
+}
+
+async function until(check: () => boolean, timeoutMs = 2000): Promise<void> {
+  const start = Date.now();
+  while (!check()) {
+    if (Date.now() - start > timeoutMs) throw new Error('timeout');
+    await Bun.sleep(10);
+  }
+}
+
+describe('hub server', () => {
+  const h = harness({ holdMs: 30_000 });
+  const repo = join(h.root, 'mobile');
+  const withKey = { 'X-Office-Key': KEY };
+  let base = '';
+  let port = 0;
+  let stop = () => {};
+
+  const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
+    fetch(`${base}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
+
+  const openSocket = (origin: string) =>
+    new WebSocket(`ws://127.0.0.1:${port}/live`, { headers: { Origin: origin } });
+
+  beforeAll(async () => {
+    mkdirSync(repo, { recursive: true });
+    h.config.floors.mobile = { path: repo, stack: 'flutter', managed: true };
+    const publicDir = join(h.root, 'public');
+    mkdirSync(publicDir, { recursive: true });
+    writeFileSync(join(publicDir, 'index.html'), '<!doctype html><html><head><title>Agent Office</title></head><body></body></html>');
+    writeFileSync(join(publicDir, 'app.js'), 'console.log(1)');
+    port = await freePort();
+    base = `http://127.0.0.1:${port}`;
+    ({ stop } = startServer({ office: h.office, port, key: () => KEY, publicDir }));
+  });
+
+  afterAll(() => {
+    stop();
+    h.cleanup();
+  });
+
+  test('a foreign Host header is refused', async () => {
+    const res = await fetch(`${base}/api/state`, { headers: { ...withKey, Host: `evil.test:${port}` } });
+    expect(res.status).toBe(403);
+  });
+
+  test('requests without the key are refused', async () => {
+    expect((await post('/events', { session_id: 'x', hook_event_name: 'Stop' })).status).toBe(401);
+    expect((await fetch(`${base}/api/state`)).status).toBe(401);
+    expect((await post('/api/orders', { sessionId: 'x', text: 'y' }, { Origin: 'https://evil.test' })).status).toBe(401);
+  });
+
+  test('hook events with the key show up in the state and get an empty answer', async () => {
+    const res = await post(
+      '/events',
+      { session_id: 'srv-1', cwd: repo, hook_event_name: 'SessionStart', source: 'startup' },
+      { ...withKey, 'X-Office-Role': 'office-lead-mobile', 'X-Office-Name': 'lead-mobile' },
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('');
+    const state = (await (await fetch(`${base}/api/state`, { headers: withKey })).json()) as { agents: { key: string; name: string | null }[] };
+    expect(state.agents.find((a) => a.key === 'srv-1')?.name).toBe('lead-mobile');
+  });
+
+  test('the page is served with the key injected', async () => {
+    const html = await (await fetch(`${base}/`)).text();
+    expect(html).toContain(`window.__OFFICE_KEY__=${JSON.stringify(KEY)}`);
+    expect((await fetch(`${base}/app.js`)).status).toBe(200);
+  });
+
+  test('nothing outside the public folder is served', async () => {
+    expect((await fetch(`${base}/%2e%2e/%2e%2e/etc/passwd`)).status).toBe(404);
+    expect((await fetch(`${base}/missing.js`)).status).toBe(404);
+  });
+
+  test('a websocket that does not authenticate is closed with 4401', async () => {
+    const ws = openSocket(base);
+    const code = await new Promise<number>((resolve) => {
+      ws.onclose = (e) => resolve(e.code);
+    });
+    expect(code).toBe(4401);
+  });
+
+  test('a websocket from another origin never opens', async () => {
+    const ws = openSocket('https://evil.test');
+    const opened = await new Promise<boolean>((resolve) => {
+      ws.onopen = () => resolve(true);
+      ws.onerror = () => resolve(false);
+      ws.onclose = () => resolve(false);
+    });
+    expect(opened).toBe(false);
+  });
+
+  test('an authenticated websocket gets the snapshot and its heartbeats count', async () => {
+    const ws = openSocket(base);
+    const first = await new Promise<{ type: string }>((resolve) => {
+      ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', key: KEY }));
+      ws.onmessage = (e) => resolve(JSON.parse(String(e.data)));
+    });
+    expect(first.type).toBe('snapshot');
+    ws.send(JSON.stringify({ type: 'heartbeat', visible: true }));
+    await until(() => h.office.desk.someoneWatching());
+    ws.close();
+  });
+
+  test('/ask holds the hook until the panel answers, and a late answer gets 409', async () => {
+    await post(
+      '/events',
+      { session_id: 'srv-2', cwd: repo, hook_event_name: 'SessionStart' },
+      { ...withKey, 'X-Office-Role': 'office-lead-mobile' },
+    );
+    h.office.heartbeat(true);
+    const question = {
+      session_id: 'srv-2',
+      cwd: repo,
+      hook_event_name: 'PreToolUse',
+      tool_name: 'AskUserQuestion',
+      tool_use_id: 'srv-q1',
+      tool_input: { questions: [{ question: '¿Seguimos?', options: [{ label: 'Sí' }, { label: 'No' }] }] },
+    };
+    const pending = post('/ask', question, withKey);
+    await until(() => h.office.desk.has('srv-q1'));
+    expect((await post('/api/answers/srv-q1', { answers: {} }, withKey)).status).toBe(400);
+    expect((await post('/api/answers/srv-q1', { answers: { '¿Seguimos?': 'Sí' } }, withKey)).status).toBe(200);
+    const decision = (await (await pending).json()) as { hookSpecificOutput: { updatedInput: { answers: Record<string, string> } } };
+    expect(decision.hookSpecificOutput.updatedInput.answers['¿Seguimos?']).toBe('Sí');
+    expect((await post('/api/answers/srv-q1', { answers: { '¿Seguimos?': 'No' } }, withKey)).status).toBe(409);
+  });
+
+  test('/ask answers at once with an empty body when nobody watches', async () => {
+    h.clock.advance(60_000);
+    const res = await post(
+      '/ask',
+      {
+        session_id: 'srv-2',
+        cwd: repo,
+        hook_event_name: 'PreToolUse',
+        tool_name: 'AskUserQuestion',
+        tool_use_id: 'srv-q2',
+        tool_input: { questions: [{ question: '¿Otra?', options: [{ label: 'Sí' }] }] },
+      },
+      withKey,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('');
+  });
+
+  test('/gate answers pass or block as plain text', async () => {
+    const res = await post('/gate', { session_id: 'srv-3', cwd: repo, hook_event_name: 'TaskCompleted', task_id: '1' }, withKey);
+    expect(await res.text()).toBe('pass');
+  });
+
+  test('/api/orders validates its input', async () => {
+    expect((await post('/api/orders', { sessionId: 'srv-1' }, withKey)).status).toBe(400);
+    expect((await post('/api/orders', { sessionId: 'nope', text: 'hola' }, withKey)).status).toBe(404);
+    expect((await post('/api/orders', { sessionId: 'srv-1', text: 'hola' }, withKey)).status).toBe(502);
+  });
+});

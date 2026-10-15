@@ -1,0 +1,188 @@
+[
+ {
+  "session_id": "11111111-aaaa-4bbb-8ccc-000000000001",
+  "cwd": "__CWD__",
+  "hook_event_name": "SessionStart",
+  "source": "startup"
+ },
+ {
+  "session_id": "11111111-aaaa-4bbb-8ccc-000000000001",
+  "cwd": "__CWD__",
+  "permission_mode": "default",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "hook capture"
+ },
+ {
+  "session_id": "11111111-aaaa-4bbb-8ccc-000000000001",
+  "cwd": "__CWD__",
+  "permission_mode": "default",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+   "command": "true",
+   "description": "Run true command"
+  },
+  "tool_use_id": "toolu_01QoAYCMD4SYdsfjpMhUgA5b"
+ },
+ {
+  "session_id": "11111111-aaaa-4bbb-8ccc-000000000001",
+  "cwd": "__CWD__",
+  "permission_mode": "default",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+   "command": "true",
+   "description": "Run true command"
+  },
+  "tool_response": {
+   "stdout": "",
+   "stderr": "",
+   "interrupted": false,
+   "isImage": false,
+   "noOutputExpected": false
+  },
+  "tool_use_id": "toolu_01QoAYCMD4SYdsfjpMhUgA5b"
+ },
+ {
+  "session_id": "11111111-aaaa-4bbb-8ccc-000000000001",
+  "cwd": "__CWD__",
+  "permission_mode": "default",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+   "command": "false",
+   "description": "Run false command (intentional failure)"
+  },
+  "tool_use_id": "toolu_01MxHr5wKSz5aU4tWsHmTTg4"
+ },
+ {
+  "session_id": "11111111-aaaa-4bbb-8ccc-000000000001",
+  "cwd": "__CWD__",
+  "permission_mode": "default",
+  "hook_event_name": "PostToolUseFailure",
+  "tool_name": "Bash",
+  "tool_input": {
+   "command": "false",
+   "description": "Run false command (intentional failure)"
+  },
+  "tool_use_id": "toolu_01MxHr5wKSz5aU4tWsHmTTg4",
+  "error": "Exit code 1",
+  "is_interrupt": false
+ },
+ {
+  "session_id": "11111111-aaaa-4bbb-8ccc-000000000001",
+  "cwd": "__CWD__",
+  "permission_mode": "default",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Agent",
+  "tool_input": {
+   "description": "Run echoer agent",
+   "prompt": "go",
+   "subagent_type": "echoer"
+  },
+  "tool_use_id": "toolu_01GrVnAc1EQbBDpmBts3akFb"
+ },
+ {
+  "session_id": "11111111-aaaa-4bbb-8ccc-000000000001",
+  "cwd": "__CWD__",
+  "permission_mode": "default",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Agent",
+  "tool_input": {
+   "description": "Run echoer agent",
+   "prompt": "go",
+   "subagent_type": "echoer"
+  },
+  "tool_response": {
+   "isAsync": true,
+   "status": "async_launched",
+   "agentId": "a0f92699da9c839ef",
+   "description": "Run echoer agent",
+   "resolvedModel": "claude-haiku-5-5",
+   "canReadOutputFile": true,
+   "canContinueAgent": false
+  },
+  "tool_use_id": "toolu_01GrVnAc1EQbBDpmBts3akFb"
+ },
+ {
+  "session_id": "11111111-aaaa-4bbb-8ccc-000000000001",
+  "cwd": "__CWD__",
+  "agent_id": "a0f92699da9c839ef",
+  "agent_type": "echoer",
+  "hook_event_name": "SubagentStart"
+ },
+ {
+  "session_id": "11111111-aaaa-4bbb-8ccc-000000000001",
+  "cwd": "__CWD__",
+  "permission_mode": "default",
+  "agent_id": "a0f92699da9c839ef",
+  "agent_type": "echoer",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+   "command": "true",
+   "description": "Run the true command once"
+  },
+  "tool_use_id": "toolu_01MB91NrCW5wknnAtRLLKwa8"
+ },
+ {
+  "session_id": "11111111-aaaa-4bbb-8ccc-000000000001",
+  "cwd": "__CWD__",
+  "permission_mode": "default",
+  "agent_id": "a0f92699da9c839ef",
+  "agent_type": "echoer",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+   "command": "true",
+   "description": "Run the true command once"
+  },
+  "tool_response": {
+   "stdout": "",
+   "stderr": "",
+   "interrupted": false,
+   "isImage": false,
+   "noOutputExpected": false
+  },
+  "tool_use_id": "toolu_01MB91NrCW5wknnAtRLLKwa8"
+ },
+ {
+  "session_id": "11111111-aaaa-4bbb-8ccc-000000000001",
+  "cwd": "__CWD__",
+  "permission_mode": "default",
+  "hook_event_name": "Stop",
+  "stop_hook_active": false,
+  "last_assistant_message": "Steps 1–3 ran, but I stopped at step 4 b"
+ },
+ {
+  "session_id": "11111111-aaaa-4bbb-8ccc-000000000001",
+  "cwd": "__CWD__",
+  "permission_mode": "default",
+  "agent_id": "a0f92699da9c839ef",
+  "agent_type": "echoer",
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "last_assistant_message": "ok"
+ },
+ {
+  "session_id": "11111111-aaaa-4bbb-8ccc-000000000001",
+  "cwd": "__CWD__",
+  "permission_mode": "default",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "hook capture"
+ },
+ {
+  "session_id": "11111111-aaaa-4bbb-8ccc-000000000001",
+  "cwd": "__CWD__",
+  "permission_mode": "default",
+  "hook_event_name": "Stop",
+  "stop_hook_active": false,
+  "last_assistant_message": "The `echoer` agent finished and returned"
+ },
+ {
+  "session_id": "11111111-aaaa-4bbb-8ccc-000000000001",
+  "cwd": "__CWD__",
+  "hook_event_name": "SessionEnd",
+  "reason": "other"
+ }
+]
