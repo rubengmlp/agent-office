@@ -1,0 +1,18 @@
+{
+  "name": "agent-office",
+  "private": true,
+  "type": "module",
+  "workspaces": ["hub", "ui"],
+  "scripts": {
+    "setup": "bun hub/src/setup.ts",
+    "rotate-key": "bun hub/src/setup.ts --rotate-key",
+    "floor": "bun hub/src/floor-cli.ts",
+    "hub": "bun hub/src/main.ts",
+    "office": "bun hub/src/main.ts --open",
+    "dev:hub": "AGENT_OFFICE_DEV=1 bun hub/src/main.ts",
+    "dev:ui": "cd ui && bun run dev",
+    "build": "cd ui && bun run build",
+    "test": "cd hub && bun test",
+    "typecheck": "cd hub && bun run typecheck && cd ../ui && bun run typecheck"
+  }
+}
