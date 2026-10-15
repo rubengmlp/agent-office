@@ -163,6 +163,15 @@ describe('hub server', () => {
     expect(await res.text()).toBe('pass');
   });
 
+  test('/gate-message lets normal messages through', async () => {
+    const res = await post(
+      '/gate-message',
+      { session_id: 'srv-1', cwd: repo, hook_event_name: 'PreToolUse', tool_name: 'SendMessage', tool_input: { to: 'director', message: 'hola' } },
+      withKey,
+    );
+    expect(await res.text()).toBe('pass');
+  });
+
   test('/api/orders validates its input', async () => {
     expect((await post('/api/orders', { sessionId: 'srv-1' }, withKey)).status).toBe(400);
     expect((await post('/api/orders', { sessionId: 'nope', text: 'hola' }, withKey)).status).toBe(404);

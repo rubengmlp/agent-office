@@ -1,0 +1,240 @@
+[
+ {
+  "session_id": "c3cfeeca-51b9-41c6-b0e7-ef76b63ccf96",
+  "cwd": "__CWD__",
+  "agent_type": "office-lead-office-sandbox",
+  "hook_event_name": "SessionStart",
+  "source": "startup",
+  "model": "claude-sonnet-5-5",
+  "session_title": "lead-office-sandbox"
+ },
+ {
+  "session_id": "c3cfeeca-51b9-41c6-b0e7-ef76b63ccf96",
+  "cwd": "__CWD__",
+  "agent_type": "office-lead-office-sandbox",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Agent",
+  "tool_input": {
+   "description": "Desarrollador suma",
+   "prompt": "Tarea: añadir una función suma en sum.ts",
+   "subagent_type": "office-dev-office-sandbox",
+   "model": "sonnet",
+   "name": "dev-office-sandbox"
+  },
+  "tool_use_id": "toolu_01C8neaKvcJJGcbKQxJW4ZGR"
+ },
+ {
+  "session_id": "c3cfeeca-51b9-41c6-b0e7-ef76b63ccf96",
+  "cwd": "__CWD__",
+  "agent_type": "office-lead-office-sandbox",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Agent",
+  "tool_input": {
+   "description": "Tester suma",
+   "prompt": "Eres el tester de la planta office-sandbox. Espera instrucci",
+   "subagent_type": "office-tester-office-sandbox",
+   "model": "sonnet",
+   "name": "tester-office-sandbox"
+  },
+  "tool_use_id": "toolu_011rv1mYZtXihyb7tsaDugVj"
+ },
+ {
+  "session_id": "c3cfeeca-51b9-41c6-b0e7-ef76b63ccf96",
+  "cwd": "__CWD__",
+  "agent_id": "adev-office-sandbox-6cae7fd9efff0a59",
+  "agent_type": "dev-office-sandbox",
+  "hook_event_name": "SubagentStart"
+ },
+ {
+  "session_id": "c3cfeeca-51b9-41c6-b0e7-ef76b63ccf96",
+  "cwd": "__CWD__",
+  "agent_type": "office-lead-office-sandbox",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Agent",
+  "tool_input": {
+   "description": "Desarrollador suma",
+   "prompt": "Tarea: añadir una función suma en sum.ts",
+   "subagent_type": "office-dev-office-sandbox",
+   "model": "sonnet",
+   "name": "dev-office-sandbox"
+  },
+  "tool_response": {
+   "status": "teammate_spawned",
+   "agentId": "adev-office-sandbox-6cae7fd9efff0a59",
+   "resolvedModel": "claude-sonnet-5-5",
+   "teammate_id": "dev-office-sandbox@session-c3cfeeca",
+   "agent_id": "adev-office-sandbox-6cae7fd9efff0a59",
+   "agent_type": "office-dev-office-sandbox",
+   "model": "claude-sonnet-5-5",
+   "name": "dev-office-sandbox",
+   "color": "blue",
+   "tmux_session_name": "in-process",
+   "tmux_window_name": "in-process",
+   "tmux_pane_id": "in-process",
+   "team_name": "session-c3cfeeca",
+   "is_splitpane": false,
+   "plan_mode_required": false
+  },
+  "tool_use_id": "toolu_01C8neaKvcJJGcbKQxJW4ZGR"
+ },
+ {
+  "session_id": "c3cfeeca-51b9-41c6-b0e7-ef76b63ccf96",
+  "cwd": "__CWD__",
+  "agent_type": "office-lead-office-sandbox",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Agent",
+  "tool_input": {
+   "description": "Tester suma",
+   "prompt": "Eres el tester de la planta office-sandbox. Espera instrucci",
+   "subagent_type": "office-tester-office-sandbox",
+   "model": "sonnet",
+   "name": "tester-office-sandbox"
+  },
+  "tool_response": {
+   "status": "teammate_spawned",
+   "agentId": "atester-office-sandbox-0df0ed3ceca180ab",
+   "resolvedModel": "claude-sonnet-5-5",
+   "teammate_id": "tester-office-sandbox@session-c3cfeeca",
+   "agent_id": "atester-office-sandbox-0df0ed3ceca180ab",
+   "agent_type": "office-tester-office-sandbox",
+   "model": "claude-sonnet-5-5",
+   "name": "tester-office-sandbox",
+   "color": "green",
+   "tmux_session_name": "in-process",
+   "tmux_window_name": "in-process",
+   "tmux_pane_id": "in-process",
+   "team_name": "session-c3cfeeca",
+   "is_splitpane": false,
+   "plan_mode_required": false
+  },
+  "tool_use_id": "toolu_011rv1mYZtXihyb7tsaDugVj"
+ },
+ {
+  "session_id": "c3cfeeca-51b9-41c6-b0e7-ef76b63ccf96",
+  "cwd": "__CWD__",
+  "agent_id": "atester-office-sandbox-0df0ed3ceca180ab",
+  "agent_type": "tester-office-sandbox",
+  "hook_event_name": "SubagentStart"
+ },
+ {
+  "session_id": "c3cfeeca-51b9-41c6-b0e7-ef76b63ccf96",
+  "cwd": "__CWD__",
+  "agent_id": "atester-office-sandbox-0df0ed3ceca180ab",
+  "agent_type": "tester-office-sandbox",
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "last_assistant_message": "Entendido. Espero instrucciones del jefe sobre qué probar; n"
+ },
+ {
+  "session_id": "c3cfeeca-51b9-41c6-b0e7-ef76b63ccf96",
+  "cwd": "__CWD__",
+  "agent_id": "atester-office-sandbox-0df0ed3ceca180ab",
+  "agent_type": "tester-office-sandbox",
+  "hook_event_name": "TeammateIdle",
+  "teammate_name": "tester-office-sandbox",
+  "team_name": "session-c3cfeeca"
+ },
+ {
+  "session_id": "c3cfeeca-51b9-41c6-b0e7-ef76b63ccf96",
+  "cwd": "__CWD__",
+  "agent_id": "a804d637fe480cbe5",
+  "agent_type": "office-lead-office-sandbox",
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "last_assistant_message": "Dime qué pasó cuando el desarrollador terminó"
+ },
+ {
+  "session_id": "c3cfeeca-51b9-41c6-b0e7-ef76b63ccf96",
+  "cwd": "__CWD__",
+  "agent_id": "adev-office-sandbox-6cae7fd9efff0a59",
+  "agent_type": "dev-office-sandbox",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "SendMessage",
+  "tool_input": {
+   "to": "team-lead",
+   "summary": "Bloqueado: no puedo escribir ficheros (Write deshabilitado)",
+   "message": "BLOQUEADO: no puedo crear sum.ts ni sum.test.ts — necesito que se habilite una herramienta de escritura (Write/Edit) par",
+   "type": "message",
+   "recipient": "team-lead",
+   "recipient_kind": "name",
+   "content": "BLOQUEADO: no puedo crear sum.ts ni sum.test.ts —…"
+  },
+  "tool_use_id": "toolu_015vEBSUcADnZkGhPVDEMMY1"
+ },
+ {
+  "session_id": "c3cfeeca-51b9-41c6-b0e7-ef76b63ccf96",
+  "cwd": "__CWD__",
+  "agent_id": "adev-office-sandbox-6cae7fd9efff0a59",
+  "agent_type": "dev-office-sandbox",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "SendMessage",
+  "tool_input": {
+   "to": "team-lead",
+   "summary": "Bloqueado: no puedo escribir ficheros (Write deshabilitado)",
+   "message": "BLOQUEADO: no puedo crear sum.ts ni sum.test.ts — necesito que se habilite una herramienta de escritura (Write/Edit) par",
+   "type": "message",
+   "recipient": "team-lead",
+   "recipient_kind": "name",
+   "content": "BLOQUEADO: no puedo crear sum.ts ni sum.test.ts —…"
+  },
+  "tool_response": {
+   "success": true,
+   "message": "Message sent to team-lead's inbox",
+   "msg_id": "21657f58-649c-4457-ac81-c8333d0957bb",
+   "routing": {
+    "sender": "dev-office-sandbox",
+    "senderColor": "blue",
+    "target": "@team-lead",
+    "targetColor": "red",
+    "summary": "Bloqueado: no puedo escribir ficheros (Write deshabilitado)",
+    "content": "BLOQUEADO: no puedo crear sum.ts ni sum.test.ts —…"
+   }
+  },
+  "tool_use_id": "toolu_015vEBSUcADnZkGhPVDEMMY1"
+ },
+ {
+  "session_id": "c3cfeeca-51b9-41c6-b0e7-ef76b63ccf96",
+  "cwd": "__CWD__",
+  "agent_id": "ad5ccda9967b9a2e1",
+  "agent_type": "office-lead-office-sandbox",
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "last_assistant_message": "dime qué pasó con el desarrollador"
+ },
+ {
+  "session_id": "c3cfeeca-51b9-41c6-b0e7-ef76b63ccf96",
+  "cwd": "__CWD__",
+  "agent_id": "adev-office-sandbox-6cae7fd9efff0a59",
+  "agent_type": "dev-office-sandbox",
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "last_assistant_message": "No he creado `sum.ts` ni `sum.test.ts`, así que la tarea sig"
+ },
+ {
+  "session_id": "c3cfeeca-51b9-41c6-b0e7-ef76b63ccf96",
+  "cwd": "__CWD__",
+  "agent_id": "adev-office-sandbox-6cae7fd9efff0a59",
+  "agent_type": "dev-office-sandbox",
+  "hook_event_name": "TeammateIdle",
+  "teammate_name": "dev-office-sandbox",
+  "team_name": "session-c3cfeeca"
+ },
+ {
+  "session_id": "c3cfeeca-51b9-41c6-b0e7-ef76b63ccf96",
+  "cwd": "__CWD__",
+  "agent_id": "a4325b5cc6a0e218c",
+  "agent_type": "office-lead-office-sandbox",
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "last_assistant_message": "habilita Write para el desarrollador"
+ },
+ {
+  "session_id": "c3cfeeca-51b9-41c6-b0e7-ef76b63ccf96",
+  "cwd": "__CWD__",
+  "agent_id": "a89ff715653b6d3c6",
+  "agent_type": "office-lead-office-sandbox",
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "last_assistant_message": "habilita Write y Edit para el desarrollador"
+ }
+]

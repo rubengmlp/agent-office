@@ -360,3 +360,89 @@ describe('message recipients', () => {
     expect(message?.text).toBe('Empieza por la tarea 1');
   });
 });
+
+describe('real agent team capture', () => {
+  const REAL_LEAD = 'c3cfeeca-51b9-41c6-b0e7-ef76b63ccf96';
+  const DEV = 'adev-office-sandbox-6cae7fd9efff0a59';
+  const TESTER = 'atester-office-sandbox-0df0ed3ceca180ab';
+
+  test('teammates get their office type, phantom forks are ignored and team-lead is the lead', () => {
+    h = harness();
+    const repo = managedRepo('office-sandbox');
+    for (const e of loadFixture('team-sandbox.json', repo)) h.office.ingest(e);
+    const agents = h.office.snapshot().agents;
+    expect(agents.map((a) => a.key).sort()).toEqual([DEV, REAL_LEAD, TESTER].sort());
+    expect(agent(REAL_LEAD)).toMatchObject({ role: 'office-lead-office-sandbox', roleKind: 'lead', name: 'lead-office-sandbox' });
+    expect(agent(DEV)).toMatchObject({ role: 'office-dev-office-sandbox', roleKind: 'dev', name: 'dev-office-sandbox', parentKey: REAL_LEAD });
+    expect(agent(TESTER)).toMatchObject({ role: 'office-tester-office-sandbox', roleKind: 'tester', state: 'idle', endedAt: null });
+    expect(agent(DEV)?.state).toBe('blocked');
+    const message = h.office.snapshot().messages.at(-1);
+    expect(message).toMatchObject({ fromKey: DEV, toName: 'team-lead', toKey: REAL_LEAD });
+  });
+
+  test('without the spawn call the type comes from the team config', () => {
+    h = harness();
+    const repo = managedRepo();
+    const teamDir = join(h.root, 'claude-home', 'teams', TEAM);
+    mkdirSync(teamDir, { recursive: true });
+    writeFileSync(
+      join(teamDir, 'config.json'),
+      JSON.stringify({ members: [{ name: 'team-lead', agentType: 'team-lead' }, { name: 'tester-mobile', agentType: 'office-tester-mobile' }] }),
+    );
+    h.office.ingest(ev(LEAD, repo, 'SessionStart', {}), leadMeta);
+    h.office.ingest(ev(LEAD, repo, 'PreToolUse', { agent_id: 'atester-1', agent_type: 'tester-mobile', tool_name: 'Read', tool_input: { file_path: join(repo, 'a') } }));
+    expect(agent('atester-1')).toMatchObject({ role: 'office-tester-mobile', roleKind: 'tester' });
+  });
+});
+
+describe('completion gate on HECHO messages', () => {
+  const done = (repo: string, extra: Record<string, unknown> = {}) =>
+    ev(LEAD, repo, 'PreToolUse', {
+      agent_type: 'office-lead-mobile',
+      tool_name: 'SendMessage',
+      tool_input: { to: 'director', message: 'HECHO: pantalla de viajes — validado por tester-mobile — pendiente: nada' },
+      ...extra,
+    });
+
+  function teamWithEdit(): string {
+    h = harness();
+    const repo = managedRepo();
+    h.office.ingest(ev(LEAD, repo, 'SessionStart', { agent_type: 'office-lead-mobile' }), leadMeta);
+    h.office.ingest(
+      ev(LEAD, repo, 'PostToolUse', { agent_id: 'adev-1', agent_type: 'office-dev-mobile', tool_name: 'Write', tool_input: { file_path: join(repo, 'lib', 'a.dart') } }),
+    );
+    return repo;
+  }
+
+  test('blocks the lead report while the change has no green tester run, then lets it through', () => {
+    const repo = teamWithEdit();
+    h.clock.advance(1000);
+    h.office.ingest(
+      ev(LEAD, repo, 'PostToolUse', { agent_id: 'adev-1', agent_type: 'office-dev-mobile', tool_name: 'Bash', tool_input: { command: 'flutter test test/a_test.dart' } }),
+    );
+    const blocked = h.office.gateMessage(done(repo));
+    expect(blocked.pass).toBe(false);
+    expect(blocked.reason).toContain('Falta tester');
+    h.clock.advance(1000);
+    h.office.ingest(
+      ev(LEAD, repo, 'PostToolUse', { agent_id: 'atester-1', agent_type: 'office-tester-mobile', tool_name: 'Bash', tool_input: { command: 'flutter test test/a_test.dart' } }),
+    );
+    expect(h.office.gateMessage(done(repo)).pass).toBe(true);
+    const rows = h.db.query<{ decision: string }, []>('SELECT decision FROM gate_decisions ORDER BY id').all();
+    expect(rows.map((r) => r.decision)).toEqual(['block', 'pass']);
+  });
+
+  test('only a HECHO message from a lead is checked', () => {
+    const repo = teamWithEdit();
+    expect(h.office.gateMessage(done(repo, { tool_input: { to: 'director', message: 'Voy por la mitad' } })).pass).toBe(true);
+    expect(h.office.gateMessage(done(repo, { agent_id: 'adev-1', agent_type: 'office-dev-mobile' })).pass).toBe(true);
+    expect(h.office.gateMessage(done(repo)).pass).toBe(false);
+  });
+
+  test('a report without changes passes', () => {
+    h = harness();
+    const repo = managedRepo();
+    h.office.ingest(ev(LEAD, repo, 'SessionStart', { agent_type: 'office-lead-mobile' }), leadMeta);
+    expect(h.office.gateMessage(done(repo)).pass).toBe(true);
+  });
+});

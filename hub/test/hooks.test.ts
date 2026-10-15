@@ -42,7 +42,7 @@ describe('hook scripts', () => {
       async fetch(req) {
         const path = new URL(req.url).pathname;
         seen.push({ path, headers: Object.fromEntries(req.headers.entries()), body: await req.text() });
-        if (path === '/gate') return new Response(gateAnswer);
+        if (path === '/gate' || path === '/gate-message') return new Response(gateAnswer);
         if (path === '/ask') return new Response('{"hookSpecificOutput":{"hookEventName":"PreToolUse"}}');
         return new Response('esto no debe llegar a Claude');
       },
@@ -99,9 +99,17 @@ describe('hook scripts', () => {
 
   test('gate exits 2 with the reason when the hub blocks', async () => {
     gateAnswer = 'block:Falta tester: pide al tester que pruebe.';
-    const result = await runHook(GATE, [], home, '{"hook_event_name":"TaskCompleted"}');
+    const result = await runHook(GATE, ['gate'], home, '{"hook_event_name":"TaskCompleted"}');
     expect(result.code).toBe(2);
     expect(result.stderr.trim()).toBe('Falta tester: pide al tester que pruebe.');
+    expect(seen.at(-1)?.path).toBe('/gate');
+  });
+
+  test('gate-message blocks a HECHO message through the same script', async () => {
+    gateAnswer = 'block:Falta tester';
+    const result = await runHook(GATE, ['gate-message'], home, '{"hook_event_name":"PreToolUse","tool_name":"SendMessage"}');
+    expect(result.code).toBe(2);
+    expect(seen.at(-1)?.path).toBe('/gate-message');
   });
 
   test('gate exits 0 when the hub passes', async () => {
