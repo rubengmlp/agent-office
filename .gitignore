@@ -1,0 +1,10 @@
+node_modules/
+hub/public/
+hub/test/fixtures/raw/
+ui/dist/
+*.db
+*.db-wal
+*.db-shm
+.DS_Store
+workspace/*
+!workspace/.gitkeep
