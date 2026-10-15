@@ -8,11 +8,11 @@ Las capturas se hicieron con sesiones `claude -p` aisladas (`--setting-sources l
 
 | Spike | Estado | Resultado |
 |---|---|---|
-| 1. Formato del socket | Formato confirmado; inyección en vivo pendiente | Ver abajo |
+| 1. Formato del socket | Confirmado en vivo | Una orden del panel llega al director como mensaje de otra sesión con el prefijo `[Agent Office]` y la ejecuta |
 | 2. Verde/rojo de un comando | Confirmado en 2.1.236 y 2.1.300 | Salida 0 llega por `PostToolUse`; salida distinta de 0 llega por `PostToolUseFailure` con `error: "Exit code 1"` e `is_interrupt: false` |
-| 3. Roles con `--agent` | Pendiente (necesita sesión interactiva) | |
-| 4. Identidad de teammates y dueño de tarea | Pendiente (necesita sesión interactiva) | Las herramientas de tareas no aparecen en `-p`, ver abajo |
-| 5. Topología y direccionamiento | Parcial | `claude agents --json` sí lista sesiones interactivas |
+| 3. Roles con `--agent` | Confirmado en 2.1.292 | `--agent office:director` carga el agente del plugin y `--agent office-lead-<planta>` el de usuario; `SessionStart` trae `agent_type`, `model` y `session_title` |
+| 4. Identidad de teammates y dueño de tarea | Confirmado, con cambios de diseño | Ver "Equipos en vivo" |
+| 5. Topología y direccionamiento | Confirmado | El jefe escribe al director por nombre y el director al jefe; `claude agents --json` lista también sesiones interactivas |
 
 ### 1. Socket de mensajería
 
@@ -25,7 +25,7 @@ El binario 2.1.300 escribe en su log de depuración cómo inyectar mensajes en e
 
 En macOS la línea de auth es opcional, pero con el token el mensaje cuenta como de un proceso hijo de la sesión y se entrega aunque el modo de permisos lo retuviera. Una conexión que no envía una línea completa en el plazo se cierra. `courier.ts` usa este formato.
 
-La prueba en vivo (mandar un mensaje al propio socket) la bloqueó el clasificador de auto mode de la sesión que construyó esto. Para hacerla a mano, desde cualquier sesión de Claude Code:
+La prueba contra el socket de la propia sesión la bloqueó el clasificador de auto mode. La prueba real se hizo desde el panel contra la sesión del director: el mensaje llegó como "Another Claude session sent a message" con el texto `[Agent Office] Orden del usuario desde el panel de la oficina: ...` y el director lo ejecutó. Para repetirla a mano desde cualquier sesión de Claude Code:
 
 ```sh
 { printf '{"type":"auth","token":"%s"}\n' "$CLAUDE_CODE_MESSAGING_TOKEN"; \
@@ -64,6 +64,18 @@ La documentación de marketplaces dice que un marketplace añadido desde un dire
 
 Lista también las sesiones interactivas (`"kind": "interactive"`), con `sessionId`, `name`, `cwd`, `status` (`waiting`, `busy`, `idle`) y `waitingFor` (`permission prompt`, `input needed`). Sirve de plan B para el direccionamiento.
 
+## Equipos en vivo (2.1.292, 2026-10-15)
+
+Prueba con el director y el jefe de una planta de pruebas (`~/Projects/office-sandbox`) en tmux, modo de permisos auto.
+
+- **Herramientas de tareas.** `TaskCreate` y `TaskUpdate` no aparecen ni con `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`, ni con `--allowedTools`, ni con `--tools`: en `-p` el modelo recibe `TodoWrite` y el jefe interactivo no tiene ninguna. Sin lista de tareas no hay `TaskCompleted`. La puerta de tests se comprueba ahora cuando el jefe avisa al director con un mensaje que empieza por `HECHO:` (hook `PreToolUse` sobre `SendMessage`); la de `TaskCompleted` se mantiene para cuando existan.
+- **Herencia de herramientas.** Una lista `tools:` en el agente del jefe limita también a sus compañeros: el desarrollador no podía escribir. La plantilla del jefe ya no lleva `tools:`.
+- **Identidad.** Los compañeros in-process emiten con el `session_id` del jefe y `agent_id` = `a<nombre>-<hash>`. Su `agent_type` en los hooks es su nombre (`dev-office-sandbox`), no su tipo. El tipo real llega en la respuesta del tool `Agent` (`status: "teammate_spawned"`, `agentId`, `agent_type`, `teammate_id`, `team_name`) y en `~/.claude/teams/<equipo>/config.json` (`members[].agentType`).
+- **Fin de turno.** Cada compañero emite `SubagentStop` al acabar su turno y después `TeammateIdle`; el hub lo deja libre, no terminado.
+- **Mensajes.** Un compañero escribe a su jefe con `to: "team-lead"`.
+- **Sugerencias de prompt.** La interfaz lanza subagentes bifurcados con el `agent_type` del jefe que solo emiten `SubagentStop`; el hub los ignora.
+- **Preguntas.** Con el panel visible, `AskUserQuestion` del director sale en el panel y la respuesta vuelve como si la hubiera dado el usuario ("User answered Claude's questions"). "Devolver al terminal" y la pestaña cerrada la llevan al diálogo de la terminal.
+
 ## Versión de la terminal
 
 El `claude` de la terminal es 2.1.236 (cask de Homebrew). Funciona todo lo que usa la fase 1, pero `agent_id` en `TaskCreated`, `TaskCompleted` y `TeammateIdle` llega a partir de 2.1.290. Antes de los spikes 3 y 4:
@@ -72,10 +84,6 @@ El `claude` de la terminal es 2.1.236 (cask de Homebrew). Funciona todo lo que u
 brew upgrade --cask claude-code
 ```
 
-## Spikes pendientes (sesiones interactivas)
+## Pendiente
 
-Requieren `bun run setup` hecho y `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`. Con el hub arrancado (`bun run hub`), cada evento queda en `~/.config/agent-office/office.db` y, con `AGENT_OFFICE_RAW=1`, en `hub/test/fixtures/raw/`.
-
-3. Roles: `bun run office`, o a mano `~/.config/agent-office/sessions/lead-mobile.sh`. Pedir "spawn a teammate using the office-dev-mobile agent type". Mirar `~/.claude/teams/*/config.json` y si los eventos del teammate traen `team_name` y `agent_type`. Confirmar también que `--agent office:director` arranca el agente del plugin (con prefijo) en `~/.config/agent-office/sessions/director.sh`.
-4. Identidad y dueño: en esa sesión, crear una tarea, asignarla al teammate y cerrarla. Confirmar que `TaskCreate` existe, la forma de `tool_input` de `TaskUpdate` (`taskId`, `owner`, `status`) y los campos de `TaskCreated` y `TaskCompleted`.
-5. Topología: director en `workspace/` y dos jefes de planta; el director escribe a `lead-mobile` por nombre. Comprobar si un teammate in-process aparece en `ListAgents` de otra sesión.
+- Probar plantas reales (mobile y backend) con tareas que editen, cuando convenga.
