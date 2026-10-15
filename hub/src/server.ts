@@ -65,7 +65,7 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
 
   app.post('/api/answers/:id', requireKey, async (c) => {
     const body = record(await readJson(c));
-    const id = c.req.param('id');
+    const id = c.req.param('id') ?? '';
     if (body.release === true) {
       return office.release(id) === 'ok' ? c.json({ ok: true }) : c.json({ error: PENDING_MESSAGE }, 409);
     }
