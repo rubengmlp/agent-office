@@ -18,15 +18,21 @@ export const markersMatch: [BadMarkers] extends [never] ? true : BadMarkers = tr
 
 type Translate = (key: MessageKey, params?: Record<string, string | number>) => string;
 
-// Pure: raw text as is, null as '', a key translated after its nested parameters.
+// Pure: raw text as is, null as '', a key translated after its nested parameters. It never throws: a key this
+// panel does not know (an older or newer hub, an old recording) comes out as the key itself.
 export function renderHubText(tr: Translate, value: HubText | null | undefined): string {
   if (value === null || value === undefined) return '';
   if (typeof value === 'string') return value;
+  if (typeof value !== 'object' || typeof value.key !== 'string') return '';
   const params: Record<string, string | number> = {};
-  for (const [name, param] of Object.entries(value.params ?? {})) {
-    params[name] = typeof param === 'object' && param !== null ? renderHubText(tr, param as HubText) : (param as string | number);
+  const raw: unknown = value.params;
+  if (typeof raw === 'object' && raw !== null) {
+    for (const [name, param] of Object.entries(raw)) {
+      if (typeof param === 'object' && param !== null) params[name] = renderHubText(tr, param as HubText);
+      else if (typeof param === 'string' || typeof param === 'number') params[name] = param;
+    }
   }
-  return tr(value.key, params);
+  return tr(value.key as MessageKey, params);
 }
 
 function isHubText(value: unknown): value is HubText {

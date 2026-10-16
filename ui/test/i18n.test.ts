@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { en } from '../src/i18n/en';
 import { es, type MessageKey } from '../src/i18n/es';
 import { errorText, renderHubText } from '../src/i18n/hub';
+import type { HubText } from '../src/types';
 import { createTranslator, interpolate } from '../src/i18n/index';
 
 // Keys whose text is legitimately the same in both languages: proper names, words shared by both, symbols.
@@ -95,6 +96,16 @@ describe('hub texts', () => {
     const lesson = { key: 'hub.act.lessonSaved', params: { role: { key: 'hub.role.redactor' }, floor: { key: 'hub.floor.redaccion' } } } as const;
     expect(renderHubText(spanish, lesson)).toBe('lección guardada para redactor en Redacción');
     expect(renderHubText(english, lesson)).toBe('lesson saved for writer in Drafting');
+  });
+
+  test('an unknown key comes out as the key and malformed values never throw', () => {
+    const unknown = { key: 'hub.act.fromNewerHub', params: { who: { key: 'hub.who.alsoUnknown' }, n: 2 } } as unknown as HubText;
+    expect(renderHubText(spanish, unknown)).toBe('hub.act.fromNewerHub');
+    expect(renderHubText(english, { key: 'hub.nope' } as unknown as HubText)).toBe('hub.nope');
+    expect(renderHubText(spanish, { key: 42 } as unknown as HubText)).toBe('');
+    expect(renderHubText(spanish, { key: 'hub.act.edit', params: 'x' } as unknown as HubText)).toBe('edita {name}');
+    expect(errorText(english, { key: 'hub.api.fromNewerHub' })).toBe('hub.api.fromNewerHub');
+    expect(errorText(english, [{ key: 'hub.api.noReport' }, { key: 'hub.api.fromNewerHub' }])).toBe('There is no report for that agent hub.api.fromNewerHub');
   });
 
   test('parameters are interpolated in a single pass', () => {
