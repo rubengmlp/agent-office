@@ -190,10 +190,10 @@ export class SyncDesk {
     if (changed) this.opts.onChange();
   }
 
-  async cleanup(open: Set<string>): Promise<string[]> {
+  async cleanup(finished: Set<string>): Promise<string[]> {
     const removed: string[] = [];
     for (const slug of this.slugs()) {
-      if (open.has(slug)) continue;
+      if (!finished.has(slug)) continue;
       await this.remove(slug);
       removed.push(slug);
     }

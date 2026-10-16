@@ -278,7 +278,7 @@ export class Office {
   start(): void {
     this.docs.watch();
     this.refreshDocuments();
-    this.background(this.sync.cleanup(this.docs.openPlanSlugs()));
+    this.background(this.sync.cleanup(this.docs.finishedPlanSlugs()));
   }
 
   stop(): void {

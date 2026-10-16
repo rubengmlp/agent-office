@@ -4,6 +4,9 @@ import { join } from 'node:path';
 import { ensureDocsRepo } from '../src/docs-repo';
 import { realPath } from '../src/floors';
 import { runGit, type GitRunner } from '../src/git';
+import { Office } from '../src/office';
+import { PROFILES_DIR } from '../src/config';
+import { loadProfiles } from '../src/profiles';
 import type { AgentView, HookMeta } from '../src/types';
 import { ev, floor, git, harness, originAndClone, pushCommit, useGitIdentity, type Harness } from './helpers';
 
@@ -231,6 +234,33 @@ describe('Redacción sources through the hub', () => {
     expect(existsSync(sources)).toBe(false);
     expect(git(mobile.repo, 'worktree', 'list', '--porcelain')).not.toContain('.fuentes');
     expect(doc(PLAN)?.status).toBe('cerrado');
+  });
+});
+
+describe('hub restarts', () => {
+  test('a restart keeps the sources of a plan in progress and removes those of a finished plan', async () => {
+    office();
+    const mobile = originAndClone(h.root, 'mobile');
+    h.config.floors.mobile = floor(mobile.repo);
+    expect((await h.office.syncSources({ slug: 'en-curso', floors: ['mobile'] })).ok).toBe(true);
+    expect((await h.office.syncSources({ slug: 'cerrado', floors: ['mobile'] })).ok).toBe(true);
+    writeFileSync(join(docs, 'redaccion', 'planes', 'cerrado.md'), '# Cerrado\n');
+    h.office.refreshDocuments();
+    expect(await h.office.discardDocument('redaccion/planes/cerrado.md')).toBe('ok');
+    const restarted = new Office({
+      db: h.db,
+      config: h.config,
+      profiles: loadProfiles(PROFILES_DIR),
+      workspaceDir: h.workspace,
+      claudeHome: join(h.root, 'claude-home'),
+      gitRoot: (cwd) => cwd,
+      now: () => h.clock.now,
+    });
+    restarted.start();
+    await restarted.idle();
+    restarted.stop();
+    expect(existsSync(join(docs, 'redaccion', '.fuentes', 'en-curso', 'mobile', 'README.md'))).toBe(true);
+    expect(existsSync(join(docs, 'redaccion', '.fuentes', 'cerrado'))).toBe(false);
   });
 });
 

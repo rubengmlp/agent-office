@@ -94,7 +94,7 @@ describe('Redacción sources', () => {
     s.cleanup();
   });
 
-  test('closing a plan retires its worktrees and prunes them; cleanup removes orphans and keeps open plans', async () => {
+  test('closing a plan retires its worktrees and prunes them; cleanup removes orphans and finished plans and keeps plans in progress', async () => {
     const s = setup();
     ok(await s.desk.sync({ slug: 'login', floors: ['mobile', 'backend'] }));
     ok(await s.desk.sync({ slug: 'abierto', floors: ['mobile'] }));
@@ -106,12 +106,12 @@ describe('Redacción sources', () => {
     expect(s.desk.base('login')).toEqual([]);
 
     git(s.mobile.repo, 'worktree', 'add', '-q', '--detach', s.fuentes('fantasma', 'mobile'), 'origin/develop');
-    const removed = await s.desk.cleanup(new Set(['abierto']));
+    const removed = await s.desk.cleanup(new Set());
     expect(removed).toContain('fantasma/mobile');
     expect(existsSync(s.fuentes('fantasma', 'mobile'))).toBe(false);
     expect(worktrees(s.mobile.repo)).not.toContain('fantasma');
     expect(existsSync(s.fuentes('abierto', 'mobile'))).toBe(true);
-    expect(await s.desk.cleanup(new Set())).toContain('abierto');
+    expect(await s.desk.cleanup(new Set(['abierto']))).toContain('abierto');
     expect(existsSync(s.fuentes('abierto', 'mobile'))).toBe(false);
     s.cleanup();
   });

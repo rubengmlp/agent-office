@@ -154,14 +154,14 @@ export class DocumentDesk {
     return !!doc && doc.status !== 'cerrado' && doc.status !== 'descartado';
   }
 
-  openPlanSlugs(): Set<string> {
-    const open = new Set<string>();
-    for (const d of this.cache) if (d.kind === 'plan' && d.status !== 'cerrado' && d.status !== 'descartado') open.add(d.slug);
+  finishedPlanSlugs(): Set<string> {
+    const finished = new Set<string>();
+    for (const d of this.cache) if (d.kind === 'plan' && (d.status === 'cerrado' || d.status === 'descartado')) finished.add(d.slug);
     const rows = this.opts.db
-      .query<{ slug: string }, []>("SELECT slug FROM documents WHERE kind = 'plan' AND closed_at IS NULL AND discarded_at IS NULL")
+      .query<{ slug: string }, []>("SELECT slug FROM documents WHERE kind = 'plan' AND (closed_at IS NOT NULL OR discarded_at IS NOT NULL)")
       .all();
-    for (const r of rows) if (!this.cache.some((d) => d.slug === r.slug && d.kind === 'plan')) open.add(r.slug);
-    return open;
+    for (const r of rows) finished.add(r.slug);
+    return finished;
   }
 
   content(path: string): DocumentContent | null {
