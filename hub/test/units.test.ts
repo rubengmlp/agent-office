@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { CONFIG_VERSION, DEFAULT_ROLES, PROFILES_DIR, createIdIfMissing, createKeyIfMissing, defaultConfig, loadConfig, migrateConfig, normalizeConfig, roleSettingsFor, saveConfig } from '../src/config';
 import { configTargets, watchTargets } from '../src/config-watch';
 import { openDb } from '../src/db';
-import { decideGate, decideReviewGate, planByteLimit, type ReviewGateFacts } from '../src/gate';
+import { decideGate, decideReadCap, decideReviewGate, planByteLimit, type ReviewGateFacts } from '../src/gate';
 import { directorFloorsText, modelArgs, officeScript, sessionScript, sessionSpecs, sq } from '../src/office-sh';
 import { loadProfiles } from '../src/profiles';
 import { prune } from '../src/prune';
@@ -430,6 +430,15 @@ describe('review gate', () => {
     expect(decideReviewGate(facts({ bytes: 43_210, maxBytes: 0 })).pass).toBe(true);
     expect(decideReviewGate(facts({ bytes: null })).pass).toBe(true);
     expect(decideReviewGate(facts({ bytes: 43_210, round: null })).pass).toBe(false);
+  });
+
+  test('reads pass under the cap, stop at it, never after the verdict, and 0 turns the cap off', () => {
+    expect(decideReadCap({ count: 29, max: 30, retired: false }).pass).toBe(true);
+    const capped = decideReadCap({ count: 30, max: 30, retired: false });
+    expect(capped.pass).toBe(false);
+    expect(capped.reason).toStartWith('Límite de lecturas: llevas 30 (review.maxReviewerReads).');
+    expect(decideReadCap({ count: 500, max: 0, retired: false }).pass).toBe(true);
+    expect(decideReadCap({ count: 0, max: 0, retired: true })).toEqual({ pass: false, reason: 'Ya enviaste tu veredicto: no leas más y termina.' });
   });
 
   test('the round is checked before the size', () => {

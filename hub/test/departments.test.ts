@@ -337,6 +337,76 @@ describe('plan length', () => {
   });
 });
 
+describe('reviewer reads', () => {
+  const read = (agentId: string, name: string, tool = 'Read') =>
+    h.office.ingest(
+      ev(LEAD, join(docs, 'redaccion'), 'PreToolUse', { agent_id: agentId, agent_type: name, tool_name: tool, tool_input: { file_path: join(docs, PLAN), pattern: 'x' } }),
+    );
+  const done = (agentId: string, name: string, tool = 'Read') =>
+    h.office.ingest(ev(LEAD, join(docs, 'redaccion'), 'PostToolUse', { agent_id: agentId, agent_type: name, tool_name: tool, tool_input: { file_path: join(docs, PLAN) } }));
+  const denial = (out: string | null) => (out ? (JSON.parse(out) as { hookSpecificOutput: Record<string, string> }).hookSpecificOutput : null);
+  const capped = () => h.office.snapshot().activity.filter((a) => keyOf(a.summary) === 'hub.act.readCapReached');
+
+  test('a reviewer reads up to the cap, the next read is denied with the reason and the activity shows once', () => {
+    const cwd = redaccionTeam();
+    h.config.review.maxReviewerReads = 3;
+    expect(read('arev-1', 'revisor-planes-login-r1')).toBeNull();
+    expect(read('arev-1', 'revisor-planes-login-r1', 'Grep')).toBeNull();
+    expect(read('arev-1', 'revisor-planes-login-r1', 'Glob')).toBeNull();
+    const over = denial(read('arev-1', 'revisor-planes-login-r1'));
+    expect(over).toEqual({
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'deny',
+      permissionDecisionReason:
+        'Límite de lecturas: llevas 3 (review.maxReviewerReads). Emite ya tu veredicto con lo leído y marca como «sin comprobar» lo que no hayas podido verificar.',
+    });
+    expect(denial(read('arev-1', 'revisor-planes-login-r1', 'Bash'))?.permissionDecision).toBe('deny');
+    expect(read('arev-1', 'revisor-planes-login-r1', 'SendMessage')).toBeNull();
+    expect(capped().map((a) => a.summary)).toEqual([{ key: 'hub.act.readCapReached', params: { who: 'revisor-planes-login-r1', n: 3 } }]);
+
+    for (let i = 0; i < 5; i++) {
+      expect(read('ared-1', 'redactor-login')).toBeNull();
+      expect(h.office.ingest(ev(LEAD, cwd, 'PreToolUse', { tool_name: 'Read', tool_input: { file_path: join(docs, PLAN) } }))).toBeNull();
+    }
+  });
+
+  test('a retired reviewer may not read at all, and 0 turns the cap off for the others', () => {
+    const cwd = redaccionTeam();
+    h.config.review.maxReviewerReads = 0;
+    writeFileSync(join(docs, PLAN), '# Plan\n');
+    for (let i = 0; i < 40; i++) expect(read('arev-1', 'revisor-planes-login-r1')).toBeNull();
+    say(LEAD, cwd, 'arev-1', 'revisor-planes-login-r1', 'redactor-login', `MEJORAR: ${PLAN} ronda 1 — nota 6/10`);
+    expect(denial(read('arev-1', 'revisor-planes-login-r1'))).toMatchObject({
+      permissionDecision: 'deny',
+      permissionDecisionReason: 'Ya enviaste tu veredicto: no leas más y termina.',
+    });
+    expect(capped()).toEqual([]);
+  });
+
+  test('the count survives a restart through the completed reads', () => {
+    redaccionTeam();
+    h.config.review.maxReviewerReads = 3;
+    read('arev-1', 'revisor-planes-login-r1');
+    done('arev-1', 'revisor-planes-login-r1');
+    read('arev-1', 'revisor-planes-login-r1', 'Grep');
+    done('arev-1', 'revisor-planes-login-r1', 'Grep');
+    const restarted = new Office({
+      hubId: 'hub-test',
+      db: h.db,
+      config: h.config,
+      profiles: loadProfiles(PROFILES_DIR),
+      workspaceDir: h.workspace,
+      claudeHome: join(h.root, 'claude-home'),
+      gitRoot: (cwd) => cwd,
+      now: () => h.clock.now,
+    });
+    const again = (tool: string) =>
+      restarted.ingest(ev(LEAD, join(docs, 'redaccion'), 'PreToolUse', { agent_id: 'arev-1', agent_type: 'revisor-planes-login-r1', tool_name: tool, tool_input: { pattern: 'x' } }));
+    expect(again('Glob')).toBeNull();
+    expect(again('Read')).toContain('"permissionDecision":"deny"');
+  });
+});
+
 describe('plan reviewers', () => {
   const verdictRows = () =>
     h.db.query<{ kind: string; score: number | null; agent_key: string }, []>("SELECT kind, score, agent_key FROM verdicts WHERE kind != 'tests' ORDER BY id").all();

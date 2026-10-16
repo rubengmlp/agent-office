@@ -59,6 +59,19 @@ export function planByteLimit(maxBytes: number, floors: number, analysis: boolea
   return Math.round(maxBytes * Math.min(2, 1 + 0.5 * (Math.max(1, floors) - 1)));
 }
 
+export type ReadCapFacts = { count: number; max: number; retired: boolean };
+
+export function decideReadCap(f: ReadCapFacts): GateDecision {
+  if (f.retired) return { pass: false, reason: 'Ya enviaste tu veredicto: no leas más y termina.' };
+  if (f.max > 0 && f.count >= f.max) {
+    return {
+      pass: false,
+      reason: `Límite de lecturas: llevas ${f.count} (review.maxReviewerReads). Emite ya tu veredicto con lo leído y marca como «sin comprobar» lo que no hayas podido verificar.`,
+    };
+  }
+  return { pass: true, reason: 'lecturas dentro del tope' };
+}
+
 export function kilobytes(bytes: number): number {
   return Math.ceil(bytes / 1000);
 }

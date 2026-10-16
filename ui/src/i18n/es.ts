@@ -647,6 +647,7 @@ export const es = {
   'hub.act.reviewIgnoredOverMax': 'ronda {round} de {path} ignorada: el tope es {max}',
   'hub.act.reviewBlockedTooLong': 'puerta: bloquea el REVISAR de {path}, que ocupa {kb} KB con un tope de {max} KB',
   'hub.act.reviewIgnoredTooLong': 'REVISAR de {path} ignorado: ocupa {kb} KB y el tope es {max} KB',
+  'hub.act.readCapReached': '{who} llega al tope de {n} lecturas: se le pide el veredicto con lo leído',
   'hub.act.chatPost': '{who} escribe en #{channel}: {text}',
   'hub.act.chatClaim': '{who} anuncia en #{channel} que toca {files}',
   'hub.act.chatRelease': '{who} libera en #{channel} {files}',

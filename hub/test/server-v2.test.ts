@@ -92,6 +92,28 @@ describe('hub server v2 routes', () => {
     expect(await quiet.text()).toBe('');
   });
 
+  test('/events denies a read over the cap only to a verdict role, with a PreToolUse permission decision', async () => {
+    h.config.review.maxReviewerReads = 1;
+    const read = (session: string, role: string) =>
+      fetch(`${base}/events`, {
+        method: 'POST',
+        headers: { ...headers, 'X-Office-Role': role },
+        body: JSON.stringify({ session_id: session, cwd: join(docs, 'redaccion'), hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: join(docs, 'x.md') } }),
+      });
+    expect(await (await read('rev-1', 'office-revisor-planes')).text()).toBe('');
+    const denied = await read('rev-1', 'office-revisor-planes');
+    expect(denied.headers.get('content-type')).toContain('application/json');
+    expect(await denied.json()).toEqual({
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: expect.stringContaining('Límite de lecturas: llevas 1 (review.maxReviewerReads)'),
+      },
+    });
+    for (let i = 0; i < 3; i++) expect(await (await read('lead-red-1', 'office-lead-redaccion')).text()).toBe('');
+    h.config.review.maxReviewerReads = 30;
+  });
+
   test('the guard blocks a department write outside its folder', async () => {
     const event = (file: string) => ({
       session_id: 'red-1',

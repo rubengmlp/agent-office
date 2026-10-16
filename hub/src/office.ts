@@ -20,7 +20,7 @@ import {
   type GitRootFn,
   type ResolvedFloor,
 } from './floors';
-import { decideDocumentGate, decideGate, decideReviewGate, kilobytes, planByteLimit, type GateDecision, type ReviewGateFacts } from './gate';
+import { decideDocumentGate, decideGate, decideReadCap, decideReviewGate, kilobytes, planByteLimit, type GateDecision, type ReviewGateFacts } from './gate';
 import { GitQueue, runGit, type GitRunner } from './git';
 import { GUARDED_TOOLS, GuardWatch, guardDecision, tokenize, zonesFor, type GuardContext, type GuardFinding } from './guard';
 import { captureLesson, cleanLesson, deleteLesson, isRoleId, listLessons, memoryContext } from './memory';
@@ -207,6 +207,7 @@ const HOLDS_QUESTION: ReadonlySet<string> = new Set(['SubagentStop', 'Stop', 'Te
 const ANSWERS_QUESTION: ReadonlySet<string> = new Set(['PreToolUse', 'UserPromptSubmit', 'SubagentStart']);
 const NEW_TURN: ReadonlySet<string> = new Set(['UserPromptSubmit', 'SubagentStart']);
 const FILE_TOOLS: ReadonlySet<string> = new Set([...EDIT_TOOLS, 'Read', 'NotebookRead']);
+const READ_CAP_TOOLS: ReadonlySet<string> = new Set(['Read', 'Grep', 'Glob', 'Bash']);
 const LEAD_BUSY: ReadonlySet<AgentState> = new Set<AgentState>(['working', 'reading', 'testing', 'checking', 'talking']);
 const TASK_MAX = 120;
 const VERDICT_DETAILS: Record<Exclude<VerdictKind, 'tests'>, HubText> = {
@@ -277,6 +278,8 @@ export class Office {
   readonly chat: ChatDesk;
   private readonly chatNudged = new Set<string>();
   private readonly chatWarned = new Set<string>();
+  private readonly readCounts = new Map<string, number>();
+  private readonly readCapNoted = new Set<string>();
 
   constructor(private readonly opts: OfficeOptions) {
     this.config = opts.config;
@@ -414,7 +417,7 @@ export class Office {
     const agent = this.touchAgent(e, c, session, now);
     if (this.isRetired(agent)) {
       this.ingestRetired(e, c, agent, session, now);
-      return null;
+      return this.readCap(c, agent, session, true, now);
     }
 
     let nextState = c.state;
@@ -494,7 +497,31 @@ export class Office {
     if (c.sessionEnded) this.endSession(session, now);
     if (c.event === 'SubagentStart' || c.event === 'SessionStart' || c.event === 'UserPromptSubmit') return this.injection(c.event, agent, session);
     if (c.event === 'PreToolUse' && c.tool && EDIT_TOOLS.has(c.tool) && c.filePath) return this.chatReminder(agent, session, c.filePath, now);
-    return null;
+    return this.readCap(c, agent, session, false, now);
+  }
+
+  // A verdict role reads within review.maxReviewerReads, and not at all once retired. The denial travels in the
+  // answer of /events that emit.sh already prints for every PreToolUse: there is no hook of its own.
+  private readCap(c: Classified, agent: AgentRuntime, session: SessionRuntime, retired: boolean, now: number): string | null {
+    if (c.event !== 'PreToolUse' || !READ_CAP_TOOLS.has(c.tool ?? '') || !isVerdictRole(agent.role) || !isDepartmentFloor(session.floorKind)) {
+      return null;
+    }
+    const count = this.readCounts.get(agent.key) ?? this.sql.countReads.get(agent.key)?.n ?? 0;
+    const decision = decideReadCap({ count, max: this.config.review.maxReviewerReads, retired });
+    this.readCounts.set(agent.key, decision.pass ? count + 1 : count);
+    if (decision.pass) return null;
+    if (!retired && !this.readCapNoted.has(agent.key)) {
+      this.readCapNoted.add(agent.key);
+      this.pushActivity({
+        ts: now,
+        agentKey: agent.key,
+        event: 'ReadCap',
+        tool: c.tool,
+        state: null,
+        summary: { key: 'hub.act.readCapReached', params: { who: agent.name ?? agent.key, n: count } },
+      });
+    }
+    return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: decision.reason } });
   }
 
   async ask(e: HookEvent, meta: HookMeta = EMPTY_META, signal?: AbortSignal): Promise<string | null> {
@@ -2231,6 +2258,9 @@ function prepare(db: Database) {
     ),
     agentVerdict: db.query<{ id: number }, [string, string]>(
       "SELECT id FROM verdicts WHERE agent_key = ? AND path = ? AND kind IN ('approved', 'improve', 'no-agreement') LIMIT 1",
+    ),
+    countReads: db.query<{ n: number }, [string]>(
+      "SELECT COUNT(*) AS n FROM events WHERE agent_key = ? AND event = 'PostToolUse' AND tool IN ('Read', 'Grep', 'Glob', 'Bash')",
     ),
     firstVerdictOf: db.query<{ ts: number | null }, [string]>(
       "SELECT MIN(ts) AS ts FROM verdicts WHERE agent_key = ? AND kind IN ('approved', 'improve', 'no-agreement')",
