@@ -118,7 +118,7 @@ const ERROR_TEXTS: Partial<Record<HubTextKey, string>> = {
   'hub.api.chatFloorUnknown': 'esta carpeta no es de ninguna planta gestionada; ejecuta el script desde el repositorio de tu planta.',
   'hub.api.chatChannelUnknown': 'ese canal no existe; usa el slug de tu planta o global.',
   'hub.api.chatChannelForbidden': 'solo puedes escribir en el canal de tu planta o en #global.',
-  'hub.api.chatSessionUnknown': 'la sesión que ejecuta el script no está abierta en esta planta; --de solo vale para compañeros de tu propio equipo.',
+  'hub.api.chatSessionUnknown': 'la sesión que ejecuta el script no está abierta en esta planta o no se identifica con su token; --de solo vale para compañeros de tu propio equipo.',
 };
 
 // Text for the agent that called the script, in the language of the templates; the panel gets the HubText.

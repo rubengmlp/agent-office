@@ -207,6 +207,11 @@ export class DocumentDesk {
     this.opts.db.query('UPDATE documents SET discarded_at = ?, updated_at = ? WHERE path = ?').run(now, now, ref.path);
   }
 
+  // Runtime UPDATE, not a migration: the schema only grows, but undoing a discard has to clear the mark.
+  clearDiscarded(ref: DocRef, now: number): void {
+    this.opts.db.query('UPDATE documents SET discarded_at = NULL, updated_at = ? WHERE path = ?').run(now, ref.path);
+  }
+
   isOpen(slug: string, kind: DocumentKind): boolean {
     const doc = this.cache.find((d) => d.slug === slug && d.kind === kind);
     return !!doc && !FINISHED_PLAN.has(doc.status);

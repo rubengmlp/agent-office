@@ -88,7 +88,19 @@ export function harness(
   });
   const messages: ServerMessage[] = [];
   office.subscribe((msg) => messages.push(msg));
-  return { office, db, messages, clock, config, root: dir, workspace, cleanup };
+  return {
+    office,
+    db,
+    messages,
+    clock,
+    config,
+    root: dir,
+    workspace,
+    cleanup: () => {
+      office.stop();
+      cleanup();
+    },
+  };
 }
 
 export function ev(sessionId: string, cwd: string, hook: string, extra: Partial<HookEvent> = {}): HookEvent {

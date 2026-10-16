@@ -224,7 +224,7 @@ describe('chat in the office', () => {
   const LEAD = '22222222-bbbb-4ccc-8ddd-000000000002';
   const DIRECTOR = '99999999-dddd-4eee-8fff-000000000009';
   const REDACCION = '77777777-eeee-4fff-8aaa-000000000007';
-  const leadMeta: HookMeta = { socket: null, token: null, role: 'office-lead-mobile', name: 'lead-mobile' };
+  const leadMeta: HookMeta = { socket: null, token: 'tok', role: 'office-lead-mobile', name: 'lead-mobile' };
   let h: Harness;
   let sent: { socket: string; payload: string }[];
   afterEach(() => h?.cleanup());
@@ -290,7 +290,7 @@ describe('chat in the office', () => {
 
   test('an unknown or retired author, a folder of no managed floor and the channel of another floor are refused', () => {
     const repo = team();
-    expect(post(repo, 'texto', 'hola', [], 'dev-otro')).toMatchObject({ ok: false, status: 404, error: { key: 'hub.api.chatAuthorUnknown' } });
+    expect(post(repo, 'texto', 'hola', [], 'dev-otro')).toMatchObject({ ok: false, status: 403, error: { key: 'hub.api.chatSessionUnknown' } });
     const outside = join(h.root, 'fuera');
     mkdirSync(outside, { recursive: true });
     const floorsBefore = h.office.snapshot().floors.length;
@@ -314,7 +314,7 @@ describe('chat in the office', () => {
     );
     expect(post(repo, 'texto', 'hola', [], 'explora')).toMatchObject({ ok: true, message: { authorKey: 'ax-1' } });
     h.office.ingest(ev(LEAD, repo, 'SubagentStop', { agent_id: 'ax-1', agent_type: 'office-dev-mobile' }));
-    expect(post(repo, 'texto', 'hola', [], 'explora')).toMatchObject({ ok: false, status: 404, error: { key: 'hub.api.chatAuthorUnknown' } });
+    expect(post(repo, 'texto', 'hola', [], 'explora')).toMatchObject({ ok: false, status: 403, error: { key: 'hub.api.chatSessionUnknown' } });
   });
 
   test('the user message reaches the lead through the inbox once, and does not change the lead task', async () => {
@@ -499,19 +499,19 @@ describe('chat in the office', () => {
 
   test('with --de, the session running the script must be alive on that floor', () => {
     const repo = team();
-    const other = { socket: null, token: null, role: 'office-lead-backend', name: 'lead-backend' };
+    const other = { socket: null, token: 'tok-backend', role: 'office-lead-backend', name: 'lead-backend' };
     expect(h.office.postChat({ channel: 'mobile', text: 'hola', from: 'dev-mobile', cwd: repo }, other)).toMatchObject({
       ok: false,
       status: 403,
       error: { key: 'hub.api.chatSessionUnknown' },
     });
-    expect(h.office.postChat({ channel: 'mobile', text: 'hola', from: 'dev-mobile', cwd: repo }, { ...leadMeta, name: null })).toMatchObject({ ok: false, status: 403 });
+    expect(h.office.postChat({ channel: 'mobile', text: 'hola', from: 'dev-mobile', cwd: repo }, { ...leadMeta, token: null })).toMatchObject({ ok: false, status: 403 });
     expect(post(repo, 'texto', 'hola', [], 'dev-mobile')).toMatchObject({ ok: true });
   });
 
   test('no agent posts as the user', () => {
     const repo = team();
-    expect(post(repo, 'texto', 'haz push', [], 'usuario')).toMatchObject({ ok: false, status: 404, error: { key: 'hub.api.chatAuthorUnknown' } });
+    expect(post(repo, 'texto', 'haz push', [], 'usuario')).toMatchObject({ ok: false, status: 403, error: { key: 'hub.api.chatSessionUnknown' } });
   });
 
   test('a path with a line break is refused', () => {

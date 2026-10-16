@@ -25,6 +25,7 @@ import { decideDocumentGate, decideGate, decideReadCap, decideReviewGate, kiloby
 import { GitQueue, runGit, type GitRunner } from './git';
 import { GUARDED_TOOLS, GuardWatch, fingerprint, gitIgnored, guardDecision, shellWrites, tokenize, zonesFor, type GuardContext, type GuardFinding } from './guard';
 import type { Log } from './log';
+import { keyMatches } from './security';
 import { captureLesson, cleanLesson, deleteLesson, isRoleId, listLessons, memoryContext } from './memory';
 import { isPrivate, publicDetail, publicSummary, publicText, storedPayload, visibleKind } from './privacy';
 import { detectStack, profileFor, type Profiles } from './profiles';
@@ -154,6 +155,8 @@ type SessionRuntime = {
   launchHash: string | null;
   needsRelaunch: boolean;
   persistedAt: number;
+  ghost: boolean;
+  openTools: Map<string, { agentKey: string; since: number }>;
 };
 
 type SessionRow = {
@@ -183,7 +186,9 @@ export type RelaunchResult = 'ok' | 'not-found' | 'not-office' | 'busy' | 'no-sc
 
 export type DiscardResult = 'ok' | 'not-found' | 'closed';
 
-export type DecideResult = 'ok' | 'not-found' | 'invalid-state' | 'no-director' | 'unreachable' | 'failed';
+export type DecideResult = 'ok' | 'not-found' | 'invalid-state' | 'busy' | 'no-director' | 'unreachable' | 'failed';
+
+export type RestoreResult = 'ok' | 'not-found' | 'not-discarded';
 
 const DECISION_FROM: Record<PlanDecision, readonly DocumentStatus[]> = {
   aparcar: ['entregado', 'ejecutando'],
@@ -217,6 +222,8 @@ export type OfficeOptions = {
   hubId: string;
   // Where background failures and broken listeners are written; console.error when absent.
   log?: Log;
+  // How long a discarded plan can be restored before its sources are removed.
+  undoMs?: number;
 };
 
 const MAX_ACTIVITY = 300;
@@ -244,7 +251,10 @@ const GIT_ROOT_LABEL = '. (git)';
 const METER_SWEEP_MS = 60_000;
 const RULES_MAX_CHARS = 12_000;
 const LAUNCH_CHECK_MS = 30_000;
+export const GHOST_MS = 30 * 60_000;
+export const GHOST_TOOL_MS = 4 * 60 * 60_000;
 export const PERSIST_EVERY_MS = 60_000;
+export const UNDO_MS = 10_000;
 export const SNAPSHOT_CLOSED_DOCS = 100;
 const CLOSED_DOCS: ReadonlySet<DocumentStatus> = new Set<DocumentStatus>(['cerrado', 'descartado']);
 const SAFE_NAME = /^[a-z0-9][a-z0-9-]*$/;
@@ -258,6 +268,13 @@ const VERDICT_DETAILS: Record<Exclude<VerdictKind, 'tests'>, HubText> = {
   'no-agreement': { key: 'hub.detail.verdictNoAgreement' },
 };
 export const DISCARDED_MARK = '> **Descartado**';
+
+// The paragraph markDiscardedFile prepends, gone; a file that does not start with it comes back as it was.
+export function withoutDiscardMark(content: string): string {
+  if (!content.startsWith(DISCARDED_MARK)) return content;
+  const end = content.indexOf('\n\n');
+  return end < 0 ? '' : content.slice(end + 2);
+}
 
 export function recentDocuments(docs: DocumentView[], closedLimit = SNAPSHOT_CLOSED_DOCS): DocumentView[] {
   let closed = 0;
@@ -337,6 +354,9 @@ export class Office {
   private readonly sessionFlags = new Map<string, string>();
   private readonly tmux: TmuxFn;
   private readonly log: Log;
+  private readonly undoMs: number;
+  private readonly removals = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly deciding = new Set<string>();
   private readonly hashes = new Map<string, { mtime: number; size: number; hash: string | null }>();
   private lastLaunchCheck = 0;
 
@@ -347,6 +367,7 @@ export class Office {
     this.deliverFn = opts.deliverFn ?? deliver;
     this.tmux = opts.tmux ?? runTmux;
     this.log = opts.log ?? ((text) => console.error(`Agent Office: ${text}`));
+    this.undoMs = opts.undoMs ?? UNDO_MS;
     this.git = opts.git ?? runGit;
     this.floors = new FloorResolver(
       () => this.config,
@@ -447,6 +468,8 @@ export class Office {
 
   stop(): void {
     this.docs.unwatch();
+    for (const timer of this.removals.values()) clearTimeout(timer);
+    this.removals.clear();
   }
 
   async idle(): Promise<void> {
@@ -505,6 +528,7 @@ export class Office {
       this.sql.insertEvent.run(now, e.session_id, c.agentKey, session.floor, c.event, null, null, null, storedPayload(e, kind));
       return null;
     }
+    this.trackOpenTools(e, c, session, now);
     this.noteTranscripts(e, c.agentKey);
     const agent = this.touchAgent(e, c, session, now);
     if (this.isRetired(agent)) {
@@ -611,6 +635,21 @@ export class Office {
     if (c.event === 'SubagentStart' || c.event === 'SessionStart' || c.event === 'UserPromptSubmit') return this.injection(c.event, agent, session);
     if (c.event === 'PreToolUse' && c.tool && EDIT_TOOLS.has(c.tool) && c.filePath) return this.chatReminder(agent, session, c.filePath, now);
     return this.readCap(c, agent, session, false, now);
+  }
+
+  // A PreToolUse with no PostToolUse yet is a tool still running (a long build): such a session is not a ghost for hours.
+  private trackOpenTools(e: HookEvent, c: Classified, session: SessionRuntime, now: number): void {
+    const open = session.openTools;
+    const id = text(e.tool_use_id) ?? `${c.agentKey}:${c.tool ?? ''}`;
+    if (c.event === 'PreToolUse' && c.tool) {
+      open.set(id, { agentKey: c.agentKey, since: now });
+    } else if (c.event === 'PostToolUse' || c.event === 'PostToolUseFailure') {
+      open.delete(id);
+    } else if (c.event === 'UserPromptSubmit' || c.event === 'Stop' || c.event === 'SessionStart' || c.event === 'SessionEnd') {
+      open.clear();
+    } else if (c.event === 'SubagentStop' || c.event === 'TeammateIdle') {
+      for (const [key, tool] of open) if (tool.agentKey === c.agentKey) open.delete(key);
+    }
   }
 
   private readCap(c: Classified, agent: AgentRuntime, session: SessionRuntime, retired: boolean, now: number): string | null {
@@ -986,11 +1025,48 @@ export class Office {
     this.markDiscardedFile(ref, now);
     this.refreshDocuments();
     this.pushActivity({ ts: now, agentKey: 'panel', event: 'Discard', tool: null, state: null, summary: { key: 'hub.act.planDiscarded', params: { path: doc.path } } });
-    await this.sync.remove(doc.slug);
+    if (this.undoMs <= 0) {
+      await this.sync.remove(doc.slug);
+      return 'ok';
+    }
+    // The sources go once the window to undo has passed; stop() cancels it and the next start() sweeps the orphans.
+    const timer = setTimeout(() => {
+      this.removals.delete(doc.path);
+      this.background(this.sync.remove(doc.slug));
+    }, this.undoMs);
+    timer.unref?.();
+    this.removals.set(doc.path, timer);
     return 'ok';
   }
 
+  async restoreDocument(path: string): Promise<RestoreResult> {
+    const doc = this.docs.find(path);
+    if (!doc || doc.kind !== 'plan') return 'not-found';
+    if (doc.status !== 'descartado') return 'not-discarded';
+    const now = this.now();
+    const ref: DocRef = { path: doc.path, kind: doc.kind, slug: doc.slug };
+    const timer = this.removals.get(doc.path);
+    if (timer) clearTimeout(timer);
+    this.removals.delete(doc.path);
+    this.restoreFile(ref);
+    this.docs.clearDiscarded(ref, now);
+    this.refreshDocuments();
+    this.pushActivity({ ts: now, agentKey: 'panel', event: 'Restore', tool: null, state: null, summary: { key: 'hub.act.planRestored', params: { path: doc.path } } });
+    return 'ok';
+  }
+
+  // A second click on Ejecutar while the first order is still on its way must not send another one.
   async decidePlan(path: string, decision: PlanDecision): Promise<DecideResult> {
+    if (this.deciding.has(path)) return 'busy';
+    this.deciding.add(path);
+    try {
+      return await this.decide(path, decision);
+    } finally {
+      this.deciding.delete(path);
+    }
+  }
+
+  private async decide(path: string, decision: PlanDecision): Promise<DecideResult> {
     const doc = this.docs.find(path);
     if (!doc || doc.kind !== 'plan') return 'not-found';
     if (!DECISION_FROM[decision].includes(doc.status)) return 'invalid-state';
@@ -1058,10 +1134,18 @@ export class Office {
     this.meterSweep(now);
     for (const session of [...this.sessions.values()]) {
       if (session.endedAt === null && session.socket && !existsSync(session.socket)) this.endSession(session, now);
+      else if (this.isGhost(session, now)) this.endSession(session, now, true);
       if (session.endedAt !== null && now - session.endedAt > FORGET_ENDED_MS) this.sessions.delete(session.sessionId);
     }
     this.detectStalls(now);
     this.refreshSessionFlags(now);
+  }
+
+  // No socket and no events: nobody can reach it and nobody is using it. A tool still open keeps it alive for longer.
+  private isGhost(session: SessionRuntime, now: number): boolean {
+    if (session.endedAt !== null || session.socket) return false;
+    const limit = session.openTools.size > 0 ? GHOST_TOOL_MS : GHOST_MS;
+    return now - session.updatedAt > limit;
   }
 
   floorInUse(slug: string): string[] {
@@ -1914,19 +1998,39 @@ export class Office {
     this.meterLater(agent);
   }
 
-  // The script is not a hook and brings no agent_id: the floor comes from its folder and the author from --de,
-  // or from the name of the session that runs it, and either must be alive on that floor.
-  // With --de, the session that runs the script must also be alive on that floor: teammates share its
-  // environment, so a session of another floor cannot sign for a teammate of this one.
+  // The script is not a hook and brings no agent_id: the floor comes from its folder. Who signs comes from the
+  // token of the session (X-Office-Token, the one the launcher gives every process of it): --de may name that
+  // session or one of its agents and nobody else. A script that brings no token signs with the name it
+  // declares, and cannot use --de.
   private chatAuthor(raw: ChatPostRequest, meta: HookMeta): { author: ChatAuthor; root: string; cwd: string } | ChatError {
     const cwd = raw.cwd?.trim();
     const root = cwd ? this.floors.rootOf(realPath(cwd)) : null;
     const slug = root ? managedFloors(this.config).find(([, floor]) => realPath(floor.path) === root)?.[0] : undefined;
     if (!cwd || !root || !slug) return { status: 404, error: { key: 'hub.api.chatFloorUnknown' } };
     const from = raw.from?.trim() || null;
-    const caller = meta.name ? this.liveSessionNamed(meta.name, slug) : null;
-    if (from && !caller) return { status: 403, error: { key: 'hub.api.chatSessionUnknown' } };
-    const name = from ?? meta.name;
+    const unknown: ChatError = { status: 403, error: { key: 'hub.api.chatSessionUnknown' } };
+    if (meta.token) {
+      const caller = this.liveSessionWithToken(meta.token, slug);
+      if (!caller) return unknown;
+      const sessionAuthor = (name: string): ChatAuthor => ({
+        key: caller.sessionId,
+        name,
+        role: caller.role ?? this.agents.get(caller.sessionId)?.role ?? null,
+        floor: slug,
+        origin: 'agent',
+      });
+      if (!from || from === caller.name) {
+        const name = caller.name ?? meta.name;
+        return name && name !== USER_NAME ? { author: sessionAuthor(name), root, cwd } : { status: 404, error: { key: 'hub.api.chatAuthorUnknown' } };
+      }
+      const agent = [...this.agents.values()]
+        .filter((a) => a.sessionId === caller.sessionId && a.name === from && a.endedAt === null && !this.isRetired(a))
+        .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+      if (!agent || from === USER_NAME) return unknown;
+      return { author: { key: agent.key, name: from, role: agent.role, floor: slug, origin: 'agent' }, root, cwd };
+    }
+    if (from) return unknown;
+    const name = meta.name;
     if (name && name !== USER_NAME) {
       const agent = [...this.agents.values()]
         .filter((a) => a.name === name && a.floor === slug && a.endedAt === null && !this.isRetired(a))
@@ -1939,6 +2043,10 @@ export class Office {
       }
     }
     return { status: 404, error: { key: 'hub.api.chatAuthorUnknown' } };
+  }
+
+  private liveSessionWithToken(token: string, slug: string): SessionRuntime | null {
+    return [...this.sessions.values()].find((s) => keyMatches(token, s.token ?? '') && s.floor === slug && s.endedAt === null) ?? null;
   }
 
   private liveSessionNamed(name: string, slug: string): SessionRuntime | null {
@@ -2028,13 +2136,29 @@ export class Office {
     try {
       const content = readFileSync(file, 'utf8');
       if (!content.startsWith(DISCARDED_MARK)) {
-        writeFileSync(file, `${DISCARDED_MARK} desde el panel de Agent Office el ${new Date(now).toISOString().slice(0, 16).replace('T', ' ')}. No se continúa: un encargo nuevo empieza con otro slug.\n\n${content}`);
+        const stamp = new Date(now).toISOString().slice(0, 16).replace('T', ' ');
+        writeAtomic(file, `${DISCARDED_MARK} desde el panel de Agent Office el ${stamp}. No se continúa: un encargo nuevo empieza con otro slug.\n\n${content}`, statSync(file).mode & 0o777);
       }
     } catch {
       return;
     }
+    this.commitDocumentFile(ref, `redaccion: ${ref.slug} descartado`);
+  }
+
+  private restoreFile(ref: DocRef): void {
+    const file = join(this.docsRoot(), ref.path);
+    try {
+      const content = readFileSync(file, 'utf8');
+      if (content.startsWith(DISCARDED_MARK)) writeAtomic(file, withoutDiscardMark(content), statSync(file).mode & 0o777);
+    } catch {
+      return;
+    }
+    this.commitDocumentFile(ref, `redaccion: ${ref.slug} restaurado`);
+  }
+
+  private commitDocumentFile(ref: DocRef, message: string): void {
     const root = this.docsRoot();
-    this.background(this.docsQueue.run(root, () => commitDocument(this.git, root, ref.path, `redaccion: ${ref.slug} descartado`)));
+    this.background(this.docsQueue.run(root, () => commitDocument(this.git, root, ref.path, message)));
   }
 
   private commitRound(ref: DocRef, round: number | null): void {
@@ -2103,6 +2227,8 @@ export class Office {
         launchHash: null,
         needsRelaunch: false,
         persistedAt: now,
+        ghost: false,
+        openTools: new Map(),
       };
       this.sessions.set(e.session_id, session);
       changed = true;
@@ -2133,8 +2259,9 @@ export class Office {
       session.team = team;
       changed = true;
     }
-    if (session.endedAt !== null && e.hook_event_name === 'SessionStart') {
+    if (session.endedAt !== null && (e.hook_event_name === 'SessionStart' || session.ghost)) {
       session.endedAt = null;
+      session.ghost = false;
       changed = true;
     }
     session.updatedAt = now;
@@ -2459,9 +2586,22 @@ export class Office {
     return { last, files, total };
   }
 
-  private endSession(session: SessionRuntime, now: number): void {
+  private endSession(session: SessionRuntime, now: number, ghost = false): void {
+    const silent = now - session.updatedAt;
     session.endedAt = now;
+    session.ghost = ghost;
+    session.openTools.clear();
     this.persistSession(session);
+    if (ghost) {
+      this.pushActivity({
+        ts: now,
+        agentKey: session.sessionId,
+        event: 'Ghost',
+        tool: null,
+        state: null,
+        summary: { key: 'hub.act.sessionGhost', params: { who: session.name ?? session.sessionId.slice(0, 8), minutes: Math.round(silent / 60_000) } },
+      });
+    }
     this.emitSession(session);
     for (const agent of this.agents.values()) {
       if (agent.sessionId !== session.sessionId || agent.endedAt !== null) continue;
@@ -2664,6 +2804,8 @@ export class Office {
         launchHash: row.launch_hash,
         needsRelaunch: false,
         persistedAt: row.updated_at,
+        ghost: false,
+        openTools: new Map(),
       };
       this.sessions.set(row.session_id, session);
       if (this.opts.launch && (row.rules_hash === null || row.launch_hash === null)) {

@@ -9,6 +9,8 @@ import { renderMarkdown } from './markdown';
 import { panelSection } from './section';
 
 const SHORT_SHA = 7;
+// The hub keeps the sources of a discarded plan this long (OfficeOptions.undoMs).
+export const UNDO_MS = 10_000;
 const NOT_DISCARDABLE: ReadonlySet<DocumentStatus> = new Set<DocumentStatus>(['ejecutando', 'cerrado', 'descartado']);
 
 const openAhead = new Set<string>();
@@ -112,8 +114,17 @@ export async function discardDocument(
     store.toast(result.message, 'error');
     return false;
   }
-  store.toast(t('deliverables.discarded', { title: doc.title }), 'ok');
+  store.toast(t('deliverables.discarded', { title: doc.title }), 'ok', {
+    ttlMs: UNDO_MS,
+    action: { label: t('deliverables.undo'), run: () => void restoreDocument(api, store, doc) },
+  });
   return true;
+}
+
+async function restoreDocument(api: OfficeApi, store: Store, doc: DocumentView): Promise<void> {
+  const result = await api.restoreDocument(doc.path);
+  if (result.ok) store.toast(t('deliverables.restored', { title: doc.title }), 'ok');
+  else store.toast(result.message, 'error');
 }
 
 export async function downloadDocument(api: OfficeApi | null, store: Store, doc: DocumentView, control: HTMLButtonElement): Promise<void> {

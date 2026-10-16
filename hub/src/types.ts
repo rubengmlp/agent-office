@@ -73,6 +73,8 @@ export type HubTextParams = {
   'hub.act.guardBlocked': { who: string; target: string };
   'hub.act.order': { text: string };
   'hub.act.planDiscarded': { path: string };
+  'hub.act.planRestored': { path: string };
+  'hub.act.sessionGhost': { who: string; minutes: number };
   'hub.act.sourcesReady': { slug: string; floors: string };
   'hub.act.sourcesForeign': { n: number; dirs: string };
   'hub.act.guardAlert.one': { level: HubText; n: number; floor: string; who: string };
@@ -190,6 +192,8 @@ export type HubTextParams = {
   'hub.api.planNotFound': undefined;
   'hub.api.decisionFields': undefined;
   'hub.api.planBadState': undefined;
+  'hub.api.planBusy': undefined;
+  'hub.api.planNotDiscarded': undefined;
   'hub.api.bodyTooLarge': undefined;
   'hub.api.internalError': undefined;
   'hub.api.directorClosed': undefined;

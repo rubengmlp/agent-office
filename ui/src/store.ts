@@ -42,7 +42,9 @@ export type Topic =
 
 export type ConnectionStatus = 'nokey' | 'connecting' | 'online' | 'offline' | 'denied' | 'replay';
 export type ToastKind = 'ok' | 'info' | 'error';
-export type Toast = { id: number; text: string; kind: ToastKind };
+export type ToastAction = { label: string; run: () => void };
+export type Toast = { id: number; text: string; kind: ToastKind; action?: ToastAction };
+export type ToastOptions = { action?: ToastAction; ttlMs?: number };
 
 type Listener = (topics: ReadonlySet<Topic>) => void;
 
@@ -258,11 +260,11 @@ export class Store {
     this.mark('questions');
   }
 
-  toast(text: string, kind: ToastKind = 'info'): void {
-    const toast: Toast = { id: ++this.toastSeq, text, kind };
+  toast(text: string, kind: ToastKind = 'info', opts: ToastOptions = {}): void {
+    const toast: Toast = { id: ++this.toastSeq, text, kind, ...(opts.action ? { action: opts.action } : {}) };
     this.toasts = [...this.toasts, toast];
     this.mark('toasts');
-    window.setTimeout(() => this.dismissToast(toast.id), TOAST_MS);
+    window.setTimeout(() => this.dismissToast(toast.id), opts.ttlMs ?? TOAST_MS);
   }
 
   dismissToast(id: number): void {

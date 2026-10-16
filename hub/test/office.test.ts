@@ -948,8 +948,12 @@ describe('agents going home', () => {
   }
 
   test('an idle teammate leaves after leaveAfterMinutes; the lead and the director never do', () => {
-    teamWithDev();
-    h.office.ingest(ev('dir-1', h.workspace, 'SessionStart', {}), { socket: null, token: null, role: 'office-director', name: 'director' });
+    const repo = teamWithDev();
+    // Launched sessions have a socket; one without it and silent for 30 minutes is a ghost, not an idle lead.
+    const sockets = [join(h.root, 'lead.sock'), join(h.root, 'dir.sock')];
+    for (const socket of sockets) writeFileSync(socket, '');
+    h.office.ingest(ev(LEAD, repo, 'Notification', {}), { ...leadMeta, socket: sockets[0] ?? null });
+    h.office.ingest(ev('dir-1', h.workspace, 'SessionStart', {}), { socket: sockets[1] ?? null, token: null, role: 'office-director', name: 'director' });
     h.clock.advance(4 * 60_000);
     h.office.tick();
     expect(agent('dev-1')?.away).toBe(false);

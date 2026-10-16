@@ -115,6 +115,10 @@ export class OfficeApi {
     return this.send('POST', '/api/documents/discard', { path });
   }
 
+  restoreDocument(path: string): Promise<ApiData<{ ok: true }>> {
+    return this.send('POST', '/api/documents/restore', { path });
+  }
+
   decidePlan(path: string, decision: PlanDecision): Promise<ApiData<{ ok: true }>> {
     return this.send('POST', '/api/documents/decide', { path, decision });
   }

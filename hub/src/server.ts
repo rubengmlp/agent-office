@@ -283,6 +283,15 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
     return c.json({ error: { key: 'hub.api.planNotFound' } }, 404);
   });
 
+  app.post('/api/documents/restore', requirePanel, async (c) => {
+    const path = text(record(await readJson(c)).path);
+    if (!path) return c.json({ error: { key: 'hub.api.pathRequired' } }, 400);
+    const result = await office.restoreDocument(path);
+    if (result === 'ok') return c.json({ ok: true });
+    if (result === 'not-discarded') return c.json({ error: { key: 'hub.api.planNotDiscarded' } }, 409);
+    return c.json({ error: { key: 'hub.api.planNotFound' } }, 404);
+  });
+
   app.post('/api/documents/decide', requirePanel, async (c) => {
     const body = record(await readJson(c));
     const path = text(body.path);
@@ -292,6 +301,7 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
     if (result === 'ok') return c.json({ ok: true });
     if (result === 'not-found') return c.json({ error: { key: 'hub.api.planNotFound' } }, 404);
     if (result === 'invalid-state') return c.json({ error: { key: 'hub.api.planBadState' } }, 409);
+    if (result === 'busy') return c.json({ error: { key: 'hub.api.planBusy' } }, 409);
     if (result === 'no-director') return c.json({ error: { key: 'hub.api.directorClosed' } }, 409);
     return c.json({ error: { key: 'hub.api.directorUnreachable' } }, 502);
   });
