@@ -1,4 +1,5 @@
 import { orderRows, type Row } from '../agents-order';
+import type { OfficeApi } from '../api';
 import { el, setStateColor } from '../dom';
 import { plural, t } from '../i18n';
 import { agentName, doingPhrase, floorLabel, isAway, roleLabel, STATE_COLORS } from '../labels';
@@ -6,8 +7,9 @@ import type { Store } from '../store';
 import { relativeTime } from '../time';
 import type { AgentView, FloorView } from '../types';
 import { panelSection } from './section';
+import { mainSession, relaunchButton, runSessionAction, stalledText, statusButton } from './session-controls';
 
-type TimeNode = { node: HTMLElement; ts: number };
+type TimeNode = { node: HTMLElement; text: (now: number) => string };
 
 function agentRow(store: Store, row: Row, times: TimeNode[], now: number): HTMLElement {
   const { agent, depth } = row;
@@ -17,7 +19,7 @@ function agentRow(store: Store, row: Row, times: TimeNode[], now: number): HTMLE
   setStateColor(dot, STATE_COLORS[state]);
   const since = agent.endedAt ?? agent.stateSince;
   const time = el('time', 'floors-time muted', relativeTime(since, now));
-  times.push({ node: time, ts: since });
+  times.push({ node: time, text: (at) => relativeTime(since, at) });
   const item = el(
     'button',
     `floors-row${away ? ' floors-row-away' : ''}${store.selectedKey === agent.key ? ' selected' : ''}`,
@@ -32,7 +34,24 @@ function agentRow(store: Store, row: Row, times: TimeNode[], now: number): HTMLE
   item.dataset.key = agent.key;
   item.style.paddingLeft = `${8 + depth * 14}px`;
   item.title = agent.task ? t('floors.task', { task: agent.task }) : agentName(agent);
-  return el('li', '', item);
+  return el('li', '', item, sessionActions(store, agent, depth, times, now));
+}
+
+function sessionActions(store: Store, agent: AgentView, depth: number, times: TimeNode[], now: number): HTMLElement | null {
+  const session = mainSession(store, agent);
+  const stalled = agent.stalledSince;
+  const relaunch = session?.needsRelaunch === true && session.endedAt === null;
+  if (stalled === null && !relaunch) return null;
+  const items: HTMLElement[] = [];
+  if (stalled !== null) {
+    const mark = el('span', 'chip floors-stalled', stalledText(stalled, now));
+    times.push({ node: mark, text: (at) => stalledText(stalled, at) });
+    items.push(mark, statusButton(agent));
+  }
+  if (relaunch && session) items.push(relaunchButton(session));
+  const actions = el('div', 'floors-actions', ...items);
+  actions.style.paddingLeft = `${26 + depth * 14}px`;
+  return actions;
 }
 
 function floorCard(store: Store, floor: FloorView, agents: readonly AgentView[], open: boolean, times: TimeNode[], now: number): HTMLElement {
@@ -78,7 +97,7 @@ function floorsMeta(groups: readonly (readonly AgentView[])[]): string | null {
   return outside > 0 ? t('panel.sectionMeta.away', { agents: count, n: outside }) : count;
 }
 
-export function mountFloors(host: HTMLElement, store: Store): void {
+export function mountFloors(host: HTMLElement, store: Store, api: OfficeApi | null): void {
   const section = panelSection({ id: 'floors', title: () => t('floors.title'), defaultOpen: true, host });
   const open = new Set<string>();
   let touched = false;
@@ -149,6 +168,11 @@ export function mountFloors(host: HTMLElement, store: Store): void {
   host.addEventListener('click', (event) => {
     const target = event.target;
     if (!(target instanceof Element)) return;
+    const action = target.closest<HTMLButtonElement>('button[data-action]');
+    if (action) {
+      void runSessionAction(api, store, action);
+      return;
+    }
     const key = target.closest<HTMLElement>('[data-key]')?.dataset.key;
     if (key) store.select(key);
   });
@@ -168,9 +192,9 @@ export function mountFloors(host: HTMLElement, store: Store): void {
     true,
   );
 
-  store.watch(['agents', 'floors', 'selection', 'questions', 'lang'], schedule);
+  store.watch(['agents', 'floors', 'selection', 'questions', 'sessions', 'lang'], schedule);
   store.watch(['tick'], () => {
     const now = store.now();
-    for (const { node, ts } of times) node.textContent = relativeTime(ts, now);
+    for (const { node, text } of times) node.textContent = text(now);
   });
 }

@@ -218,6 +218,7 @@ export function doingPhrase(agent: AgentView, state: AgentState = agent.state): 
     case 'failed':
       return t('doing.failed');
     case 'idle':
+      if (typeof detail !== 'string' && detail.key === 'hub.detail.waitingFor') return clip(text);
       return t('doing.idle');
     case 'asking':
       if (typeof detail !== 'string' && detail.key === 'hub.detail.asks') return clip(t('doing.asksLead', { question: hubText(detail.params.question) }));
