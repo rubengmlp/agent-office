@@ -16,7 +16,7 @@ export type EnsureResult = { root: string; created: boolean; initialized: boolea
 
 export function ensureDocsRepo(root: string): EnsureResult {
   const created = !existsSync(root);
-  for (const dir of [join(root, 'redaccion', 'planes'), join(root, 'redaccion', '.fuentes'), join(root, 'taller', 'skills')]) {
+  for (const dir of [join(root, 'redaccion', 'planes'), join(root, 'redaccion', 'historial'), join(root, 'redaccion', '.fuentes'), join(root, 'taller', 'skills')]) {
     mkdirSync(dir, { recursive: true });
   }
   const gitignore = join(root, '.gitignore');
@@ -35,12 +35,19 @@ export function ensureDocsRepo(root: string): EnsureResult {
 
 export type CommitOutcome = 'committed' | 'unchanged' | 'failed';
 
-export async function commitDocument(git: GitRunner, root: string, relPath: string, message: string): Promise<CommitOutcome> {
+export async function commitDocument(
+  git: GitRunner,
+  root: string,
+  relPaths: string | readonly string[],
+  message: string,
+): Promise<CommitOutcome> {
   if (!existsSync(join(root, '.git'))) return 'failed';
-  const added = await git(root, ['add', '--', relPath]);
+  const paths = (typeof relPaths === 'string' ? [relPaths] : relPaths).filter((path) => existsSync(join(root, path)));
+  if (paths.length === 0) return 'failed';
+  const added = await git(root, ['add', '--', ...paths]);
   if (added.code !== 0) return 'failed';
-  const staged = await git(root, ['diff', '--cached', '--quiet', '--', relPath]);
+  const staged = await git(root, ['diff', '--cached', '--quiet', '--', ...paths]);
   if (staged.code === 0) return 'unchanged';
-  const commit = await git(root, ['commit', '--only', '--quiet', '-m', message, '--', relPath]);
+  const commit = await git(root, ['commit', '--only', '--quiet', '-m', message, '--', ...paths]);
   return commit.code === 0 ? 'committed' : 'failed';
 }

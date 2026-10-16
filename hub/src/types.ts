@@ -34,6 +34,7 @@ export type ReviewConfig = { maxRounds: number };
 export type MemoryConfig = { maxLessons: number; maxLessonsPerSession: number; maxContextChars: number };
 
 export type OfficeConfig = {
+  configVersion: number;
   floors: Record<string, FloorConfig>;
   roles: Record<RoleId, RoleSettings>;
   docsRepo: string;

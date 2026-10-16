@@ -165,7 +165,7 @@ describe('Redacción review loop', () => {
     writeFileSync(join(docs, PLAN), '# Plan\n');
     touch(join(docs, PLAN), -60_000);
     say(LEAD, cwd, 'ared-1', 'redactor-login', 'team-lead', `REVISAR: ${PLAN} ronda 3`);
-    say(LEAD, cwd, 'arev-1', 'revisor-planes-login-r1', 'team-lead', `SIN ACUERDO: ${PLAN} ronda 3 — falta la migración`);
+    say(LEAD, cwd, 'arev-1', 'revisor-planes-login-r1', 'redactor-login', `SIN ACUERDO: ${PLAN} ronda 3 — falta la migración`);
     expect(doc(PLAN)).toMatchObject({ status: 'sin-acuerdo', round: 3 });
     expect(gate(LEAD, cwd, null, null, `HECHO: ${PLAN} aprobado en 3 rondas — x`).pass).toBe(false);
   });
@@ -184,6 +184,106 @@ describe('Redacción review loop', () => {
     expect(await h.office.discardDocument('redaccion/planes/otro.md')).toBe('not-found');
     expect(h.office.documentContent(PLAN)?.markdown).toContain('# Plan\n');
     expect(h.office.documentContent('../../etc/passwd')).toBeNull();
+  });
+});
+
+describe('plan reviewers', () => {
+  const verdictRows = () =>
+    h.db.query<{ kind: string; score: number | null; agent_key: string }, []>("SELECT kind, score, agent_key FROM verdicts WHERE kind != 'tests' ORDER BY id").all();
+  const summaries = () => h.office.snapshot().activity.map((a) => a.summary);
+
+  test('a reviewer gives one verdict to the author, ignores the copies and leaves for good', () => {
+    const cwd = redaccionTeam();
+    writeFileSync(join(docs, PLAN), '# Plan\n');
+    touch(join(docs, PLAN), -60_000);
+    say(LEAD, cwd, 'ared-1', 'redactor-login', 'team-lead', `REVISAR: ${PLAN} ronda 1`);
+    say(LEAD, cwd, 'arev-1', 'revisor-planes-login-r1', 'team-lead', `MEJORAR: ${PLAN} ronda 1 — nota 5/10`);
+    expect(verdictRows()).toEqual([]);
+    expect(agent('arev-1')?.endedAt).toBeNull();
+
+    say(LEAD, cwd, 'arev-1', 'revisor-planes-login-r1', 'redactor-login', `MEJORAR: ${PLAN} ronda 1 — nota 6/10\n1. bloqueante: falta la migración`);
+    expect(verdictRows()).toEqual([{ kind: 'improve', score: 6, agent_key: 'arev-1' }]);
+    expect(agent('arev-1')).toMatchObject({ state: 'done', detail: 'veredicto: mejorar', endedAt: h.clock.now });
+
+    say(LEAD, cwd, 'arev-1', 'revisor-planes-login-r1', 'team-lead', `MEJORAR: ${PLAN} ronda 1 — nota 6/10`);
+    h.office.ingest(ev(LEAD, cwd, 'SubagentStop', { agent_id: 'arev-1', agent_type: 'revisor-planes-login-r1' }));
+    expect(verdictRows()).toHaveLength(1);
+    expect(summaries().filter((s) => s.startsWith('veredicto ignorado'))).toEqual([]);
+
+    h.clock.advance(1000);
+    say(LEAD, cwd, 'arev-1', 'revisor-planes-login-r1', 'redactor-login', `APROBADO: ${PLAN} ronda 1 — nota 9/10 — al final sí`);
+    expect(verdictRows()).toHaveLength(1);
+    expect(doc(PLAN)).toMatchObject({ status: 'revision', score: 6 });
+    expect(summaries()).toContain(`veredicto ignorado: revisor-planes-login-r1 ya dio su veredicto sobre ${PLAN}`);
+    expect(summaries().filter((s) => s === 'revisor-planes-login-r1 ya entregó su veredicto: se ignora')).toHaveLength(1);
+    expect(agent('arev-1')).toMatchObject({ state: 'done', detail: 'veredicto: mejorar' });
+
+    h.clock.advance(11 * 60_000);
+    h.office.tick();
+    expect(agent('arev-1')).toBeUndefined();
+    h.office.ingest(ev(LEAD, cwd, 'PreToolUse', { agent_id: 'arev-1', agent_type: 'revisor-planes-login-r1', tool_name: 'Read', tool_input: { file_path: join(docs, PLAN) } }));
+    expect(agent('arev-1')?.state).toBe('done');
+    expect(agent('arev-1')?.endedAt).not.toBeNull();
+  });
+
+  test('a reviewer with the same name and a new id after a discard is not retired and owns TeammateIdle by name', async () => {
+    const cwd = redaccionTeam();
+    writeFileSync(join(docs, PLAN), '# Plan\n');
+    say(LEAD, cwd, 'arev-1', 'revisor-planes-login-r1', 'redactor-login', `MEJORAR: ${PLAN} ronda 1 — nota 4/10`);
+    expect(agent('arev-1')?.endedAt).not.toBeNull();
+    await h.office.idle();
+    expect(await h.office.discardDocument(PLAN)).toBe('ok');
+    await h.office.idle();
+    const team = `session-${LEAD.slice(0, 8)}`;
+    h.office.ingest(ev(LEAD, cwd, 'TeammateIdle', { teammate_name: 'revisor-planes-login-r1', team_name: team }));
+    expect(h.office.snapshot().agents.some((a) => a.key.includes('@'))).toBe(false);
+
+    spawn(LEAD, cwd, 'revisor-planes-login-r1', 'office-revisor-planes', 'call-rev-new');
+    start(LEAD, cwd, 'arev-9', 'revisor-planes-login-r1');
+    expect(agent('arev-9')).toMatchObject({ roleKind: 'planReviewer', endedAt: null, state: 'working' });
+    h.office.ingest(ev(LEAD, cwd, 'TeammateIdle', { teammate_name: 'revisor-planes-login-r1', team_name: team }));
+    expect(agent('arev-9')).toMatchObject({ state: 'idle', endedAt: null });
+    expect(agent('arev-1')).toMatchObject({ state: 'done', detail: 'veredicto: mejorar' });
+    expect(h.office.snapshot().agents.some((a) => a.key.includes('@'))).toBe(false);
+  });
+
+  test('the plan reviewer starts cold and leaves no memory, the skill reviewer keeps it', () => {
+    office();
+    const cwd = join(docs, 'redaccion');
+    h.office.addLesson({ floor: 'redaccion', role: 'revisor-planes', text: 'Mira siempre las migraciones' });
+    h.office.addLesson({ floor: 'redaccion', role: 'redactor', text: 'Cita la regla de layering' });
+    h.office.ingest(ev(LEAD, cwd, 'SessionStart', {}), leadMeta);
+    spawn(LEAD, cwd, 'revisor-planes-login-r1', 'office-revisor-planes', 'call-rev1');
+    expect(start(LEAD, cwd, 'arev-1', 'revisor-planes-login-r1')).toBeNull();
+    spawn(LEAD, cwd, 'redactor-login', 'office-redactor', 'call-red');
+    expect(start(LEAD, cwd, 'ared-1', 'redactor-login')).toContain('Cita la regla de layering');
+    say(LEAD, cwd, 'arev-1', 'revisor-planes-login-r1', 'team-lead', 'LECCIÓN: los planes de mobile olvidan el backfill');
+    expect(h.office.memoryView('redaccion', 'revisor-planes').lessons.map((l) => l.text)).toEqual(['Mira siempre las migraciones']);
+    expect(h.office.snapshot().activity.map((a) => a.summary)).toContain('lección ignorada: el revisor de planes no guarda memoria');
+    expect(h.office.snapshot().activity.some((a) => a.agentKey === 'arev-1' && a.summary.startsWith('memoria entregada'))).toBe(false);
+    h.office.ingest(ev(LEAD, cwd, 'SubagentStop', { agent_id: 'arev-1', agent_type: 'revisor-planes-login-r1' }));
+    h.office.ingest(ev(LEAD, cwd, 'SessionEnd', { reason: 'exit' }));
+    expect(h.db.query<{ n: number }, [string]>('SELECT COUNT(*) AS n FROM reports WHERE agent_key = ?').get('arev-1')?.n).toBe(0);
+    expect(h.db.query<{ n: number }, [string]>('SELECT COUNT(*) AS n FROM reports WHERE agent_key = ?').get('ared-1')?.n).toBe(1);
+
+    const taller = join(docs, 'taller');
+    h.office.addLesson({ floor: 'mantenimiento', role: 'revisor-skills', text: 'Lee siempre los scripts' });
+    h.office.ingest(ev(MANT, taller, 'SessionStart', {}), mantMeta);
+    expect(start(MANT, taller, 'arsk-1', 'revisor-skills-pdf-r1')).toContain('Lee siempre los scripts');
+  });
+
+  test('the round history lives outside the plan, is committed with its round and is never a plan', async () => {
+    const cwd = redaccionTeam();
+    writeFileSync(join(docs, PLAN), '# Plan\n');
+    mkdirSync(join(docs, 'redaccion', 'historial'), { recursive: true });
+    writeFileSync(join(docs, 'redaccion', 'historial', 'login.md'), '# Historial\n\n## Ronda 1\n');
+    say(LEAD, cwd, 'ared-1', 'redactor-login', 'team-lead', `REVISAR: ${PLAN} ronda 1`);
+    await h.office.idle();
+    expect(git(docs, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort()).toEqual(['redaccion/historial/login.md', PLAN]);
+    expect(git(docs, 'log', '-1', '--format=%s')).toBe('redaccion: login ronda 1');
+    expect(h.office.documents().map((d) => d.path)).toEqual([PLAN]);
+    say(LEAD, cwd, 'ared-1', 'redactor-login', 'team-lead', 'REVISAR: redaccion/historial/login.md ronda 2');
+    expect(doc(PLAN)?.round).toBe(1);
   });
 });
 

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
-import { statSync, writeFileSync } from 'node:fs';
+import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { DEFAULT_ROLES, PROFILES_DIR, createKeyIfMissing, loadConfig, normalizeConfig, saveConfig } from '../src/config';
+import { CONFIG_VERSION, DEFAULT_ROLES, PROFILES_DIR, createKeyIfMissing, defaultConfig, loadConfig, migrateConfig, normalizeConfig, saveConfig } from '../src/config';
 import { configTargets, watchTargets } from '../src/config-watch';
 import { openDb } from '../src/db';
 import { decideGate } from '../src/gate';
@@ -42,6 +42,37 @@ describe('config', () => {
     expect(c.blockedAfterMinutes).toBe(7);
     expect(c.port).toBe(4800);
     expect(c.roles).toEqual(DEFAULT_ROLES);
+  });
+
+  test('the plan reviewer defaults to opus with medium effort and the saved v1 default moves there once', () => {
+    expect(DEFAULT_ROLES['revisor-planes']).toEqual({ model: 'opus', effort: 'medium' });
+    expect(defaultConfig().configVersion).toBe(CONFIG_VERSION);
+    const legacy = { roles: { 'revisor-planes': { model: 'sonnet', effort: 'xhigh' }, dev: { model: 'haiku', effort: 'low' } } };
+    const v1 = normalizeConfig(legacy);
+    expect(v1.configVersion).toBe(1);
+    expect(v1.roles['revisor-planes']).toEqual({ model: 'sonnet', effort: 'xhigh' });
+    const migrated = migrateConfig(v1);
+    expect(migrated.changed).toBe(true);
+    expect(migrated.config.configVersion).toBe(2);
+    expect(migrated.config.roles['revisor-planes']).toEqual({ model: 'opus', effort: 'medium' });
+    expect(migrated.config.roles.dev).toEqual({ model: 'haiku', effort: 'low' });
+    const chosen = migrateConfig(normalizeConfig({ roles: { 'revisor-planes': { model: 'sonnet', effort: 'high' } } }));
+    expect(chosen.config.roles['revisor-planes']).toEqual({ model: 'sonnet', effort: 'high' });
+    expect(chosen.config.configVersion).toBe(2);
+    const v2 = migrateConfig(normalizeConfig({ ...legacy, configVersion: 2 }));
+    expect(v2).toMatchObject({ changed: false, config: { roles: { 'revisor-planes': { model: 'sonnet', effort: 'xhigh' } } } });
+
+    const { dir, cleanup } = tempDir();
+    const p = fakePaths(dir);
+    writeFileSync(p.config, JSON.stringify(legacy));
+    expect(loadConfig(p).roles['revisor-planes']).toEqual({ model: 'opus', effort: 'medium' });
+    const saved = JSON.parse(readFileSync(p.config, 'utf8'));
+    expect(saved.configVersion).toBe(2);
+    expect(saved.roles['revisor-planes']).toEqual({ model: 'opus', effort: 'medium' });
+    saved.roles['revisor-planes'] = { model: 'sonnet', effort: 'xhigh' };
+    writeFileSync(p.config, JSON.stringify(saved));
+    expect(loadConfig(p).roles['revisor-planes']).toEqual({ model: 'sonnet', effort: 'xhigh' });
+    cleanup();
   });
 
   test('the key is created once with private permissions', () => {

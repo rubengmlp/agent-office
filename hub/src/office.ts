@@ -29,6 +29,7 @@ import { PERMISSION_ALLOW, PERMISSION_DENY, QuestionDesk, parseQuestions } from 
 import { buildReport, saveReport, savedReport, savedReports } from './reports';
 import {
   canonicalRole,
+  contextFree,
   departmentOf,
   inOfficeScope,
   isAuthorRole,
@@ -93,6 +94,8 @@ type AgentRuntime = {
   updatedAt: number;
   endedAt: number | null;
   sentState: AgentState | null;
+  retiredAt: number | null;
+  retiredAwake: boolean;
 };
 
 type SessionRuntime = {
@@ -156,11 +159,16 @@ const FORGET_ENDED_MS = 10 * 60_000;
 const RESTORE_WINDOW_MS = 24 * 60 * 60_000;
 const MAX_SPAWNS = 500;
 const TEAM_CACHE_MS = 5000;
-const VERDICT_DEDUP_MS = 10 * 60_000;
 const DAY_MS = 86_400_000;
 const EMPTY_META: HookMeta = { socket: null, token: null, role: null, name: null };
 const NO_TESTS: Matchers = { test: /(?!)/, check: /(?!)/ };
 const NOT_PERMISSIONS: ReadonlySet<string> = new Set(['AskUserQuestion', 'ExitPlanMode']);
+const TURN_OVER: ReadonlySet<string> = new Set(['SubagentStop', 'Stop', 'TeammateIdle', 'SessionEnd']);
+const VERDICT_LABELS: Record<Exclude<VerdictKind, 'tests'>, string> = {
+  approved: 'aprobado',
+  improve: 'mejorar',
+  'no-agreement': 'sin acuerdo',
+};
 export const DISCARDED_MARK = '> **Descartado**';
 
 export const ROLE_LABELS: Record<RoleId, string> = {
@@ -318,11 +326,21 @@ export class Office {
     const session = this.touchSession(e, meta, now);
     const kind = session.floorKind;
     const c = classify(e, isDepartmentFloor(kind) ? NO_TESTS : profileFor(this.profiles, session.stack));
-    if (c.event === 'SubagentStop' && !this.agents.has(c.agentKey)) {
-      this.sql.insertEvent.run(now, e.session_id, c.agentKey, session.floor, c.event, null, null, null, storedPayload(e, kind));
-      return null;
+    if (c.event === 'TeammateIdle' && !e.agent_id && !this.agents.has(c.agentKey)) {
+      const owner = this.liveTeammate(c.teammate, c.team ?? session.team ?? teamOfSession(e.session_id), e.session_id);
+      if (owner) c.agentKey = owner.key;
+    }
+    if ((c.event === 'SubagentStop' || c.event === 'TeammateIdle') && !this.agents.has(c.agentKey)) {
+      if (c.event === 'SubagentStop' || c.agentKey.includes('@')) {
+        this.sql.insertEvent.run(now, e.session_id, c.agentKey, session.floor, c.event, null, null, null, storedPayload(e, kind));
+        return null;
+      }
     }
     const agent = this.touchAgent(e, c, session, now);
+    if (this.isRetired(agent)) {
+      this.ingestRetired(e, c, agent, session, now);
+      return null;
+    }
 
     let nextState = c.state;
     let ended = c.ended;
@@ -777,7 +795,7 @@ export class Office {
   }
 
   private storeReport(agent: AgentRuntime, now: number): void {
-    if (!remembers(agent.floorKind)) return;
+    if (!remembers(agent.floorKind) || contextFree(roleKind(agent.role))) return;
     saveReport(this.opts.db, this.buildReportFor(agent), now);
   }
 
@@ -800,6 +818,7 @@ export class Office {
 
   private injection(event: string, agent: AgentRuntime, session: SessionRuntime): string | null {
     const roleId = roleIdOf(agent.role);
+    if (contextFree(roleKind(agent.role))) return null;
     if (!roleId || !remembers(session.floorKind) || !inOfficeScope({ floorKind: session.floorKind, sessionRole: agent.role, leadRole: null })) {
       return null;
     }
@@ -873,11 +892,22 @@ export class Office {
     return decision;
   }
 
-  private handleProtocol(body: string, from: AgentRuntime, session: SessionRuntime, now: number): void {
+  private handleProtocol(message: { to: string; toKey: string | null; text: string }, from: AgentRuntime, session: SessionRuntime, now: number): void {
     if (!remembers(session.floorKind)) return;
-    const parsed = parseProtocol(body);
+    const parsed = parseProtocol(message.text);
     if (!parsed) return;
     if (parsed.kind === 'lesson') {
+      if (contextFree(roleKind(from.role))) {
+        this.pushActivity({
+          ts: now,
+          agentKey: from.key,
+          event: 'Lesson',
+          tool: 'SendMessage',
+          state: null,
+          summary: 'lección ignorada: el revisor de planes no guarda memoria',
+        });
+        return;
+      }
       this.captureAgentLesson(from, parsed.rest, now);
       return;
     }
@@ -899,20 +929,27 @@ export class Office {
       });
       return;
     }
-    const verdict: VerdictKind | null =
+    const verdict: Exclude<VerdictKind, 'tests'> | null =
       parsed.kind === 'improve' ? 'improve' : parsed.kind === 'approved' ? 'approved' : parsed.kind === 'no-agreement' ? 'no-agreement' : null;
-    if (!verdict || !isVerdictRole(from.role)) return;
-    const duplicate = this.sql.recentVerdict.get(from.key, ref.path, verdict, round ?? -1, now - VERDICT_DEDUP_MS);
-    if (!duplicate) {
-      this.sql.insertVerdict.run(now, from.key, from.role, session.floor, verdict, verdict === 'approved' ? 1 : 0, null, ref.path, round, parsed.score);
+    if (!verdict || !isVerdictRole(from.role) || !this.toAuthor(message, ref)) return;
+    if (this.sql.agentVerdict.get(from.key, ref.path)) {
+      this.pushActivity({
+        ts: now,
+        agentKey: from.key,
+        event: 'Verdict',
+        tool: 'SendMessage',
+        state: null,
+        summary: `veredicto ignorado: ${from.name ?? from.key} ya dio su veredicto sobre ${ref.path}`,
+      });
+      return;
     }
+    this.sql.insertVerdict.run(now, from.key, from.role, session.floor, verdict, verdict === 'approved' ? 1 : 0, null, ref.path, round, parsed.score);
     this.docs.markRound(ref, round, now);
-    if (verdict === 'approved' && !duplicate) {
+    if (verdict === 'approved') {
       this.commitRound(ref, round);
       if (ref.kind === 'plan') this.background(this.sync.checkAhead(ref.slug));
     }
     this.refreshDocuments();
-    if (duplicate) return;
     const label = verdict === 'approved' ? 'aprueba' : verdict === 'improve' ? 'pide mejoras en' : 'sin acuerdo en';
     const score = parsed.score !== null ? ` · nota ${parsed.score}/10` : '';
     this.pushActivity({
@@ -923,6 +960,76 @@ export class Office {
       state: null,
       summary: `${label} ${ref.path}${round ? ` (ronda ${round})` : ''}${score}`,
     });
+    this.retire(from, VERDICT_LABELS[verdict], now);
+  }
+
+  private toAuthor(message: { to: string; toKey: string | null }, ref: DocRef): boolean {
+    const author = `${ref.kind === 'plan' ? 'redactor' : 'artesano'}-${ref.slug}`;
+    const name = message.to.split('@')[0] ?? '';
+    if (name === author) return true;
+    const recipient = message.toKey ? this.agents.get(message.toKey) : undefined;
+    return !!recipient && recipient.name === author && isAuthorRole(recipient.role);
+  }
+
+  private retire(agent: AgentRuntime, label: string, now: number): void {
+    agent.retiredAt = now;
+    agent.retiredAwake = true;
+    agent.blockedReason = null;
+    agent.detail = `veredicto: ${label}`;
+    if (agent.state !== 'done') {
+      agent.state = 'done';
+      agent.stateSince = now;
+    }
+    if (agent.endedAt === null) agent.endedAt = now;
+    agent.updatedAt = now;
+    if (this.watch.watching(agent.key)) this.background(this.watch.finish(agent.key));
+    this.persistAgent(agent);
+    this.emitAgent(agent, now);
+    this.storeReport(agent, now);
+  }
+
+  private isRetired(agent: AgentRuntime): boolean {
+    if (agent.retiredAt !== null) return true;
+    if (!isVerdictRole(agent.role)) return false;
+    const row = this.sql.firstVerdictOf.get(agent.key);
+    if (!row || row.ts === null) return false;
+    agent.retiredAt = row.ts;
+    agent.retiredAwake = false;
+    agent.state = 'done';
+    agent.stateSince = row.ts;
+    if (agent.endedAt === null) agent.endedAt = row.ts;
+    this.persistAgent(agent);
+    return true;
+  }
+
+  private ingestRetired(e: HookEvent, c: Classified, agent: AgentRuntime, session: SessionRuntime, now: number): void {
+    const kind = session.floorKind;
+    this.sql.insertEvent.run(now, e.session_id, agent.key, session.floor, c.event, c.tool, null, c.filePath, storedPayload(e, kind));
+    if (TURN_OVER.has(c.event)) {
+      agent.retiredAwake = false;
+    } else if (!agent.retiredAwake) {
+      agent.retiredAwake = true;
+      this.pushActivity({
+        ts: now,
+        agentKey: agent.key,
+        event: 'Retired',
+        tool: null,
+        state: null,
+        summary: `${agent.name ?? agent.key} ya entregó su veredicto: se ignora`,
+      });
+    }
+    if (c.message) this.recordMessage(c.message, agent, session, now);
+    this.settlePermissions(agent.key, c.event, c.tool, e.tool_input);
+    if (c.sessionEnded) this.endSession(session, now);
+  }
+
+  private liveTeammate(name: string | null, team: string, sessionId: string): AgentRuntime | null {
+    if (!name) return null;
+    for (const agent of this.agents.values()) {
+      if (agent.name !== name || agent.endedAt !== null || this.isRetired(agent)) continue;
+      if (agent.team === team || agent.sessionId === sessionId) return agent;
+    }
+    return null;
   }
 
   private markDiscardedFile(ref: DocRef, now: number): void {
@@ -942,9 +1049,10 @@ export class Office {
   private commitRound(ref: DocRef, round: number | null): void {
     const root = this.docsRoot();
     const message = `${ref.kind === 'plan' ? 'redaccion' : 'taller'}: ${ref.slug} ronda ${round ?? '?'}`;
+    const paths = ref.kind === 'plan' ? [ref.path, historyPath(ref.slug)] : [ref.path];
     this.background(
       this.docsQueue
-        .run(root, () => commitDocument(this.git, root, ref.path, message))
+        .run(root, () => commitDocument(this.git, root, paths, message))
         .then((outcome) => {
           if (outcome === 'failed') {
             this.pushActivity({
@@ -1069,6 +1177,8 @@ export class Office {
         updatedAt: now,
         endedAt: null,
         sentState: null,
+        retiredAt: null,
+        retiredAwake: false,
       };
       this.agents.set(agent.key, agent);
     }
@@ -1159,7 +1269,7 @@ export class Office {
     this.messages.push(view);
     if (this.messages.length > MAX_MESSAGES) this.messages.splice(0, this.messages.length - MAX_MESSAGES);
     this.emit({ type: 'message', data: view });
-    if (body) this.handleProtocol(body, from, session, now);
+    if (body) this.handleProtocol({ to: message.to, toKey, text: body }, from, session, now);
   }
 
   private recipientKey(to: string, from: AgentRuntime): string | null {
@@ -1403,6 +1513,8 @@ export class Office {
         updatedAt: now,
         endedAt: null,
         sentState: null,
+        retiredAt: null,
+        retiredAwake: false,
       });
       this.sessions.set(row.session_id, {
         sessionId: row.session_id,
@@ -1433,6 +1545,10 @@ export class Office {
       this.opts.rawDir = null;
     }
   }
+}
+
+export function historyPath(slug: string): string {
+  return `redaccion/historial/${slug}.md`;
 }
 
 export function permissionMatch(tool: string, input: Record<string, unknown>): string {
@@ -1506,8 +1622,11 @@ function prepare(db: Database) {
     insertVerdict: db.query(
       'INSERT INTO verdicts (ts, agent_key, role, floor, kind, ok, command, path, round, score) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     ),
-    recentVerdict: db.query<{ id: number }, [string, string, string, number, number]>(
-      'SELECT id FROM verdicts WHERE agent_key = ? AND path = ? AND kind = ? AND COALESCE(round, -1) = ? AND ts >= ? LIMIT 1',
+    agentVerdict: db.query<{ id: number }, [string, string]>(
+      "SELECT id FROM verdicts WHERE agent_key = ? AND path = ? AND kind IN ('approved', 'improve', 'no-agreement') LIMIT 1",
+    ),
+    firstVerdictOf: db.query<{ ts: number | null }, [string]>(
+      "SELECT MIN(ts) AS ts FROM verdicts WHERE agent_key = ? AND kind IN ('approved', 'improve', 'no-agreement')",
     ),
     lastTesterGreen: db.query<{ ts: number | null }, [string]>(
       "SELECT MAX(ts) AS ts FROM verdicts WHERE floor = ? AND kind = 'tests' AND ok = 1 AND role LIKE 'office-tester-%'",

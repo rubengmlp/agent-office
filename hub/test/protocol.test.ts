@@ -50,6 +50,7 @@ describe('protocol messages', () => {
     expect(docRef('skills/pdf-tools', docs, join(docs, 'taller'))?.path).toBe('taller/skills/pdf-tools');
     expect(docRef('redaccion/planes/../../secret.md', docs, null)).toBeNull();
     expect(docRef('redaccion/.fuentes/login/mobile/README.md', docs, null)).toBeNull();
+    expect(docRef('redaccion/historial/login.md', docs, null)).toBeNull();
     expect(docRef('/etc/passwd', docs, null)).toBeNull();
     expect(docRef('Implementada', docs, null)).toBeNull();
     expect(docRef('redaccion/planes/login.md', null, null)).toBeNull();

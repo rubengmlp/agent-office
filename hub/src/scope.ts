@@ -76,6 +76,10 @@ export function isAuthorRole(role: string | null | undefined): boolean {
   return kind === 'writer' || kind === 'skillwright';
 }
 
+export function contextFree(kind: RoleKind): boolean {
+  return kind === 'planReviewer';
+}
+
 export function isDepartmentFloor(kind: FloorKind): boolean {
   return kind === 'redaccion' || kind === 'mantenimiento';
 }

@@ -79,12 +79,14 @@ export const DEFAULT_ROLES: Record<RoleId, RoleSettings> = {
   tester: { model: 'sonnet', effort: 'medium' },
   reviewer: { model: 'opus', effort: 'high' },
   redactor: { model: 'fable', effort: 'xhigh' },
-  'revisor-planes': { model: 'sonnet', effort: 'xhigh' },
+  'revisor-planes': { model: 'opus', effort: 'medium' },
   artesano: { model: 'sonnet', effort: 'medium' },
   'revisor-skills': { model: 'opus', effort: 'high' },
 };
 
 export const DEFAULT_BASE_BRANCH = 'develop';
+
+export const CONFIG_VERSION = 2;
 
 export const PERMISSION_MODES: readonly PermissionMode[] = ['auto', 'manual', 'acceptEdits', 'plan', 'dontAsk'];
 
@@ -98,6 +100,7 @@ export const LIMITS = {
 } as const;
 
 export const DEFAULT_CONFIG: OfficeConfig = {
+  configVersion: CONFIG_VERSION,
   floors: {},
   roles: DEFAULT_ROLES,
   docsRepo: '~/Projects/office-docs',
@@ -220,6 +223,7 @@ export function normalizeConfig(raw: unknown): OfficeConfig {
     if (/^[a-z0-9][a-z0-9-]*$/.test(slug) && validPermissionMode(mode)) permissionModes[slug] = mode;
   }
   return {
+    configVersion: validInt(src.configVersion, { min: 1, max: 1000 }) ? src.configVersion : 1,
     floors: normalizeFloors(src.floors),
     roles: normalizeRoles(src.roles),
     docsRepo: typeof src.docsRepo === 'string' && src.docsRepo.trim() ? src.docsRepo.trim() : d.docsRepo,
@@ -233,9 +237,22 @@ export function normalizeConfig(raw: unknown): OfficeConfig {
   };
 }
 
+export function migrateConfig(config: OfficeConfig): { config: OfficeConfig; changed: boolean } {
+  if (config.configVersion >= CONFIG_VERSION) return { config, changed: false };
+  const next = structuredClone(config);
+  const reviewer = next.roles['revisor-planes'];
+  if (config.configVersion < 2 && reviewer.model === 'sonnet' && reviewer.effort === 'xhigh') {
+    next.roles['revisor-planes'] = { ...DEFAULT_ROLES['revisor-planes'] };
+  }
+  next.configVersion = CONFIG_VERSION;
+  return { config: next, changed: true };
+}
+
 export function loadConfig(p: Paths): OfficeConfig {
   if (!existsSync(p.config)) return defaultConfig();
-  return normalizeConfig(JSON.parse(readFileSync(p.config, 'utf8')));
+  const migrated = migrateConfig(normalizeConfig(JSON.parse(readFileSync(p.config, 'utf8'))));
+  if (migrated.changed) saveConfig(p, migrated.config);
+  return migrated.config;
 }
 
 export function saveConfig(p: Paths, config: OfficeConfig): void {
