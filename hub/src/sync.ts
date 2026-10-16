@@ -170,6 +170,24 @@ export class SyncDesk {
     this.opts.onChange();
   }
 
+  async removeFloor(floorSlug: string): Promise<number> {
+    const rows = this.opts.db
+      .query<WorktreeRow, [string]>('SELECT * FROM sync_worktrees WHERE floor = ? ORDER BY slug')
+      .all(floorSlug);
+    for (const row of rows) {
+      await this.queue.run(row.repo, async () => {
+        if (existsSync(row.path)) await this.opts.git(row.repo, ['worktree', 'remove', '--force', row.path]);
+        await this.opts.git(row.repo, ['worktree', 'prune']);
+        this.removeDir(row.path);
+      });
+      this.opts.db.query('DELETE FROM sync_worktrees WHERE slug = ? AND floor = ?').run(row.slug, row.floor);
+      this.removeDir(join(this.fuentes(), row.slug), true);
+    }
+    this.opts.db.query('DELETE FROM floor_sync WHERE floor = ?').run(floorSlug);
+    this.opts.onChange();
+    return rows.length;
+  }
+
   async checkAhead(slug: string): Promise<void> {
     let changed = false;
     for (const row of this.rows(slug)) {
