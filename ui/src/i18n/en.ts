@@ -449,7 +449,7 @@ export const en: Messages = {
   'hub.act.tests': 'tests: {command}',
   'hub.act.check': 'checks: {command}',
   'hub.act.run': 'runs: {command}',
-  'hub.act.edit': 'edit {name}',
+  'hub.act.edit': 'edits {name}',
   'hub.act.read': 'reads {what}',
   'hub.act.question': 'asks: {text}',
   'hub.act.message': 'writes to {to}: {text}',
