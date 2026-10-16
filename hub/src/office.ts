@@ -2130,7 +2130,6 @@ export class Office {
     if (subject) this.background(this.meter.schedule(subject));
   }
 
-  // What the agent spent so far stays with the plan it had until now.
   private setPlan(agent: AgentRuntime, slug: string): void {
     if (agent.planSlug === slug) return;
     const subject = this.meterAgent(agent);
