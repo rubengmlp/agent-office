@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 import { managedFloors } from './agents';
 import { GLOBAL_CHANNEL, READ_LIMIT, USER_NAME, isChatKind, normalizeChatPath, type ChatAuthor, type ChatDesk, type ChatError, type ChatUnread } from './chat';
-import { chatInboxText, deliver, encodeInbox } from './courier';
+import { chatInboxText, encodeInbox, type deliver } from './courier';
 import { DIRECCION, isInside, realPath, type FloorResolver } from './floors';
 import type { OfficeBus } from './office-bus';
 import type { SessionRuntime } from './office-state';

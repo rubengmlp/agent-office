@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { writeAtomic } from './config';
-import { deliver, encodeInbox, orderText } from './courier';
+import { encodeInbox, orderText, type deliver } from './courier';
 import { commitDocument } from './docs-repo';
 import type { DocumentDesk } from './documents';
 import type { GitQueue, GitRunner } from './git';

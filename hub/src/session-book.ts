@@ -519,6 +519,27 @@ export class SessionBook {
     }
   }
 
+  floorInUse(slug: string): string[] {
+    return [...this.sessions.values()]
+      .filter((session) => session.floor === slug && session.endedAt === null)
+      .map((session) => session.name ?? session.sessionId.slice(0, 8));
+  }
+
+  refloor(now: number): void {
+    for (const session of this.sessions.values()) {
+      const floor = this.opts.floors.resolve(session.cwd);
+      if (floor.slug === session.floor && floor.kind === session.floorKind && floor.stack === session.stack) continue;
+      this.applyFloor(session, floor);
+      this.emitSession(session);
+      for (const agent of this.agents.values()) {
+        if (agent.sessionId !== session.sessionId) continue;
+        agent.floor = session.floor;
+        agent.floorKind = session.floorKind;
+        this.emitAgent(agent, now);
+      }
+    }
+  }
+
   refreshFlags(session: SessionRuntime): void {
     if (this.sessionFlags.get(session.sessionId) !== flagsOf(this.sessionView(session))) this.emitSession(session);
   }

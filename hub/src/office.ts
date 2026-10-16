@@ -2,20 +2,23 @@ import type { Database } from 'bun:sqlite';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { managedFloors } from './agents';
+import { AskDesk } from './ask-desk';
 import { ChatDesk, GLOBAL_CHANNEL, SNAPSHOT_LIMIT } from './chat';
+import { withoutChatCalls } from './chat-commands';
+import { ChatRoom, type ReadChatResult, type UserChatResult } from './chat-room';
+import { ContextDesk } from './context-desk';
 import { deliver } from './courier';
 import { DocumentDesk } from './documents';
 import { FloorInUseError, purgeFloorData } from './floor-data';
-import {
-  FloorResolver,
-  memoryRegistry,
-  type FloorRegistry,
-  type GitRootFn,
-} from './floors';
-import { type GateDecision } from './gate';
+import { FloorResolver, memoryRegistry, type FloorRegistry, type GitRootFn } from './floors';
+import type { GateDecision } from './gate';
+import { GateDesk } from './gate-desk';
 import { GitQueue, runGit, type GitRunner } from './git';
-import { GUARDED_TOOLS, guardDecision } from './guard';
+import { GuardDesk } from './guard-desk';
 import type { Log } from './log';
+import { MeterDesk } from './meter-desk';
+import { OfficeBus } from './office-bus';
+import { prepare, type Sql } from './office-sql';
 import {
   ANSWERS_QUESTION,
   EMPTY_META,
@@ -41,50 +44,21 @@ import {
   type SessionRuntime,
   type TmuxFn,
 } from './office-state';
-import { withoutChatCalls } from './chat-commands';
-import {
-  ROLE_LABELS,
-  isUserPrompt,
-  taskLine,
-} from './office-texts';
-import { AskDesk } from './ask-desk';
-import { ChatRoom, type ReadChatResult, type UserChatResult } from './chat-room';
-import { ContextDesk } from './context-desk';
-import { GateDesk } from './gate-desk';
-import { ProtocolDesk } from './protocol-desk';
+import { isUserPrompt, roleLabel, taskLine } from './office-texts';
 import { OrderDesk } from './order-desk';
-import { GuardDesk } from './guard-desk';
-import { MeterDesk } from './meter-desk';
-import { OfficeBus } from './office-bus';
-import { RulesDesk } from './rules-desk';
-import { SessionBook } from './session-book';
-import { StallDesk } from './stall-desk';
-import { prepare, type Sql } from './office-sql';
 import { publicDetail, publicSummary, publicText, storedPayload, visibleKind } from './privacy';
 import { detectStack, profileFor, type Profiles } from './profiles';
 import { parseProtocol } from './protocol';
+import { ProtocolDesk } from './protocol-desk';
 import { QuestionDesk } from './questions';
-import { buildReport, saveReport, savedReport, savedReports } from './reports';
-import {
-  isDepartmentFloor,
-  remembers,
-  roleIdOf,
-  roleKind,
-} from './scope';
-import { RELAUNCH_RESUMES, TMUX_SESSION, sq } from './office-sh';
+import { RulesDesk } from './rules-desk';
+import { isDepartmentFloor, remembers, roleKind } from './scope';
+import { SessionBook } from './session-book';
 import { settingsView } from './settings';
-import {
-  DONE_PREFIX,
-  EDIT_TOOLS,
-  classify,
-  record,
-  text,
-  type Classified,
-} from './state-machine';
+import { StallDesk } from './stall-desk';
+import { DONE_PREFIX, EDIT_TOOLS, classify, record, text, type Classified } from './state-machine';
 import { SyncDesk, type SyncResult } from './sync';
-import { floorText, roleText, roundText, scoreText } from './texts';
 import { planSlugIn } from './tokens';
-import { UsageDesk } from './usage';
 import type {
   ActivityView,
   ChatMessageView,
@@ -107,6 +81,7 @@ import type {
   UsageRange,
   UsageSummary,
 } from './types';
+import { UsageDesk } from './usage';
 
 export {
   GHOST_MS,
@@ -222,11 +197,9 @@ export class Office {
       restored: (session, row) => this.rules.restored(session, row),
       floors: this.floors,
     });
+    const base = { sql: this.sql, now: this.now, bus: this.bus, book: this.book, config: () => this.config };
     this.rules = new RulesDesk({
-      sql: this.sql,
-      now: this.now,
-      bus: this.bus,
-      book: this.book,
+      ...base,
       launch: opts.launch,
       tmux: opts.tmux,
       free: (session, ignoreMain) => this.stall.sessionFree(session, ignoreMain),
@@ -239,8 +212,8 @@ export class Office {
       opts.holdMs,
       this.now,
     );
-    this.asks = new AskDesk({ sql: this.sql, now: this.now, bus: this.bus, book: this.book, desk: this.desk });
-    this.stall = new StallDesk({ now: this.now, bus: this.bus, book: this.book, config: () => this.config, desk: this.desk });
+    this.asks = new AskDesk({ ...base, desk: this.desk });
+    this.stall = new StallDesk({ ...base, desk: this.desk });
     this.sync = new SyncDesk({
       db: opts.db,
       git: this.git,
@@ -269,92 +242,61 @@ export class Office {
       onChange: (docs) => this.bus.emit({ type: 'documents', data: this.meter.withPlanTokens(docs) }),
       maxRounds: () => this.config.review.maxRounds,
     });
-    this.guards = new GuardDesk({
-      git: this.git,
-      sql: this.sql,
-      now: this.now,
-      bus: this.bus,
-      book: this.book,
-      config: () => this.config,
-      claudeHome: opts.claudeHome,
-      docsRoot: () => this.docsRoot(),
-    });
+    this.guards = new GuardDesk({ ...base, git: this.git, claudeHome: opts.claudeHome, docsRoot: () => this.docsRoot() });
     this.usage = new UsageDesk(this.now, (view) => this.bus.emit({ type: 'usage', data: view }));
-    this.meter = new MeterDesk({ db: opts.db, claudeHome: opts.claudeHome, now: this.now, bus: this.bus, book: this.book });
+    this.meter = new MeterDesk({ ...base, db: opts.db, claudeHome: opts.claudeHome });
     this.chat = new ChatDesk({
       db: opts.db,
       now: this.now,
       channels: () => [GLOBAL_CHANNEL, ...managedFloors(this.config).map(([slug]) => slug)],
-      roleLabel: (role) => {
-        const id = roleIdOf(role);
-        return id ? ROLE_LABELS[id] : null;
-      },
+      roleLabel,
       onMessage: (message) => this.bus.emit({ type: 'chat', data: message }),
     });
     this.context = new ContextDesk({
+      ...base,
       db: opts.db,
-      now: this.now,
-      bus: this.bus,
-      book: this.book,
-      config: () => this.config,
       chat: this.chat,
       rules: (agent, session) => this.rules.rulesBlock(agent, session),
       tokens: (key) => this.meter.totals(key),
     });
     this.room = new ChatRoom({
-      bus: this.bus,
-      book: this.book,
+      ...base,
       chat: this.chat,
-      config: () => this.config,
       floors: this.floors,
       deliver: this.deliverFn,
       lines: (unread, channel) => this.context.chatLines(unread, channel),
     });
-    this.gates = new GateDesk({
-      db: opts.db,
-      sql: this.sql,
-      now: this.now,
-      bus: this.bus,
-      book: this.book,
-      config: () => this.config,
+    const documents = {
       docs: this.docs,
       sync: this.sync,
       docsRoot: () => this.docsRoot(),
       refreshDocuments: () => this.refreshDocuments(),
+    };
+    this.gates = new GateDesk({
+      ...base,
+      ...documents,
+      db: opts.db,
       context: () => this.guards.context(),
       busy: (floor) => this.guards.busy(floor),
       userAnswered: (sessionId) => this.stall.userAnswered(sessionId),
     });
     this.protocol = new ProtocolDesk({
+      ...base,
+      ...documents,
       db: opts.db,
-      sql: this.sql,
-      now: this.now,
-      bus: this.bus,
-      book: this.book,
-      config: () => this.config,
-      docs: this.docs,
-      sync: this.sync,
       git: this.git,
       queue: this.docsQueue,
-      docsRoot: () => this.docsRoot(),
-      refreshDocuments: () => this.refreshDocuments(),
       review: (ref, round, from) => this.gates.reviewBlock(ref, round, from),
       declareWaiting: (agent, rest, now) => this.stall.declareWaiting(agent, rest, now),
       retire: (agent, detail, now) => this.retire(agent, detail, now),
     });
     this.orders = new OrderDesk({
-      now: this.now,
-      bus: this.bus,
-      book: this.book,
-      config: () => this.config,
-      docs: this.docs,
-      sync: this.sync,
+      ...base,
+      ...documents,
       git: this.git,
       queue: this.docsQueue,
       deliver: this.deliverFn,
       undoMs: opts.undoMs ?? UNDO_MS,
-      docsRoot: () => this.docsRoot(),
-      refreshDocuments: () => this.refreshDocuments(),
       instructed: (sessionId, now) => this.gates.userInstructed(sessionId, now),
       allowBriefs: (sessionId, floors) => this.gates.allowBriefs(sessionId, floors),
       setPlan: (agent, slug) => this.meter.setPlan(agent, slug),
@@ -490,9 +432,7 @@ export class Office {
     }
     if (c.event === 'PostToolUse' && isMain && c.tool === 'AskUserQuestion') this.gates.userInstructed(session.sessionId, now);
     if (c.event === 'PostToolUse' && c.tool === 'SendMessage' && agent.taskOpenSince !== null && DONE_PREFIX.test(text(record(e.tool_input).message) ?? '')) {
-      agent.taskOpenSince = null;
-      agent.stalledSince = null;
-      this.book.persistTaskOpen(agent);
+      this.stall.closeTask(agent);
     }
     const closing = text(e.last_assistant_message);
     if (closing && remembers(kind) && (c.event === 'SubagentStop' || c.event === 'Stop')) agent.closing = closing;
@@ -676,9 +616,7 @@ export class Office {
   }
 
   floorInUse(slug: string): string[] {
-    return [...this.book.sessions.values()]
-      .filter((session) => session.floor === slug && session.endedAt === null)
-      .map((session) => session.name ?? session.sessionId.slice(0, 8));
+    return this.book.floorInUse(slug);
   }
 
   async forgetFloor(slug: string, path: string): Promise<{ rows: number; worktrees: number }> {
@@ -711,18 +649,7 @@ export class Office {
     this.config = config;
     this.profiles = profiles;
     const now = this.now();
-    for (const session of this.book.sessions.values()) {
-      const floor = this.floors.resolve(session.cwd);
-      if (floor.slug === session.floor && floor.kind === session.floorKind && floor.stack === session.stack) continue;
-      this.book.applyFloor(session, floor);
-      this.book.emitSession(session);
-      for (const agent of this.book.agents.values()) {
-        if (agent.sessionId !== session.sessionId) continue;
-        agent.floor = session.floor;
-        agent.floorKind = session.floorKind;
-        this.book.emitAgent(agent, now);
-      }
-    }
+    this.book.refloor(now);
     this.rules.refreshSessionFlags(now, true);
     this.bus.emit({ type: 'floors', data: this.floors.views() });
     this.bus.emit({ type: 'settings', data: settingsView(config) });

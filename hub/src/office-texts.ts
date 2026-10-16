@@ -2,6 +2,7 @@ import { CHAT_PREFIX, ORDER_LEAD, ORDER_PREFIX } from './courier';
 import { DIRECCION, MANTENIMIENTO, REDACCION } from './floors';
 import { TASK_MAX } from './office-state';
 import { BRIEF_PREFIX, parseProtocol } from './protocol';
+import { roleIdOf } from './scope';
 import { short, text } from './state-machine';
 import type { DocumentView, HubText, RoleId, VerdictKind } from './types';
 
@@ -33,6 +34,11 @@ export const ROLE_LABELS: Record<RoleId, string> = {
   artesano: 'artesano de skills',
   'revisor-skills': 'revisor de skills',
 };
+
+export function roleLabel(role: string | null): string | null {
+  const id = roleIdOf(role);
+  return id ? ROLE_LABELS[id] : null;
+}
 
 export function floorLabel(slug: string): string {
   if (slug === DIRECCION) return 'Dirección';

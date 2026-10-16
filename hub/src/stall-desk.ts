@@ -40,6 +40,12 @@ export class StallDesk {
     this.opts.book.persistTaskOpen(agent);
   }
 
+  closeTask(agent: AgentRuntime): void {
+    agent.taskOpenSince = null;
+    agent.stalledSince = null;
+    this.opts.book.persistTaskOpen(agent);
+  }
+
   declareWaiting(agent: AgentRuntime, rest: string, now: number): boolean {
     if (agent.retiredAt !== null) return false;
     const { who, what } = parseWaiting(rest);
