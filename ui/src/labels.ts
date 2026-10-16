@@ -1,3 +1,4 @@
+import { currentLang, t } from './i18n';
 import type {
   AgentState,
   AgentView,
@@ -5,6 +6,7 @@ import type {
   DocumentStatus,
   DocumentView,
   FloorKind,
+  FloorView,
   GuardAlertLevel,
   RoleKind,
   Stack,
@@ -108,6 +110,65 @@ export const DOCUMENT_STATUS_COLORS: Record<DocumentStatus, string> = {
   descartado: '#64748b',
 };
 
+export function roleLabel(kind: RoleKind): string {
+  return t(`role.${kind}`);
+}
+
+export function roleHint(kind: RoleKind): string {
+  return t(`role.hint.${kind}`);
+}
+
+export function stateLabel(state: AgentState): string {
+  return t(`state.${state}`);
+}
+
+export function stateHint(state: AgentState): string {
+  return t(`state.hint.${state}`);
+}
+
+export function stackLabel(stack: Stack): string {
+  return t(`stack.${stack}`);
+}
+
+export function floorKindLabel(kind: FloorKind): string {
+  return t(`floorKind.${kind}`);
+}
+
+export function floorKindHint(kind: FloorKind): string {
+  return t(`floorKind.hint.${kind}`);
+}
+
+export function floorLabel(floor: Pick<FloorView, 'kind' | 'label'>): string {
+  switch (floor.kind) {
+    case 'direccion':
+    case 'redaccion':
+    case 'mantenimiento':
+      return t(`floor.${floor.kind}`);
+    default:
+      return floor.label;
+  }
+}
+
+export function verdictLabel(kind: VerdictKind): string {
+  return t(`verdict.${kind}`);
+}
+
+export function alertLevelLabel(level: GuardAlertLevel): string {
+  return t(`alert.${level}`);
+}
+
+export function alertLevelHint(level: GuardAlertLevel): string {
+  return t(`alert.hint.${level}`);
+}
+
+export function documentStatusLabel(status: DocumentStatus): string {
+  return t(`docStatus.${status}`);
+}
+
+export function documentStatusHint(status: DocumentStatus): string {
+  return t(`docStatus.hint.${status}`);
+}
+
 export function agentName(agent: Pick<AgentView, 'key' | 'name' | 'role'>): string {
   return agent.name || agent.role || agent.key.slice(0, 8);
 }
@@ -119,21 +180,21 @@ export function roleRank(kind: RoleKind): number {
 export function compareAgents(a: AgentView, b: AgentView): number {
   const byRole = roleRank(a.roleKind) - roleRank(b.roleKind);
   if (byRole !== 0) return byRole;
-  return agentName(a).localeCompare(agentName(b), 'es');
+  return agentName(a).localeCompare(agentName(b), currentLang());
 }
 
 export function scoreText(score: number): string {
-  return `nota ${score}/10`;
+  return t('docStatus.score', { score });
 }
 
 export function documentStatusText(doc: Pick<DocumentView, 'status' | 'round' | 'score'>): string {
   switch (doc.status) {
     case 'revision':
-      return doc.round > 0 ? `En revisión · ronda ${doc.round}` : DOCUMENT_STATUS_LABELS.revision;
+      return doc.round > 0 ? t('docStatus.reviewRound', { n: doc.round }) : documentStatusLabel('revision');
     case 'aprobado':
-      return doc.score === null ? DOCUMENT_STATUS_LABELS.aprobado : `Aprobado · ${scoreText(doc.score)}`;
+      return doc.score === null ? documentStatusLabel('aprobado') : t('docStatus.approvedScore', { score: doc.score });
     default:
-      return DOCUMENT_STATUS_LABELS[doc.status];
+      return documentStatusLabel(doc.status);
   }
 }
 

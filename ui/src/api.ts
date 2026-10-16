@@ -1,3 +1,4 @@
+import { t } from './i18n';
 import type {
   AnswerRequest,
   DocumentContent,
@@ -16,10 +17,8 @@ export type ApiResult = { ok: true } | { ok: false; status: number; message: str
 
 export type ApiData<T> = { ok: true; data: T } | { ok: false; status: number; message: string };
 
-const OFFLINE_MESSAGE = 'Sin conexión con el hub';
-
 async function readError(response: Response): Promise<string> {
-  const fallback = `Error ${response.status}`;
+  const fallback = t('api.error', { status: response.status });
   let raw: string;
   try {
     raw = (await response.text()).trim();
@@ -47,14 +46,14 @@ export class OfficeApi {
 
   answer(id: string, request: AnswerRequest): Promise<ApiResult> {
     return this.post(`/api/answers/${encodeURIComponent(id)}`, request, {
-      409: 'Ya se contestó en el terminal',
+      409: t('api.alreadyAnswered'),
     });
   }
 
   order(request: OrderRequest): Promise<ApiResult> {
     return this.post('/api/orders', request, {
-      404: 'Sesión no encontrada',
-      502: 'No se pudo entregar la orden',
+      404: t('api.sessionNotFound'),
+      502: t('api.orderFailed'),
     });
   }
 
@@ -103,13 +102,13 @@ export class OfficeApi {
         body: body === undefined ? undefined : JSON.stringify(body),
       });
     } catch {
-      return { ok: false, status: 0, message: OFFLINE_MESSAGE };
+      return { ok: false, status: 0, message: t('api.offline') };
     }
     if (!response.ok) return { ok: false, status: response.status, message: await readError(response) };
     try {
       return { ok: true, data: (await response.json()) as T };
     } catch {
-      return { ok: false, status: response.status, message: 'Respuesta no válida del hub' };
+      return { ok: false, status: response.status, message: t('api.badResponse') };
     }
   }
 
@@ -122,7 +121,7 @@ export class OfficeApi {
         body: JSON.stringify(body),
       });
     } catch {
-      return { ok: false, status: 0, message: OFFLINE_MESSAGE };
+      return { ok: false, status: 0, message: t('api.offline') };
     }
     if (response.ok) return { ok: true };
     const message = fixed[response.status] ?? (await readError(response));

@@ -1,4 +1,5 @@
 import { button, el } from './dom';
+import { t } from './i18n';
 import type { Store } from './store';
 import type { Recording } from './types';
 
@@ -17,7 +18,7 @@ export async function loadRecording(url: string): Promise<Recording> {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const data: unknown = await response.json();
-  if (!isRecording(data)) throw new Error('Formato de grabación no válido');
+  if (!isRecording(data)) throw new Error(t('replay.badFormat'));
   return { ...data, messages: [...data.messages].sort((a, b) => a.t - b.t) };
 }
 
@@ -132,11 +133,12 @@ function mmss(ms: number): string {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 }
 
-export function mountReplayControls(host: HTMLElement, player: ReplayPlayer): void {
-  const restart = button('↺', 'icon-button', 'Reiniciar');
+export function mountReplayControls(host: HTMLElement, player: ReplayPlayer, store: Store): void {
+  const label = el('span', 'replay-label');
+  const restart = button('↺', 'icon-button');
   const toggle = button('', 'icon-button primary');
   const speeds = REPLAY_SPEEDS.map((speed) => {
-    const speedButton = button(`${speed}x`, 'speed-button', `Velocidad ${speed}x`);
+    const speedButton = button(`${speed}x`, 'speed-button');
     speedButton.addEventListener('click', () => player.setSpeed(speed));
     return speedButton;
   });
@@ -147,12 +149,15 @@ export function mountReplayControls(host: HTMLElement, player: ReplayPlayer): vo
   restart.addEventListener('click', () => player.restart());
   toggle.addEventListener('click', () => player.toggle());
 
-  host.replaceChildren(el('span', 'replay-label', 'Replay'), restart, toggle, ...speeds, bar, time);
+  host.replaceChildren(label, restart, toggle, ...speeds, bar, time);
 
   const render = (): void => {
+    label.textContent = t('replay.label');
+    restart.title = t('replay.restart');
     toggle.textContent = player.playing ? '❚❚' : '▶';
-    toggle.title = player.playing ? 'Pausar' : 'Reproducir';
+    toggle.title = player.playing ? t('replay.pause') : t('replay.play');
     speeds.forEach((speedButton, index) => {
+      speedButton.title = t('replay.speed', { n: REPLAY_SPEEDS[index] });
       speedButton.classList.toggle('active', REPLAY_SPEEDS[index] === player.speed);
     });
     const duration = player.duration;
@@ -161,5 +166,5 @@ export function mountReplayControls(host: HTMLElement, player: ReplayPlayer): vo
   };
 
   player.onChange(render);
-  render();
+  store.watch(['lang'], render);
 }

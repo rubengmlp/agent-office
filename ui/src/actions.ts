@@ -1,4 +1,5 @@
 import type { ApiResult, OfficeApi } from './api';
+import { t } from './i18n';
 import type { Store } from './store';
 import type { OrderRequest, QuestionOutcome, QuestionView } from './types';
 
@@ -28,7 +29,7 @@ export function liveActions(store: Store, api: OfficeApi): Actions {
     release: async (question) => settle(question, await api.answer(question.id, { release: true }), 'released'),
     order: async (request) => {
       const result = await api.order(request);
-      if (result.ok) store.toast('Orden enviada', 'ok');
+      if (result.ok) store.toast(t('toast.orderSent'), 'ok');
       return result;
     },
   };
@@ -44,6 +45,6 @@ export function replayActions(store: Store): Actions {
     ordersEnabled: false,
     answer: (question) => close(question, 'answered'),
     release: (question) => close(question, 'released'),
-    order: async () => ({ ok: false, status: 0, message: 'Las órdenes están desactivadas en el replay' }),
+    order: async () => ({ ok: false, status: 0, message: t('replay.ordersDisabled') }),
   };
 }
