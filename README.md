@@ -127,7 +127,14 @@ En plantas observadas el hub guarda solo estado, herramienta y ruta; nunca el co
 
 ## Probado en vivo
 
-La v2 (Ajustes, memoria, departamentos, guardia y oficina 3D) está pendiente de prueba en vivo.
+La v2 se probó el 2026-10-16 con Claude Code 2.1.292:
+- Ajustes regenera los agentes.
+- La memoria llega a compañeros lanzados en paralelo.
+- La guardia bloquea al redactor fuera de su carpeta.
+- Redacción entrega un plan sobre mobile en dos rondas, con commits por ronda y las fuentes retiradas al acabar.
+- Mantenimiento crea una skill y la instala solo donde se le indica.
+
+Los detalles y los hallazgos corregidos están en [docs/spikes.md](docs/spikes.md). El hub escribe su salida en `~/.config/agent-office/hub.log` cuando se arranca desde la oficina en tmux.
 
 La v1 se probó el 2026-10-15, con Claude Code 2.1.292, en una planta de pruebas y en mobile y backend con tareas de solo lectura. Funcionaron la observación de sesiones, el equipo con desarrollador y tester, la puerta con `HECHO:` en ambos sentidos, las preguntas en el panel y su vuelta a la terminal, las órdenes desde el panel, el bloqueo y su respuesta, el encargo del director a una planta, la promoción de una planta en caliente y el hub apagado. Los detalles están en [docs/spikes.md](docs/spikes.md).
 

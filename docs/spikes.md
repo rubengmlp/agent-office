@@ -107,7 +107,27 @@ Un `git fetch origin develop` lanzado por un proceso en segundo plano, como el h
 
 El `config.json` del equipo ya lista al compañero con su `agentType` cuando llega su `SubagentStart`. La resolución del rol usa, por orden: el `agent_type` del evento si ya es un tipo `office-…`, el `config.json` del equipo, la llamada `Agent` con el mismo nombre y el prefijo del nombre.
 
-## Pendiente de la v2
+## 2. Memoria en dos compañeros lanzados a la vez (en vivo)
 
-- Spike 2 en vivo: dos compañeros lanzados a la vez reciben cada uno su memoria por `additionalContext` y la citan.
-- Spike 4: en `/status`, qué gana cuando el `--model` del lanzador y el `model:` del agente no coinciden, y si `--effort` se aplica. Los lanzadores pasan los mismos valores que el agente generado, así que el choque solo aparece si se editan a mano.
+Con una lección guardada para el desarrollador y otra para el tester de mobile, el jefe lanzó a los dos en un único mensaje. Cada uno citó literalmente la suya y solo la suya: el rol se resolvió a tiempo por el nombre de la llamada `Agent` y el `additionalContext` de `SubagentStart` llegó a cada compañero.
+
+## 3b. Worktree de mobile
+
+El `office-sync.sh` completo de mobile (fetch, `git worktree add --detach` y log) tardó 2,2 segundos. La copia de trabajo de mobile siguió en su rama y sin cambios.
+
+## 4. `--model` contra `model:`
+
+`claude -p --agent office-reviewer` sin `--model` usó Sonnet, el `model:` del agente; con `--model haiku` usó solo Haiku. Manda el `--model` del lanzador. El esfuerzo no se ve en la salida JSON, pero la cabecera de cada sesión lo muestra (`Opus 5.5 with high effort`). Los lanzadores pasan los mismos valores que el agente generado, así que no chocan.
+
+## Pruebas en vivo de la v2 (2026-10-16)
+
+- **Ajustes:** cambiar el modelo y el esfuerzo del tester regeneró los 17 agentes con el frontmatter nuevo. Después se volvió a dejar como estaba.
+- **Guardia:** el redactor intentó escribir en `redaccion/.fuentes/<slug>/` y el hook lo bloqueó con el motivo.
+- **Redacción:** plan sobre mobile en dos rondas. La primera fue MEJORAR con nota 8/10 y un bloqueante real: el plan daba por ausente `di.config.dart`, que mobile versiona. La segunda fue APROBADO con 9/10. Hubo un commit por ronda en `office-docs`, el `HECHO:` del jefe cerró el plan y el hub retiró el worktree. Redactor y revisor enviaron el error como `LECCIÓN:` y quedó guardado para cada puesto. La plantilla del redactor lo provocaba y se corrigió.
+- **Mantenimiento:** skill trivial aprobada en una ronda con 9/10. El jefe preguntó dónde instalarla, la copió solo a la planta elegida y la entrega se aceptó. No hubo alertas de la guardia.
+- **Hallazgos corregidos:**
+  - Una orden de sincronización con "test" en el slug contaba como tests en verde en Redacción.
+  - Un jefe escribió a `office-director` en vez de `director`.
+  - El cuadro de órdenes no elegía al director con el rol nuevo.
+  - El informe de un agente sin ficheros decía "Sin actividad registrada".
+- **El hub se paró una vez a los 15 minutos sin dejar rastro.** Ahora registra en `~/.config/agent-office/hub.log` los errores no capturados y la señal que lo detiene, y un error de un vigilante de ficheros ya no lo tumba.
