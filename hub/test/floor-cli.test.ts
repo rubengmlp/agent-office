@@ -110,7 +110,7 @@ describe('floor CLI', () => {
     const dev = readFileSync(agentFile(p, 'dev', 'mobile'), 'utf8');
     expect(dev).toContain('model: haiku\neffort: low');
     expect(readFileSync(agentFile(p, 'lead', 'mobile'), 'utf8')).toContain('model: sonnet\neffort: medium');
-    expect(readFileSync(agentPath(p, 'office-director'), 'utf8')).toContain('model: opus\neffort: high');
+    expect(readFileSync(agentPath(p, 'office-director'), 'utf8')).toContain('model: fable\neffort: xhigh');
     expect(readFileSync(agentPath(p, 'office-redactor'), 'utf8')).toContain('model: claude-opus-5-5\neffort: max');
     expect(readFileSync(agentPath(p, 'office-revisor-planes'), 'utf8')).toContain('tools: Read, Grep, Glob, SendMessage');
     for (const name of ['office-director', 'office-reviewer', 'office-lead-redaccion', 'office-redactor', 'office-revisor-planes', 'office-lead-mantenimiento', 'office-artesano', 'office-revisor-skills']) {

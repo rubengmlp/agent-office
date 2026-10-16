@@ -54,17 +54,17 @@ La pestaña **Ajustes** edita `config.json`: el modelo (`opus`, `sonnet`, `haiku
 
 | Rol | Por defecto | Por qué |
 |---|---|---|
-| Director | opus · high | Reparte entre plantas y fija los contratos que comparten: un error se propaga a todas. |
+| Director | fable · xhigh | Reparte entre plantas y fija los contratos que comparten: un error se propaga a todas. Es una sola sesión larga. |
 | Jefes (plantas y departamentos) | sonnet · medium | Coordinan, reparten piezas ya decididas y vigilan las puertas. |
 | Desarrolladores | opus · high | Cambios en varios ficheros de código real, donde un fallo cuesta de detectar. |
 | Testers | sonnet · medium | Ejecutan los tests que pide el jefe y resumen el resultado. |
 | Revisores de código | opus · high | Buscan fallos y problemas de seguridad que se escaparían. |
-| Redactores | opus · high | Diseñan el plan: deciden ficheros, pasos y riesgos. |
+| Redactores | fable · xhigh | Diseñan el plan, que es la decisión de la que depende todo lo demás. |
 | Revisores de planes | sonnet · xhigh | Otro modelo que el redactor y revisión a fondo; en la prueba en vivo encontró un bloqueante real. |
 | Artesanos de skills | sonnet · medium | Siguen `skill-creator` sobre un brief cerrado. |
 | Revisores de skills | opus · high | Revisan scripts que se instalarán en tus sesiones: es revisión de seguridad. |
 
-El esfuerzo sigue el que tienes por modelo en `~/.claude/settings.json` (high para Opus, medium para el resto), salvo el revisor de planes. Fable y Haiku no son el valor por defecto de ningún rol: Fable queda para problemas excepcionales y Haiku no entra en el reparto habitual. Los dos se pueden elegir en Ajustes.
+El esfuerzo sigue el que tienes por modelo en `~/.claude/settings.json` (xhigh para Fable, high para Opus, medium para el resto), salvo el revisor de planes. Fable va solo donde una mala decisión se propaga a todo lo demás: el director y los redactores. Haiku no es el valor por defecto de ningún rol. Todo se puede cambiar en Ajustes.
 
 Los lanzadores pasan además `--model` y `--effort` al director y a los jefes, y los jefes no nombran modelo al lanzar compañeros: manda el agente generado.
 

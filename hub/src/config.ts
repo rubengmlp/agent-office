@@ -72,12 +72,12 @@ export const ROLE_IDS: readonly RoleId[] = [
 export const EFFORTS: readonly Effort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 export const DEFAULT_ROLES: Record<RoleId, RoleSettings> = {
-  director: { model: 'opus', effort: 'high' },
+  director: { model: 'fable', effort: 'xhigh' },
   lead: { model: 'sonnet', effort: 'medium' },
   dev: { model: 'opus', effort: 'high' },
   tester: { model: 'sonnet', effort: 'medium' },
   reviewer: { model: 'opus', effort: 'high' },
-  redactor: { model: 'opus', effort: 'high' },
+  redactor: { model: 'fable', effort: 'xhigh' },
   'revisor-planes': { model: 'sonnet', effort: 'xhigh' },
   artesano: { model: 'sonnet', effort: 'medium' },
   'revisor-skills': { model: 'opus', effort: 'high' },

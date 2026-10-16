@@ -29,7 +29,7 @@ describe('config', () => {
     expect(c.port).toBe(4747);
     expect(c.roles.dev).toEqual({ model: 'haiku', effort: 'max' });
     expect(c.roles.tester).toEqual(DEFAULT_ROLES.tester);
-    expect(c.roles.director).toEqual({ model: 'opus', effort: 'high' });
+    expect(c.roles.director).toEqual({ model: 'fable', effort: 'xhigh' });
     expect(c.review.maxRounds).toBe(4);
     expect(c.memory).toEqual({ maxLessons: 10, maxLessonsPerSession: 3, maxContextChars: 4000 });
     expect(c.departments).toEqual({ redaccion: false, mantenimiento: true });
