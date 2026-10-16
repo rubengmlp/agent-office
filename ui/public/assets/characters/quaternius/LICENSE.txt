@@ -1,0 +1,5 @@
+Ultimate Modular Men Pack, by Quaternius.
+License: CC0 1.0 Universal (public domain), https://creativecommons.org/publicdomain/zero/1.0/
+Pack page: https://quaternius.com/packs/ultimatemodularcharacters.html
+Files downloaded from https://poly.pizza/bundle/Ultimate-Modular-Men-Pack-ZiH8muWqwQ on 2026-10-16.
+All 11 characters share one 62-bone skeleton (CharacterArmature) and the same 24 animation clips.

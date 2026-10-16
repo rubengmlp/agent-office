@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "height": 1.75,
+  "pack": {
+    "clips": {
+      "idle": "CharacterArmature|Idle",
+      "neutral": "CharacterArmature|Idle_Neutral",
+      "walk": "CharacterArmature|Walk",
+      "run": "CharacterArmature|Run",
+      "wave": "CharacterArmature|Wave",
+      "interact": "CharacterArmature|Interact",
+      "hit": "CharacterArmature|HitRecieve",
+      "death": "CharacterArmature|Death"
+    }
+  },
+  "custom": {
+    "dir": "custom/",
+    "clips": {
+      "idle": "idle",
+      "walk": "walk",
+      "sit": "sit",
+      "type": "type",
+      "talk": "talk",
+      "wave": "wave",
+      "think": "think"
+    },
+    "seated": ["sit", "type"]
+  },
+  "bones": {
+    "head": ["Head", "mixamorig:Head", "head", "DEF-head"],
+    "neck": ["Neck", "mixamorig:Neck", "neck", "DEF-neck"],
+    "upperArmL": ["UpperArm.L", "mixamorig:LeftArm", "LeftArm", "upper_arm.L", "DEF-upper_arm.L"],
+    "lowerArmL": ["LowerArm.L", "mixamorig:LeftForeArm", "LeftForeArm", "forearm.L", "DEF-forearm.L"],
+    "handL": ["Wrist.L", "mixamorig:LeftHand", "LeftHand", "hand.L", "DEF-hand.L"],
+    "upperArmR": ["UpperArm.R", "mixamorig:RightArm", "RightArm", "upper_arm.R", "DEF-upper_arm.R"],
+    "lowerArmR": ["LowerArm.R", "mixamorig:RightForeArm", "RightForeArm", "forearm.R", "DEF-forearm.R"],
+    "handR": ["Wrist.R", "mixamorig:RightHand", "RightHand", "hand.R", "DEF-hand.R"]
+  },
+  "variety": {
+    "Skin": ["#f1c9a5", "#e3b08a", "#c98f62", "#a06a45", "#74492c"],
+    "Hair": ["#2b1d14", "#4a2f1d", "#6e4a2c", "#b8894f", "#1c1c1e", "#8a8a8c"]
+  },
+  "roles": {
+    "director": { "model": "quaternius/business-man.glb" },
+    "lead": { "model": "quaternius/casual.glb" },
+    "dev": { "model": "quaternius/hoodie.glb", "vary": ["Purple"] },
+    "tester": { "model": "quaternius/worker.glb" },
+    "reviewer": { "model": "quaternius/punk.glb" },
+    "writer": { "model": "quaternius/adventurer.glb" },
+    "planReviewer": { "model": "quaternius/adventurer.glb", "tint": { "Green": "#2f3f5f", "LightGreen": "#4d618a" } },
+    "skillwright": { "model": "quaternius/farmer.glb" },
+    "skillReviewer": { "model": "quaternius/swat.glb" },
+    "intern": { "model": "quaternius/beach.glb", "tint": { "LightBrown": "#d3d9e0" } }
+  }
+}

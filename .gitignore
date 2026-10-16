@@ -8,3 +8,5 @@ ui/dist/
 .DS_Store
 workspace/*
 !workspace/.gitkeep
+ui/public/assets/characters/custom/*
+!ui/public/assets/characters/custom/.gitkeep
