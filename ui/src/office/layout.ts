@@ -1,8 +1,9 @@
+import type { LiftFace } from '../lift';
 import type { AgentView, FloorView, RoleKind } from '../types';
 import {
-  CHAR_W,
   CHILD_SCALE,
   CHILD_SLOT_W,
+  FLOOR_GAP,
   LEAD_SLOT_W,
   LIFT_W,
   MARGIN,
@@ -14,7 +15,7 @@ import {
   WALL_H,
 } from './constants';
 
-export type Point = { x: number; y: number };
+export type Point = { x: number; y: number; floor?: string };
 export type Rect = { x: number; y: number; w: number; h: number };
 export type DeskSlot = { x: number; y: number; scale: number; width: number; lead: boolean };
 export type Seat = Point & { behind: boolean };
@@ -141,19 +142,44 @@ export function computeFloorLayout(
   };
 }
 
-export function liftGate(layout: FloorLayout, top: number): Point {
-  return { x: layout.lift.x + layout.lift.w / 2, y: top + layout.walkY };
+export type LiftLeg = { from: string; to: string; fromFace: LiftFace; toFace: LiftFace; approach: boolean };
+
+export function liftCenter(layout: FloorLayout): number {
+  return layout.lift.x + layout.lift.w / 2;
 }
 
-export function streetExit(layout: FloorLayout, top: number): Point {
-  return { x: layout.width + CHAR_W, y: top + layout.walkY };
+export function liftGate(layout: FloorLayout, top: number, slug?: string): Point {
+  const gate: Point = { x: liftCenter(layout), y: top + layout.walkY };
+  if (slug !== undefined) gate.floor = slug;
+  return gate;
 }
 
-export function liftRoute(from: Point | null, to: Point | null, goal: Point): Point[] {
+export function gardenDoor(layout: FloorLayout, top: number): Point {
+  return { x: liftCenter(layout), y: top + layout.height + FLOOR_GAP + 8 };
+}
+
+export function gardenRoute(gate: Point, door: Point, pathY: number, spot: Point): Point[] {
+  return [gate, door, { x: door.x, y: pathY }, { x: spot.x, y: pathY }, spot];
+}
+
+export function gardenArrival(from: Point, door: Point, pathY: number, gate: Point): Point[] {
+  const points: Point[] = from.y > pathY ? [{ x: from.x, y: pathY }] : [];
+  points.push({ x: door.x, y: pathY }, door, gate);
+  return points;
+}
+
+export function liftRoute(from: Point | null, to: Point | null, ...rest: Point[]): Point[] {
   const points: Point[] = [];
   for (const point of [from, to]) {
     if (point && !points.some((p) => p.x === point.x && p.y === point.y)) points.push(point);
   }
-  points.push(goal);
+  points.push(...rest);
   return points;
+}
+
+export function liftLeg(path: readonly Point[], serves: (from: string, to: string) => boolean): LiftLeg | null {
+  const [gate, next] = path;
+  if (gate?.floor === undefined || next?.floor === undefined || gate.floor === next.floor) return null;
+  if (!serves(gate.floor, next.floor)) return null;
+  return { from: gate.floor, to: next.floor, fromFace: 'room', toFace: 'room', approach: true };
 }

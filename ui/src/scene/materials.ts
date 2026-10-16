@@ -216,10 +216,63 @@ export function buildingKit(): BuildingKit {
   return buildingKitCache;
 }
 
+export type GardenKit = {
+  grass: MeshStandardMaterial;
+  soil: MeshStandardMaterial;
+  asphalt: MeshStandardMaterial;
+  marking: MeshStandardMaterial;
+  paving: MeshStandardMaterial;
+  hedge: MeshStandardMaterial;
+  trunk: MeshStandardMaterial;
+  leaf: MeshStandardMaterial;
+  leafDark: MeshStandardMaterial;
+  flowers: MeshStandardMaterial[];
+  paints: MeshStandardMaterial[];
+  carGlass: MeshStandardMaterial;
+  tyre: MeshStandardMaterial;
+  headlight: MeshStandardMaterial;
+  taillight: MeshStandardMaterial;
+  lamp: MeshStandardMaterial;
+  pole: MeshStandardMaterial;
+  blocks: MeshStandardMaterial[];
+};
+
+let gardenKitCache: GardenKit | null = null;
+
+export function gardenKit(): GardenKit {
+  if (gardenKitCache) return gardenKitCache;
+  gardenKitCache = {
+    grass: std(0x5f9a45, 0.95),
+    soil: std(0x5a3f2b, 1),
+    asphalt: std(0x3a3e45, 0.92),
+    marking: std(0xe8e4d8, 0.7),
+    paving: std(0xcdbf9f, 0.9),
+    hedge: std(0x3b7436, 0.85),
+    trunk: std(0x6b4a2b, 0.9),
+    leaf: std(0x4b8a3c, 0.75),
+    leafDark: std(0x2f6630, 0.8),
+    flowers: [std(0xf472b6, 0.6), std(0xfbbf24, 0.6), std(0xf87171, 0.6)],
+    paints: [0xc0392b, 0x2f6fd6, 0x2f9e6a, 0xe0b13a, 0xf4f4f4, 0x2b2f36].map((color) => std(color, 0.35, 0.4)),
+    carGlass: std(0x1d2a38, 0.15, 0.3),
+    tyre: std(0x15161b, 0.85),
+    headlight: std(0xfff6d8, 0.3, 0, { emissive: 0xfff1b8, emissiveIntensity: 0 }),
+    taillight: std(0xff3b30, 0.4, 0, { emissive: 0xff2020, emissiveIntensity: 0 }),
+    lamp: std(0xfff6e6, 0.4, 0, { emissive: 0xffe9c2, emissiveIntensity: 0.6 }),
+    pole: std(0x2e333b, 0.5, 0.6),
+    blocks: [0x8d949c, 0x9aa1a8, 0x7f868e].map((color) => std(color, 0.95)),
+  };
+  return gardenKitCache;
+}
+
 export function applyTheme(dark: boolean): void {
   const kit = buildingKit();
   kit.ground.color.set(dark ? 0x23282f : 0xc3cad2);
   kit.sidewalk.color.set(dark ? 0x5b6169 : 0xe2e6ea);
+  const garden = gardenKit();
+  garden.grass.color.set(dark ? 0x2f5a2c : 0x5f9a45);
+  garden.asphalt.color.set(dark ? 0x25282d : 0x3a3e45);
+  garden.lamp.emissiveIntensity = dark ? 1.6 : 0.6;
+  garden.blocks.forEach((block, index) => block.color.set(dark ? [0x2c323b, 0x323943, 0x272c34][index] : [0x8d949c, 0x9aa1a8, 0x7f868e][index]));
 }
 
 export type FurnitureKit = {
@@ -434,6 +487,10 @@ export function basic(color: ColorRepresentation, opacity = 1): MeshBasicMateria
 export function disposeSharedMaterials(): void {
   const all: MeshStandardMaterial[] = [];
   if (buildingKitCache) all.push(...Object.values(buildingKitCache));
+  if (gardenKitCache) {
+    const { flowers, paints, blocks, ...single } = gardenKitCache;
+    all.push(...Object.values(single), ...flowers, ...paints, ...blocks);
+  }
   for (const kit of furnitureKits.values()) all.push(...Object.values(kit));
   for (const style of floorStyles.values()) all.push(style.paint, style.floor, style.accent);
   for (const material of all) material.dispose();
@@ -444,4 +501,5 @@ export function disposeSharedMaterials(): void {
   floorStyles.clear();
   furnitureKits.clear();
   buildingKitCache = null;
+  gardenKitCache = null;
 }

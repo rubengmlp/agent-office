@@ -1,3 +1,4 @@
+import type { LiftFace } from '../lift';
 import type { AgentView, FloorView, MessageView, RoleKind } from '../types';
 import {
   AISLE_Z,
@@ -18,6 +19,7 @@ import {
   MEET_Z,
   MEETING_WINDOW_MS,
   PITCH,
+  ROAD_Z,
   ROW_DESK_Z,
   ROWS,
   STAND_OFFSET,
@@ -75,16 +77,62 @@ export function streetNav(ground: FloorNav): FloorNav {
   return { slug: STREET, building: ground.building, level: 0, width: ground.width, exitX: ground.exitX };
 }
 
-export function exitTarget(nav: Nav): Target | null {
+export function exitTarget(nav: Nav, spot?: { x: number; z: number }): Target | null {
   const street = nav.floors.get(STREET);
   if (!street) return null;
+  if (spot) return { id: 'exit', kind: 'exit', floor: STREET, x: spot.x, z: spot.z, lane: street.exitX, facing: 0, slot: null };
   const x = street.exitX + (street.building === 'main' ? STREET_DX : -STREET_DX);
   return { id: 'exit', kind: 'exit', floor: STREET, x, z: STREET_Z, lane: street.exitX, facing: 0, slot: null };
 }
 
 export function streetPoint(nav: Nav): Waypoint | null {
-  const exit = exitTarget(nav);
-  return exit ? { floor: STREET, x: exit.x, z: exit.z, lane: exit.lane } : null;
+  const street = nav.floors.get(STREET);
+  return street ? { floor: STREET, x: street.exitX, z: ROAD_Z - 1, lane: street.exitX } : null;
+}
+
+export type LiftStops = ReadonlyMap<string, number>;
+
+export type LiftLeg = { from: string; to: string; fromFace: LiftFace; toFace: LiftFace; approach: boolean };
+
+export function servesLift(a: string, b: string, nav: Nav, stops: LiftStops): boolean {
+  const from = nav.floors.get(a);
+  const to = nav.floors.get(b);
+  if (!from || !to || a === b || from.building !== 'main' || to.building !== 'main') return false;
+  const fromY = stops.get(a);
+  const toY = stops.get(b);
+  return fromY !== undefined && toY !== undefined && Math.abs(fromY - toY) > EPS;
+}
+
+function atMouth(point: Waypoint, nav: Nav): boolean {
+  const floor = nav.floors.get(point.floor);
+  return floor !== undefined && Math.abs(point.x - floor.exitX) < EPS && Math.abs(point.z - AISLE_Z) < EPS;
+}
+
+export function liftLeg(at: Waypoint, path: readonly Waypoint[], nav: Nav, stops: LiftStops, viaBridge: boolean): LiftLeg | null {
+  const [first, second, third] = path;
+  if (!first || !atMouth(first, nav)) return null;
+  let from: string;
+  let to: string;
+  let next: Waypoint | undefined;
+  let approach: boolean;
+  if (first.floor !== at.floor && servesLift(at.floor, first.floor, nav, stops)) {
+    from = at.floor;
+    to = first.floor;
+    next = second;
+    approach = false;
+  } else if (first.floor === at.floor && second && second.floor !== first.floor && servesLift(first.floor, second.floor, nav, stops)) {
+    from = first.floor;
+    to = second.floor;
+    next = third;
+    approach = true;
+  } else {
+    return null;
+  }
+  const fromFace: LiftFace = from === STREET ? 'street' : viaBridge ? 'bridge' : 'room';
+  const target = nav.floors.get(to);
+  const after = next ? nav.floors.get(next.floor) : undefined;
+  const toFace: LiftFace = to === STREET ? 'street' : after && target && after.building !== target.building ? 'bridge' : 'room';
+  return { from, to, fromFace, toFace, approach };
 }
 
 export function buildingOf(floor: FloorView): BuildingId {

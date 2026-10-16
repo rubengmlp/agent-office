@@ -21,29 +21,40 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
 import { t } from '../i18n';
 import { agentName, floorLabel } from '../labels';
+import { LiftController, linkLift } from '../lift';
 import type { OfficeHandle } from '../office/office';
 import type { Store } from '../store';
 import type { AgentView, FloorView } from '../types';
 import { mountUsageCard } from '../usage-card';
 import { AssetLibrary, loadManifest } from './assets';
+import { Backdrop } from './backdrop';
 import { disposeBatchMaterials } from './batch';
 import { Site } from './buildings';
 import { CameraRig, OVERVIEW } from './camera';
-import { Character } from './characters';
+import { Character, type SceneLift } from './characters';
 import {
+  AISLE_Z,
+  BRIDGE_LANDING_DX,
   CLEAR_H,
   HALF_D,
+  LANDING_DX,
   LEAD_ZONE,
+  LIFT_DOOR_S,
+  LIFT_DWELL_S,
+  LIFT_MAX_DWELL_S,
+  LIFT_SPEED,
   MEETING_REFRESH_S,
   MIN_COLS,
   MIN_COLS_ANNEX,
   PITCH,
   SLAB_T,
   STOREY_H,
+  STREET_LANDING_DZ,
   UTIL_ZONE,
 } from './constants';
 import { disposeProps, TalkLines } from './effects';
 import { Desk, disposeDeskTemplates, type DeskVariant } from './furniture';
+import { Garden } from './garden';
 import {
   buildingOf,
   computeFloorPlan,
@@ -56,12 +67,15 @@ import {
   meetingTarget,
   MEETING_SEATS,
   requiredCols,
+  servesLift,
+  STREET,
   streetPoint,
   type DeskSlot,
   type FloorPlan,
   type Target,
 } from './layout';
 import { applyTheme as applyMaterialTheme, disposeSharedMaterials, floorStyle, hashString } from './materials';
+import { LiftCabin } from './lift-cabin';
 import { Picker, pulseRings } from './picking';
 
 type Entry = { character: Character; agent: AgentView; slot: DeskSlot | null; scale: number };
@@ -121,6 +135,11 @@ class OfficeScene {
   private readonly resizeObserver: ResizeObserver;
   private readonly mutationObserver: MutationObserver;
   private readonly media = window.matchMedia('(prefers-color-scheme: dark)');
+  private readonly backdrop = new Backdrop();
+  private readonly cabin = new LiftCabin();
+  private readonly lift = new LiftController({ speed: LIFT_SPEED, doorTime: LIFT_DOOR_S, dwell: LIFT_DWELL_S, maxDwell: LIFT_MAX_DWELL_S });
+  private readonly liftLink: SceneLift & { deliver: ReturnType<typeof linkLift>['deliver'] };
+  private readonly garden: Garden;
   private plans = new Map<string, FloorPlan>();
   private meetings = new Map<string, MeetingSeat>();
   private seenCounter = 0;
@@ -171,7 +190,27 @@ class OfficeScene {
     this.sun.shadow.normalBias = 0.025;
     this.sun.shadow.radius = 4;
     this.fill.position.set(-0.3, 1, 0.5);
+    this.garden = new Garden(assets);
+    const exitX = (floor: string): number => this.site.nav.floors.get(floor)?.exitX ?? 0;
+    const spot = { x: 0, z: 0 };
+    const place = (x: number, z: number): { x: number; z: number } => {
+      spot.x = x;
+      spot.z = z;
+      return spot;
+    };
+    const link = linkLift<{ x: number; z: number }>(this.lift, {
+      serves: (from, to) => servesLift(from, to, this.site.nav, this.site.liftStops),
+      landing: (floor, face) => {
+        const x = exitX(floor);
+        if (face === 'street') return place(x, AISLE_Z + STREET_LANDING_DZ);
+        if (face === 'bridge') return place(x + BRIDGE_LANDING_DX, AISLE_Z);
+        return place(x - LANDING_DX, AISLE_Z);
+      },
+      cabin: (floor) => place(exitX(floor), AISLE_Z),
+    });
+    this.liftLink = Object.assign(link, { stops: () => this.site.liftStops });
     this.scene.add(this.sun, this.sun.target, this.fill, this.hemi, this.site.root, this.actors, this.talkLines.mesh);
+    this.scene.add(this.backdrop.root, this.garden.root, this.cabin.group);
     this.applyTheme();
 
     const usageCard = mountUsageCard(store);
@@ -263,6 +302,7 @@ class OfficeScene {
     }
     this.cameraRig.update(dt, followPoint);
     this.cameraRig.setActive(this.floorAt(this.cameraRig.target));
+    this.backdrop.follow(this.cameraRig.camera.position);
     this.picker.update();
     this.renderer.render(this.scene, this.cameraRig.camera);
     this.labels.render(this.scene, this.cameraRig.camera);
@@ -313,6 +353,11 @@ class OfficeScene {
       this.fitShadows();
       this.reframe();
     }
+    this.lift.setStops(this.site.liftStops, this.site.nav.mainGround ?? undefined);
+    const street = this.site.nav.floors.get(STREET);
+    const origin = this.site.streetOrigin;
+    const span = this.site.span;
+    this.garden.update(street && origin && span ? { origin, left: span.left, right: span.right, exitX: street.exitX } : null);
     this.cameraRig.setFloors(
       this.site.floors.map((room) => ({
         slug: room.slug,
@@ -374,6 +419,7 @@ class OfficeScene {
       let entry = this.entries.get(agent.key);
       if (agent.away && (!entry || entry.character.faded)) continue;
       present.add(agent.key);
+      if (!agent.away && this.garden.lot.bayOf(agent.key) !== null) this.garden.lot.release(agent.key);
       if (!entry) {
         const character = new Character(
           agent.key,
@@ -397,6 +443,8 @@ class OfficeScene {
     for (const [key, entry] of this.entries) {
       const { character } = entry;
       if (!character.gone && (present.has(key) || (character.leaving && this.site.nav.floors.has(character.floor)))) continue;
+      this.garden.lot.release(key);
+      this.liftLink.cancel(key);
       character.dispose();
       this.entries.delete(key);
       if (this.cameraRig.following === key) this.cameraRig.stopFollow();
@@ -444,7 +492,7 @@ class OfficeScene {
     for (const [key, entry] of this.entries) {
       const agent = this.store.agents.get(key) ?? entry.agent;
       const target = this.resolveTarget(agent, entry, labUse);
-      if (target) entry.character.setTarget(target, this.site.nav);
+      if (target) entry.character.setTarget(target, this.site.nav, this.liftLink);
     }
   }
 
@@ -452,7 +500,10 @@ class OfficeScene {
     const room = this.site.room(agent.floor);
     if (!room) return null;
     const state = this.store.shownState(agent);
-    if (agent.away) return entry.character.waving(state) ? null : exitTarget(this.site.nav);
+    if (agent.away) {
+      if (entry.character.waving(state)) return null;
+      return exitTarget(this.site.nav, this.garden.root.visible ? this.garden.spot(this.garden.lot.reserve(agent.key)) : undefined);
+    }
     const leaving = state === 'done' || state === 'failed' || agent.endedAt !== null;
     if (!leaving && state === 'testing') {
       const index = labUse.get(agent.floor) ?? 0;
@@ -476,10 +527,14 @@ class OfficeScene {
     const resolve = (floor: string): Vector3 | null => this.site.origin(floor);
     const occluded = (point: Vector3): boolean => this.site.occludes(point, camera);
     let loading = false;
+    this.liftLink.deliver(this.lift.tick(dt));
+    this.garden.tick(dt);
     for (const [key, entry] of this.entries) {
       const agent = this.store.agents.get(key) ?? entry.agent;
       const state = this.store.shownState(agent);
       if (state === 'testing') testing.add(agent.floor);
+      const parking = agent.away && this.garden.root.visible;
+      if (parking && entry.character.leaving && !entry.character.moving) this.garden.lot.depart(key);
       entry.character.update(
         {
           dt,
@@ -490,6 +545,7 @@ class OfficeScene {
           pending: this.store.questionFor(key) !== undefined,
           ended: agent.endedAt !== null && !agent.away,
           away: agent.away,
+          hold: parking && this.garden.lot.boarding(key),
           lastTest: agent.lastTest,
           name: agentName(agent),
           following: following === key,
@@ -507,6 +563,8 @@ class OfficeScene {
       desk.setSeated(false);
     }
     this.site.tick(this.elapsed, testing);
+    const liftX = this.site.liftX;
+    this.cabin.update(liftX === null ? null : this.lift, liftX ?? 0, AISLE_Z);
     pulseRings(this.elapsed);
     this.drawTalkLines();
     this.setStatus(loading ? t('scene.loadingCharacters') : this.site.floors.length === 0 ? t('scene.waiting') : '');
@@ -609,16 +667,21 @@ class OfficeScene {
     this.fill.target.position.copy(center);
     this.fill.target.updateMatrixWorld();
     const far = Math.max(160, radius * 7);
-    this.scene.fog = new Fog(this.scene.fog instanceof Fog ? this.scene.fog.color : new Color(canvasBackground()), far * 0.55, far);
+    this.scene.fog = new Fog(this.scene.fog instanceof Fog ? this.scene.fog.color : this.backdrop.horizon, far * 0.55, far);
+    this.backdrop.setFar(far, radius);
+    this.garden.setFar(far);
   }
 
   private applyTheme(): void {
     const background = new Color(canvasBackground());
     this.scene.background = background;
-    if (this.scene.fog instanceof Fog) this.scene.fog.color.copy(background);
-    else this.scene.fog = new Fog(background.clone(), 90, 220);
     applyMaterialTheme(this.media.matches);
+    this.backdrop.retheme(this.media.matches);
+    const horizon = this.backdrop.horizon;
+    if (this.scene.fog instanceof Fog) this.scene.fog.color.copy(horizon);
+    else this.scene.fog = new Fog(horizon, 90, 220);
     this.site.retheme();
+    this.garden.retheme();
   }
 
   private readonly onThemeChange = (): void => {
@@ -646,6 +709,9 @@ class OfficeScene {
     for (const desk of this.desks.values()) desk.dispose();
     this.desks.clear();
     this.talkLines.dispose();
+    this.cabin.dispose();
+    this.garden.dispose();
+    this.backdrop.dispose();
     this.site.dispose();
     this.assets.dispose();
     disposeProps();

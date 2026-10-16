@@ -1,13 +1,15 @@
 import { describe, expect, test } from 'bun:test';
 import type { AgentView, FloorView } from '../types';
-import { AISLE_Z, HALF_D, LIFT_GAP, LIFT_W, WALL_T } from './constants';
+import { AISLE_Z, BRIDGE_LANDING_DX, HALF_D, LIFT_GAP, LIFT_W, PARK_AISLE_Z, ROAD_Z, STOREY_H, WALL_T } from './constants';
 import {
   STREET,
   STREET_DX,
   computeFloorPlan,
   deskTarget,
   exitTarget,
+  liftLeg,
   planPath,
+  servesLift,
   streetNav,
   streetPoint,
   type FloorNav,
@@ -69,7 +71,7 @@ describe('the street', () => {
     expect(exit).toMatchObject({ kind: 'exit', floor: STREET, x: ground.exitX + STREET_DX, lane: ground.exitX });
     expect(exit.z).toBeGreaterThan(HALF_D);
     expect(map.floors.get(STREET)).toMatchObject({ level: 0, building: 'main' });
-    expect(streetPoint(map)).toEqual({ floor: STREET, x: exit.x, z: exit.z, lane: exit.lane });
+    expect(streetPoint(map)).toEqual({ floor: STREET, x: ground.exitX, z: ROAD_Z - 1, lane: ground.exitX });
   });
 
   test('without a ground floor there is no street', () => {
@@ -109,7 +111,81 @@ describe('the street', () => {
     expect(floorsOf(path)).toEqual([STREET, 'mobile']);
     const lift = path.findLast((point) => point.floor === STREET)!;
     expect(lift).toMatchObject({ x: map.floors.get(STREET)!.exitX, z: AISLE_Z });
+    expect(path.filter((point) => point.floor === STREET).every((point) => point.x === lift.x)).toBe(true);
     expect(path.at(-1)).toMatchObject({ floor: 'mobile', x: desk.x, z: desk.z });
+  });
+
+  test('going home to a parking spot: out through the tower door, down the garden path, along the aisle', () => {
+    const map = nav();
+    const ground = map.floors.get('redaccion')!;
+    const spot = { x: 3.1, z: PARK_AISLE_Z };
+    const exit = exitTarget(map, spot)!;
+    expect(exit).toMatchObject({ kind: 'exit', floor: STREET, x: spot.x, z: spot.z, lane: ground.exitX });
+    const plan = computeFloorPlan(MOBILE, [agent('dev-1', 'dev')], MAIN_W, 3, () => 0);
+    const desk = deskTarget('mobile', plan.assignment.get('dev-1')!);
+    const path = planPath({ floor: 'mobile', x: desk.x, z: desk.z, lane: desk.lane }, exit, map)!;
+    const street = path.filter((point) => point.floor === STREET);
+    expect(street[0]).toMatchObject({ x: ground.exitX, z: AISLE_Z });
+    expect(street.at(-2)).toMatchObject({ x: ground.exitX, z: PARK_AISLE_Z });
+    expect(path.at(-1)).toMatchObject({ floor: STREET, x: spot.x, z: spot.z });
+  });
+});
+
+describe('the lift', () => {
+  const stops = new Map<string, number>([
+    ['direccion', 0.35 + 2 * STOREY_H],
+    ['mobile', 0.35 + STOREY_H],
+    ['redaccion', 0.35],
+    [STREET, 0.35],
+  ]);
+
+  test('serves the floors of the main building and the street, not the annex', () => {
+    const map = nav();
+    expect(servesLift('mobile', STREET, map, stops)).toBe(true);
+    expect(servesLift('redaccion', STREET, map, stops)).toBe(false);
+    expect(servesLift('taller', 'mantenimiento', map, stops)).toBe(false);
+    expect(servesLift('mantenimiento', 'redaccion', map, stops)).toBe(false);
+    expect(servesLift('redaccion', 'direccion', map, stops)).toBe(true);
+  });
+
+  test('from the annex: no ride on the stairs, a ride from the bridge landing up to the top floor', () => {
+    const map = nav();
+    const plan = computeFloorPlan(MOBILE, [agent('dev-1', 'dev')], MAIN_W, 3, () => 0);
+    const desk = deskTarget('direccion', plan.assignment.get('dev-1')!);
+    const path = planPath({ floor: 'taller', x: 0, z: AISLE_Z, lane: null }, desk, map)!;
+    const atAnnex = path.findIndex((point) => point.floor === 'mantenimiento');
+    expect(liftLeg(path[atAnnex]!, path.slice(atAnnex + 1), map, stops, false)).toBeNull();
+    const toMain = path.findIndex((point) => point.floor === 'redaccion');
+    const exitX = map.floors.get('redaccion')!.exitX;
+    const landing = { floor: 'redaccion', x: exitX + BRIDGE_LANDING_DX, z: AISLE_Z, lane: null };
+    expect(liftLeg(landing, path.slice(toMain + 1), map, stops, true)).toEqual({
+      from: 'redaccion',
+      to: 'direccion',
+      fromFace: 'bridge',
+      toFace: 'room',
+      approach: false,
+    });
+  });
+
+  test('to the annex: approach on the top floor and leave through the bridge face', () => {
+    const map = nav();
+    const back = planPath({ floor: 'direccion', x: 2, z: AISLE_Z, lane: null }, { id: 'x', kind: 'desk', floor: 'taller', x: 0, z: 0, lane: 0, facing: 0, slot: null }, map)!;
+    expect(back[0]).toMatchObject({ floor: 'direccion', x: map.floors.get('direccion')!.exitX, z: AISLE_Z });
+    expect(liftLeg({ floor: 'direccion', x: 2, z: AISLE_Z, lane: null }, back, map, stops, false)).toEqual({
+      from: 'direccion',
+      to: 'redaccion',
+      fromFace: 'room',
+      toFace: 'bridge',
+      approach: true,
+    });
+  });
+
+  test('going home from upstairs leaves the cabin through the street face', () => {
+    const map = nav();
+    const exit = exitTarget(map, { x: 3, z: PARK_AISLE_Z })!;
+    const from = { floor: 'mobile', x: 1, z: AISLE_Z, lane: null };
+    const path = planPath(from, exit, map)!;
+    expect(liftLeg(from, path, map, stops, false)).toMatchObject({ from: 'mobile', to: STREET, fromFace: 'room', toFace: 'street', approach: true });
   });
 });
 

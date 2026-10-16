@@ -12,6 +12,7 @@ import {
   DEPTH,
   DOOR_H,
   DOOR_HALF,
+  GARDEN_FAR_Z,
   HALF_D,
   LAB_BENCH_DX,
   LAB_BENCH_LEN,
@@ -29,6 +30,7 @@ import {
   SIDEWALK_Y,
   SLAB_T,
   STOREY_H,
+  TOWER_DOOR_W,
   UTIL_ZONE,
   WALL_T,
 } from './constants';
@@ -395,7 +397,8 @@ export class Site {
   private siteMeshes: Mesh[] = [];
   private siteOwned: Owned[] = [];
   private siteSignature = '';
-  private streetOrigin: Vector3 | null = null;
+  private street: Vector3 | null = null;
+  private stops: Map<string, number> = new Map();
   private readonly ground: Mesh;
 
   constructor() {
@@ -414,8 +417,27 @@ export class Site {
     return this.rooms.get(slug);
   }
 
+  get streetOrigin(): Vector3 | null {
+    return this.street;
+  }
+
+  get liftX(): number | null {
+    return this.mainLevels > 0 ? this.mainWidth / 2 + LIFT_GAP + LIFT_W / 2 : null;
+  }
+
+  get span(): { left: number; right: number } | null {
+    if (this.mainLevels === 0 && this.annexLevels === 0) return null;
+    const left = this.mainLevels > 0 ? -this.mainWidth / 2 - WALL_T : this.annexX - this.annexWidth / 2 - WALL_T;
+    const right = this.annexLevels > 0 ? this.annexX + this.annexWidth / 2 + WALL_T : this.mainWidth / 2 + LIFT_GAP + LIFT_W;
+    return { left, right };
+  }
+
+  get liftStops(): ReadonlyMap<string, number> {
+    return this.stops;
+  }
+
   origin(slug: string): Vector3 | null {
-    if (slug === STREET) return this.streetOrigin;
+    if (slug === STREET) return this.street;
     return this.rooms.get(slug)?.origin ?? null;
   }
 
@@ -480,10 +502,15 @@ export class Site {
     const groundRoom = groundSlug === null ? undefined : this.rooms.get(groundSlug);
     if (ground && groundRoom) {
       navFloors.set(STREET, streetNav(ground));
-      this.streetOrigin = new Vector3(groundRoom.origin.x, SIDEWALK_Y, groundRoom.origin.z);
+      this.street = new Vector3(groundRoom.origin.x, SIDEWALK_Y, groundRoom.origin.z);
     } else {
-      this.streetOrigin = null;
+      this.street = null;
     }
+    const stops = new Map<string, number>();
+    for (const room of order) if (room.building === 'main') stops.set(room.slug, room.origin.y);
+    const mainRoom = mainGround === null ? undefined : this.rooms.get(mainGround);
+    if (mainRoom) stops.set(STREET, mainRoom.origin.y);
+    this.stops = stops;
     this.order = order;
     this.nav = { floors: navFloors, mainGround, annexGround };
 
@@ -524,6 +551,7 @@ export class Site {
       this.bounds.expandByPoint(new Vector3(this.annexX - this.annexWidth / 2 - WALL_T, 0, -HALF_D - WALL_T));
       this.bounds.expandByPoint(new Vector3(this.annexX + this.annexWidth / 2 + WALL_T, PLINTH_H + this.annexLevels * STOREY_H + 0.6, HALF_D));
     }
+    if (!this.bounds.isEmpty()) this.bounds.max.z = Math.max(this.bounds.max.z, GARDEN_FAR_Z);
   }
 
   private clearSite(): void {
@@ -591,7 +619,14 @@ export class Site {
       const outerTo = PLINTH_H + height;
       if (outerTo > outerFrom) b.box(kit.glass, 0.02, outerTo - outerFrom, LIFT_W, x1, (outerFrom + outerTo) / 2, AISLE_Z, { cast: false, receive: false });
       b.box(kit.glass, LIFT_W, height, 0.02, cx, y, z0, { cast: false, receive: false });
-      b.box(kit.glass, LIFT_W, height, 0.02, cx, y, z1, { cast: false, receive: false });
+      const doorTop = PLINTH_H + DOOR_H;
+      const jamb = (LIFT_W - TOWER_DOOR_W) / 2;
+      b.box(kit.glass, LIFT_W, PLINTH_H + height - doorTop, 0.02, cx, (doorTop + PLINTH_H + height) / 2, z1, { cast: false, receive: false });
+      for (const side of [-1, 1]) {
+        b.box(kit.glass, jamb, DOOR_H, 0.02, cx + side * (TOWER_DOOR_W / 2 + jamb / 2), PLINTH_H + DOOR_H / 2, z1, { cast: false, receive: false });
+        b.box(kit.frame, 0.06, DOOR_H, 0.08, cx + side * (TOWER_DOOR_W / 2), PLINTH_H + DOOR_H / 2, z1, { cast: false });
+      }
+      b.box(kit.frame, TOWER_DOOR_W + 0.06, 0.06, 0.08, cx, doorTop, z1, { cast: false });
       for (const [px, pz] of [[x0, z0], [x0, z1], [x1, z0], [x1, z1]] as const) b.box(kit.frame, 0.1, height, 0.1, px, y, pz);
       for (let level = 0; level <= this.mainLevels; level += 1) {
         const ly = PLINTH_H + level * STOREY_H - 0.04;
