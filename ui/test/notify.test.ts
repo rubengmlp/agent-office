@@ -143,6 +143,33 @@ describe('desktop notifier', () => {
     ]);
   });
 
+  test('a lead that becomes stalled notifies once, with a generic body; the snapshot only seeds', () => {
+    const lead = (stalledSince: number | null): ServerMessage => ({ type: 'agent', data: { key: LEAD, name: 'lead-mobile', role: 'office-lead-mobile', stalledSince } as AgentView });
+    notifier.observe(snapshot({ agents: [{ key: LEAD, name: 'lead-mobile', role: 'office-lead-mobile', stalledSince: 5 } as AgentView] }));
+    notifier.observe(lead(5));
+    expect(FakeNotification.created).toHaveLength(0);
+    notifier.observe(lead(null));
+    notifier.observe(lead(null));
+    notifier.observe(lead(9));
+    notifier.observe(lead(9));
+    expect(FakeNotification.created.map((n) => [n.title, n.options.tag, n.options.body])).toEqual([
+      [t('notify.stalled.title', { agent: 'lead-mobile' }), `stalled:${LEAD}:9`, t('notify.openPanel')],
+    ]);
+    FakeNotification.created[0]?.onclick?.();
+    expect(selected).toEqual([LEAD]);
+    notifier.observe(lead(null));
+    notifier.observe(lead(20));
+    expect(FakeNotification.created).toHaveLength(2);
+  });
+
+  test('stalled notifications respect their own preference', () => {
+    const prefs = allOn();
+    prefs.events.stalled = false;
+    notifier.save(prefs);
+    notifier.observe({ type: 'agent', data: { key: LEAD, name: 'lead-mobile', stalledSince: 1 } as AgentView });
+    expect(FakeNotification.created).toHaveLength(0);
+  });
+
   test('nothing is notified while the panel is in front and focused', () => {
     page.visible = true;
     page.focused = true;
