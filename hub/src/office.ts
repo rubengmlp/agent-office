@@ -1154,7 +1154,8 @@ export class Office {
   // REVISAR: over the effective round cap. Only a block is recorded: a REVISAR: that passes already shows in the
   // activity when ingest processes it.
   private gateReview(e: HookEvent, review: { target: string | null; round: number | null }, session: SessionRuntime, now: number): GateDecision {
-    const ref = docRef(review.target, this.docsRoot(), text(e.cwd) ?? session.cwd);
+    // session.cwd, as handleProtocol: touchSession has already taken the cwd of this event.
+    const ref = docRef(review.target, this.docsRoot(), session.cwd);
     if (!ref) return { pass: true, reason: 'sin documento: handleProtocol tampoco lo cuenta' };
     const cap = this.docs.roundCap(ref);
     const decision = decideReviewGate({ path: ref.path, round: review.round, cap, maxRounds: this.config.review.maxRounds });
@@ -1277,8 +1278,10 @@ export class Office {
       });
       return;
     }
-    // A SIN ACUERDO: without a round counts at the round the document had, so the cap still renews.
-    const stored = verdict === 'no-agreement' ? (round ?? this.docs.find(ref.path)?.round ?? null) : round;
+    // A SIN ACUERDO: counts at most at the round the document had: without a round the cap still renews, and a
+    // wrong "ronda 40" does not lift it.
+    const docRound = this.docs.find(ref.path)?.round ?? 0;
+    const stored = verdict !== 'no-agreement' || docRound <= 0 ? round : Math.min(round ?? docRound, docRound);
     this.sql.insertVerdict.run(now, from.key, from.role, session.floor, verdict, verdict === 'approved' ? 1 : 0, null, ref.path, stored, parsed.score);
     this.docs.markRound(ref, round, now);
     if (verdict === 'approved') {

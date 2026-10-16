@@ -251,6 +251,29 @@ describe('Redacción review loop', () => {
     expect(gate(LEAD, cwd, null, null, `REVISAR: ${PLAN} ronda 9`).pass).toBe(true); // the lead is not an author
   });
 
+  test('a SIN ACUERDO with a round past the document counts at the document round', () => {
+    const cwd = redaccionTeam();
+    h.config.review.maxRounds = 2;
+    writeFileSync(join(docs, PLAN), '# Plan\n');
+    touch(join(docs, PLAN), -60_000);
+    say(LEAD, cwd, 'ared-1', 'redactor-login', 'team-lead', `REVISAR: ${PLAN} ronda 2`);
+    say(LEAD, cwd, 'arev-1', 'revisor-planes-login-r1', 'redactor-login', `SIN ACUERDO: ${PLAN} ronda 40 — falta la migración`);
+    expect(doc(PLAN)?.maxRounds).toBe(4);
+    expect(gate(LEAD, cwd, 'ared-1', 'redactor-login', `REVISAR: ${PLAN} ronda 5`).pass).toBe(false);
+  });
+
+  test('the gate and ingest resolve a relative path against the same folder', () => {
+    const cwd = redaccionTeam();
+    h.config.review.maxRounds = 2;
+    writeFileSync(join(docs, PLAN), '# Plan\n');
+    touch(join(docs, PLAN), -60_000);
+    say(LEAD, cwd, 'ared-1', 'redactor-login', 'team-lead', 'REVISAR: planes/login.md ronda 2');
+    expect(doc(PLAN)?.round).toBe(2);
+    expect(gate(LEAD, cwd, 'ared-1', 'redactor-login', 'REVISAR: planes/login.md ronda 3').pass).toBe(false);
+    say(LEAD, cwd, 'ared-1', 'redactor-login', 'team-lead', 'REVISAR: planes/login.md ronda 3');
+    expect(doc(PLAN)?.round).toBe(2);
+  });
+
   test('a SIN ACUERDO without a round number counts at the current round of the document', () => {
     const cwd = redaccionTeam();
     h.config.review.maxRounds = 2;
