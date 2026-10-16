@@ -148,6 +148,8 @@ export class Notifier {
         title = t(doc.kind === 'plan' ? 'notify.document.approvedPlan' : 'notify.document.approvedSkill', { title: doc.title });
       } else if (doc.status === 'sin-acuerdo') {
         title = t('notify.document.noAgreement', { title: doc.title });
+      } else if (doc.status === 'entregado' && doc.kind === 'plan') {
+        title = t('notify.document.deliveredPlan', { title: doc.title });
       } else {
         continue;
       }

@@ -488,6 +488,7 @@ export const en: Messages = {
   'notify.document.approvedPlan': 'Plan approved: {title}',
   'notify.document.approvedSkill': 'Skill approved: {title}',
   'notify.document.noAgreement': 'No agreement on {title}',
+  'notify.document.deliveredPlan': 'Plan awaiting your decision: {title}',
   'notify.openPanel': 'Open the panel to see the details.',
   'notify.test': 'Agent Office notifies here',
 
@@ -506,7 +507,7 @@ export const en: Messages = {
   'settings.notifications.event.question': 'Pending questions',
   'settings.notifications.event.blocked': 'Blockers (BLOQUEADO:)',
   'settings.notifications.event.done': 'Deliveries from leads (HECHO:)',
-  'settings.notifications.event.document': 'Plans and skills approved or without agreement',
+  'settings.notifications.event.document': 'Plans and skills approved or without agreement, and plans awaiting your decision',
   'settings.notifications.event.alert': 'Guard alerts',
 
   'hub.detail.waiting': 'waiting',

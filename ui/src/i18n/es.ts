@@ -487,6 +487,7 @@ export const es = {
   'notify.document.approvedPlan': 'Plan aprobado: {title}',
   'notify.document.approvedSkill': 'Skill aprobada: {title}',
   'notify.document.noAgreement': 'Sin acuerdo en {title}',
+  'notify.document.deliveredPlan': 'Plan pendiente de decisión: {title}',
   'notify.openPanel': 'Abre el panel para ver el detalle.',
   'notify.test': 'Agent Office avisa aquí',
 
@@ -505,7 +506,7 @@ export const es = {
   'settings.notifications.event.question': 'Preguntas pendientes',
   'settings.notifications.event.blocked': 'Bloqueos (BLOQUEADO:)',
   'settings.notifications.event.done': 'Entregas de los jefes (HECHO:)',
-  'settings.notifications.event.document': 'Planes y skills aprobados o sin acuerdo',
+  'settings.notifications.event.document': 'Planes y skills aprobados o sin acuerdo, y planes pendientes de decisión',
   'settings.notifications.event.alert': 'Alertas de la guardia',
 
   'hub.detail.waiting': 'esperando',

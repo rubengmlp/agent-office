@@ -133,6 +133,16 @@ describe('desktop notifier', () => {
     expect(FakeNotification.created.map((n) => n.options.tag)).toEqual(['document:redaccion/planes/login.md:aprobado:3']);
   });
 
+  test('a plan delivered for a decision notifies with its title only, once', () => {
+    notifier.observe({ type: 'documents', data: [plan('aprobado', 3)] });
+    notifier.observe({ type: 'documents', data: [plan('entregado', 3)] });
+    notifier.observe({ type: 'documents', data: [plan('entregado', 3)] });
+    notifier.observe({ type: 'documents', data: [plan('aparcado', 3)] });
+    expect(FakeNotification.created.map((n) => [n.title, n.options.tag, n.options.body])).toEqual([
+      ['Plan pendiente de decisión: Login con Apple', 'document:redaccion/planes/login.md:entregado:3', ''],
+    ]);
+  });
+
   test('nothing is notified while the panel is in front and focused', () => {
     page.visible = true;
     page.focused = true;
