@@ -6,7 +6,7 @@ import { ChatDesk, GLOBAL_CHANNEL, SNAPSHOT_LIMIT } from './chat';
 import { deliver, encodeInbox, orderText } from './courier';
 import { writeAtomic } from './config';
 import { commitDocument } from './docs-repo';
-import { DocumentDesk, docTypeOf, headBytes } from './documents';
+import { DocumentDesk } from './documents';
 import { FloorInUseError, purgeFloorData } from './floor-data';
 import {
   FloorResolver,
@@ -14,7 +14,7 @@ import {
   type FloorRegistry,
   type GitRootFn,
 } from './floors';
-import { decideDocumentGate, decideGate, decideReadCap, decideReviewGate, kilobytes, planByteLimit, type GateDecision, type ReviewGateFacts } from './gate';
+import { type GateDecision } from './gate';
 import { GitQueue, runGit, type GitRunner } from './git';
 import { GUARDED_TOOLS, guardDecision } from './guard';
 import type { Log } from './log';
@@ -30,7 +30,6 @@ import {
   NEW_TURN,
   NOT_DISCARDABLE,
   NO_TESTS,
-  READ_CAP_TOOLS,
   TURN_OVER,
   UNDO_MS,
   DAY_MS,
@@ -64,20 +63,20 @@ import {
 import { AskDesk } from './ask-desk';
 import { ChatRoom, type ReadChatResult, type UserChatResult } from './chat-room';
 import { ContextDesk } from './context-desk';
+import { GateDesk } from './gate-desk';
 import { GuardDesk } from './guard-desk';
 import { MeterDesk } from './meter-desk';
 import { OfficeBus } from './office-bus';
 import { RulesDesk } from './rules-desk';
 import { SessionBook } from './session-book';
 import { StallDesk } from './stall-desk';
-import { ownerEdits, prepare, type Sql } from './office-sql';
+import { prepare, type Sql } from './office-sql';
 import { publicDetail, publicSummary, publicText, storedPayload, visibleKind } from './privacy';
 import { detectStack, profileFor, type Profiles } from './profiles';
-import { BRIEF_PREFIX, docRef, parseProtocol, type DocRef } from './protocol';
+import { docRef, parseProtocol, type DocRef } from './protocol';
 import { QuestionDesk } from './questions';
 import { buildReport, saveReport, savedReport, savedReports } from './reports';
 import {
-  departmentOf,
   isAuthorRole,
   isDepartmentFloor,
   isLeadRole,
@@ -93,7 +92,6 @@ import {
   DONE_PREFIX,
   EDIT_TOOLS,
   classify,
-  idText,
   record,
   short,
   text,
@@ -198,6 +196,7 @@ export class Office {
   private readonly book: SessionBook;
   private readonly rules: RulesDesk;
   private readonly guards: GuardDesk;
+  private readonly gates: GateDesk;
   private readonly room: ChatRoom;
   private readonly context: ContextDesk;
   private readonly asks: AskDesk;
@@ -211,10 +210,6 @@ export class Office {
   private readonly usage: UsageDesk;
   private readonly meter: MeterDesk;
   readonly chat: ChatDesk;
-  private readonly readCounts = new Map<string, number>();
-  private readonly readCapNoted = new Set<string>();
-  private readonly lastUserInput = new Map<string, number>();
-  private readonly briefAllowance = new Map<string, number>();
   private readonly undoMs: number;
   private readonly removals = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly deciding = new Set<string>();
@@ -334,6 +329,21 @@ export class Office {
       deliver: this.deliverFn,
       lines: (unread, channel) => this.context.chatLines(unread, channel),
     });
+    this.gates = new GateDesk({
+      db: opts.db,
+      sql: this.sql,
+      now: this.now,
+      bus: this.bus,
+      book: this.book,
+      config: () => this.config,
+      docs: this.docs,
+      sync: this.sync,
+      docsRoot: () => this.docsRoot(),
+      refreshDocuments: () => this.refreshDocuments(),
+      context: () => this.guards.context(),
+      busy: (floor) => this.guards.busy(floor),
+      userAnswered: (sessionId) => this.stall.userAnswered(sessionId),
+    });
     this.book.restoreSessions();
     this.docs.refresh();
   }
@@ -408,7 +418,7 @@ export class Office {
     const agent = this.book.touchAgent(e, c, session, now);
     if (this.book.isRetired(agent)) {
       this.ingestRetired(e, c, agent, session, now);
-      return this.readCap(c, agent, session, true, now);
+      return this.gates.readCap(c, agent, session, true, now);
     }
 
     let nextState = c.state;
@@ -461,9 +471,9 @@ export class Office {
       }
       const plan = planSlugIn(text(e.prompt));
       if (plan) this.meter.setPlan(agent, plan);
-      if (isUserPrompt(text(e.prompt))) this.userInstructed(session.sessionId, now);
+      if (isUserPrompt(text(e.prompt))) this.gates.userInstructed(session.sessionId, now);
     }
-    if (c.event === 'PostToolUse' && isMain && c.tool === 'AskUserQuestion') this.userInstructed(session.sessionId, now);
+    if (c.event === 'PostToolUse' && isMain && c.tool === 'AskUserQuestion') this.gates.userInstructed(session.sessionId, now);
     if (c.event === 'PostToolUse' && c.tool === 'SendMessage' && agent.taskOpenSince !== null && DONE_PREFIX.test(text(record(e.tool_input).message) ?? '')) {
       agent.taskOpenSince = null;
       agent.stalledSince = null;
@@ -509,29 +519,7 @@ export class Office {
     if (c.sessionEnded) this.endSession(session, now);
     if (c.event === 'SubagentStart' || c.event === 'SessionStart' || c.event === 'UserPromptSubmit') return this.context.injection(c.event, agent, session);
     if (c.event === 'PreToolUse' && c.tool && EDIT_TOOLS.has(c.tool) && c.filePath) return this.context.chatReminder(agent, session, c.filePath, now);
-    return this.readCap(c, agent, session, false, now);
-  }
-
-  private readCap(c: Classified, agent: AgentRuntime, session: SessionRuntime, retired: boolean, now: number): string | null {
-    if (c.event !== 'PreToolUse' || !READ_CAP_TOOLS.has(c.tool ?? '') || !isVerdictRole(agent.role) || !isDepartmentFloor(session.floorKind)) {
-      return null;
-    }
-    const count = this.readCounts.get(agent.key) ?? this.sql.countReads.get(agent.key)?.n ?? 0;
-    const decision = decideReadCap({ count, max: this.config.review.maxReviewerReads, retired });
-    this.readCounts.set(agent.key, decision.pass ? count + 1 : count);
-    if (decision.pass) return null;
-    if (!retired && !this.readCapNoted.has(agent.key)) {
-      this.readCapNoted.add(agent.key);
-      this.pushActivity({
-        ts: now,
-        agentKey: agent.key,
-        event: 'ReadCap',
-        tool: c.tool,
-        state: null,
-        summary: { key: 'hub.act.readCapReached', params: { who: agent.name ?? agent.key, n: count } },
-      });
-    }
-    return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: decision.reason } });
+    return this.gates.readCap(c, agent, session, false, now);
   }
 
   ask(e: HookEvent, meta: HookMeta = EMPTY_META, signal?: AbortSignal): Promise<string | null> {
@@ -563,115 +551,20 @@ export class Office {
   }
 
   gate(e: HookEvent): GateDecision {
-    if (!isHookEvent(e)) return { pass: true, reason: 'evento no válido' };
-    const now = this.now();
-    const session = this.book.touchSession(e, EMPTY_META, now);
-    const scope = text(e.team_name) ?? session.team ?? teamOfSession(e.session_id);
-    const lead = this.book.leadSession(scope) ?? session;
-    const leadRole = lead.role ?? this.book.agents.get(lead.sessionId)?.role ?? null;
-    const taskId = idText(e.task_id);
-    const task = taskId ? this.sql.getTask.get(scope, taskId) : null;
-    const owner = task?.owner ?? text(e.teammate_name);
-    const keys = this.ownerKeys(owner, scope, lead);
-    const lastTesterGreen = this.sql.lastTesterGreen.get(lead.floor)?.ts ?? null;
-    const edits = ownerEdits(this.opts.db, this.config.floors, lead.floor, keys, lastTesterGreen);
-    const decision = decideGate({
-      officeTeam: isLeadRole(leadRole),
-      floorManaged: lead.floorKind === 'managed',
-      owner,
-      lastOwnerEdit: edits.last,
-      lastTesterGreen,
-      changed: edits.files,
-      changedTotal: edits.total,
-      fingerprintPending: this.guards.busy(lead.floor),
-    });
-    this.sql.insertGate.run(now, scope, taskId, decision.pass ? 'pass' : 'block', decision.reason);
-    if (taskId) {
-      this.sql.upsertTask.run(scope, taskId, text(e.task_subject), null, decision.pass ? 'completed' : 'blocked', now);
-    }
-    const subject = short(text(e.task_subject) ?? taskId ?? '', 60);
-    this.pushActivity({
-      ts: now,
-      agentKey: e.agent_id ?? lead.sessionId,
-      event: 'TaskCompleted',
-      tool: null,
-      state: null,
-      summary: { key: decision.pass ? 'hub.act.taskClosed' : 'hub.act.taskBlocked', params: { subject } },
-    });
-    return decision;
+    return this.gates.gate(e);
   }
 
   gateMessage(e: HookEvent): GateDecision {
-    if (!isHookEvent(e) || e.tool_name !== 'SendMessage') return { pass: true, reason: 'no es un mensaje' };
-    const body = text(record(e.tool_input).message) ?? '';
-    if (BRIEF_PREFIX.test(body)) return this.gateBrief(e);
-    const parsed = parseProtocol(body);
-    const review = parsed?.kind === 'review' ? parsed : null;
-    if (!review && !DONE_PREFIX.test(body)) return { pass: true, reason: 'no es un aviso de fin' };
-    const now = this.now();
-    const session = this.book.touchSession(e, EMPTY_META, now);
-    const senderRole = this.book.roleForEvent(e, session);
-    if (review) {
-      if (isDepartmentFloor(session.floorKind) && isAuthorRole(senderRole)) return this.gateReview(e, review, session, now);
-      return { pass: true, reason: 'solo cuenta el REVISAR de un redactor o artesano' };
-    }
-    if (isDepartmentFloor(session.floorKind) && departmentOf(senderRole)) {
-      return this.gateDocument(e, body, senderRole, session, now);
-    }
-    if (!isLeadRole(senderRole)) return { pass: true, reason: 'solo cuenta el aviso de un jefe de planta' };
-    const team = teamOfSession(session.sessionId);
-    const lastTesterGreen = this.sql.lastTesterGreen.get(session.floor)?.ts ?? null;
-    const edits = ownerEdits(this.opts.db, this.config.floors, session.floor, this.ownerKeys(null, team, session), lastTesterGreen);
-    const decision = decideGate({
-      officeTeam: true,
-      floorManaged: session.floorKind === 'managed',
-      owner: null,
-      lastOwnerEdit: edits.last,
-      lastTesterGreen,
-      changed: edits.files,
-      changedTotal: edits.total,
-      fingerprintPending: this.guards.busy(session.floor),
-    });
-    this.sql.insertGate.run(now, team, null, decision.pass ? 'pass' : 'block', decision.reason);
-    this.pushActivity({
-      ts: now,
-      agentKey: e.agent_id ?? session.sessionId,
-      event: 'GateMessage',
-      tool: 'SendMessage',
-      state: null,
-      summary: decision.pass ? { key: 'hub.act.doneAccepted', params: { text: short(body, 60) } } : { key: 'hub.act.doneBlocked' },
-    });
-    return decision;
+    return this.gates.gateMessage(e);
   }
 
   guard(e: HookEvent, meta: HookMeta = EMPTY_META): GateDecision {
-    if (!isHookEvent(e) || !GUARDED_TOOLS.has(e.tool_name ?? '')) return { pass: true, reason: 'herramienta sin guardia' };
-    const now = this.now();
-    const session = this.book.touchSession(e, meta, now);
-    const role = this.book.roleForEvent(e, session);
-    if (!departmentOf(role)) return { pass: true, reason: 'fuera de los departamentos' };
-    const decision = guardDecision(
-      { tool: e.tool_name ?? '', input: record(e.tool_input), cwd: text(e.cwd) ?? session.cwd, role, name: this.book.agents.get(e.agent_id ?? e.session_id)?.name ?? null },
-      this.guards.context(),
-    );
-    if (!decision.pass) {
-      this.sql.insertGate.run(now, 'guardia', null, 'block', decision.reason);
-      const key = e.agent_id ?? e.session_id;
-      this.pushActivity({
-        ts: now,
-        agentKey: key,
-        event: 'Guard',
-        tool: e.tool_name ?? null,
-        state: null,
-        summary: { key: 'hub.act.guardBlocked', params: { who: this.book.agents.get(key)?.name ?? role ?? key.slice(0, 8), target: decision.target ?? '?' } },
-      });
-    }
-    return decision;
+    return this.gates.guard(e, meta);
   }
 
   async order(sessionId: string, body: string): Promise<OrderResult> {
     const result = await this.deliverOrder(sessionId, body, { asTask: true });
-    if (result === 'ok') this.userInstructed(sessionId, this.now());
+    if (result === 'ok') this.gates.userInstructed(sessionId, this.now());
     return result;
   }
 
@@ -818,7 +711,7 @@ export class Office {
       const sent = await this.order(director.sessionId, text);
       if (sent === 'not-found' || sent === 'not-office') return 'no-director';
       if (sent !== 'ok') return sent;
-      this.briefAllowance.set(director.sessionId, new Set(doc.base.map((b) => b.floor)).size);
+      this.gates.allowBriefs(director.sessionId, new Set(doc.base.map((b) => b.floor)).size);
     }
     const now = this.now();
     this.docs.markDecision({ path: doc.path, kind: doc.kind, slug: doc.slug }, decision, now);
@@ -937,48 +830,6 @@ export class Office {
     this.refreshDocuments();
   }
 
-  private gateBrief(e: HookEvent): GateDecision {
-    const to = (text(record(e.tool_input).to) ?? '').split('@')[0] ?? '';
-    if (!to.startsWith('lead-')) return { pass: true, reason: 'solo cuenta el encargo a un jefe' };
-    const now = this.now();
-    const session = this.book.touchSession(e, EMPTY_META, now);
-    if (this.book.roleForEvent(e, session) !== 'office-director') return { pass: true, reason: 'solo cuenta el encargo del director' };
-    const max = this.config.limits.maxBriefsPerOrder;
-    const scope = `encargo:${session.sessionId}`;
-    const sent = this.sql.countBriefs.get(scope, this.lastUserInputAt(session.sessionId))?.n ?? 0;
-    const allowance = Math.max(max, this.briefAllowance.get(session.sessionId) ?? 0);
-    if (max > 0 && sent >= allowance) {
-      const reason = `Tope de encargos: ya has enviado ${sent} encargos desde la última instrucción del usuario (limits.maxBriefsPerOrder = ${max}). Pregunta al usuario con AskUserQuestion antes de encargar más: cuáles quiere y en qué orden.`;
-      this.sql.insertGate.run(now, scope, null, 'block', reason);
-      this.pushActivity({
-        ts: now,
-        agentKey: e.agent_id ?? session.sessionId,
-        event: 'GateMessage',
-        tool: 'SendMessage',
-        state: null,
-        summary: { key: 'hub.act.briefsCapped', params: { n: sent, max } },
-      });
-      return { pass: false, reason };
-    }
-    this.sql.insertGate.run(now, scope, null, 'pass', 'encargo dentro del presupuesto');
-    return { pass: true, reason: 'encargo dentro del presupuesto' };
-  }
-
-  private lastUserInputAt(sessionId: string): number {
-    const cached = this.lastUserInput.get(sessionId);
-    if (cached !== undefined) return cached;
-    const prompt = this.sql.recentPrompts.all(sessionId).find((row) => isUserPrompt(row.prompt));
-    const at = Math.max(prompt?.ts ?? 0, this.sql.lastAsk.get(sessionId)?.ts ?? 0);
-    this.lastUserInput.set(sessionId, at);
-    return at;
-  }
-
-  private userInstructed(sessionId: string, now: number): void {
-    this.lastUserInput.set(sessionId, now);
-    this.briefAllowance.delete(sessionId);
-    this.stall.userAnswered(sessionId);
-  }
-
   relaunch(sessionId: string, resume?: boolean): Promise<RelaunchResult> {
     return this.rules.relaunch(sessionId, resume);
   }
@@ -989,88 +840,6 @@ export class Office {
 
   refreshDocuments(): void {
     this.docs.refresh();
-  }
-
-  // REVISAR: over the round cap or of a plan over its size cap. Only a block is recorded: a REVISAR: that passes
-  // already shows in the activity when ingest processes it.
-  private gateReview(e: HookEvent, review: { target: string | null; round: number | null }, session: SessionRuntime, now: number): GateDecision {
-    // session.cwd, as handleProtocol: touchSession has already taken the cwd of this event.
-    const ref = docRef(review.target, this.docsRoot(), session.cwd);
-    if (!ref) return { pass: true, reason: 'sin documento: handleProtocol tampoco lo cuenta' };
-    const { decision, summary } = this.reviewBlock(ref, review.round, 'gate');
-    if (decision.pass || !summary) return decision;
-    this.sql.insertGate.run(now, teamOfSession(session.sessionId), ref.path, 'block', decision.reason);
-    this.pushActivity({ ts: now, agentKey: e.agent_id ?? session.sessionId, event: 'GateMessage', tool: 'SendMessage', state: null, summary });
-    return decision;
-  }
-
-  private reviewBlock(ref: DocRef, round: number | null, from: 'gate' | 'ingest'): { decision: GateDecision; summary: HubText | null } {
-    const file = join(this.docsRoot(), ref.path);
-    let bytes: number | null = null;
-    if (ref.kind === 'plan') {
-      try {
-        bytes = statSync(file).size;
-      } catch {
-        bytes = null;
-      }
-    }
-    const facts: ReviewGateFacts = {
-      path: ref.path,
-      round,
-      maxRounds: this.config.review.maxRounds,
-      bytes,
-      maxBytes: this.config.review.maxPlanBytes,
-      analysis: bytes !== null && docTypeOf('plan', headBytes(file)) === 'analisis',
-      floors: Math.max(1, this.sync.base(ref.slug).length),
-    };
-    const decision = decideReviewGate(facts);
-    if (decision.pass) return { decision, summary: null };
-    if (decision.cause === 'rounds' && round !== null) {
-      const key = from === 'gate' ? 'hub.act.reviewBlockedOverMax' : 'hub.act.reviewIgnoredOverMax';
-      return { decision, summary: { key, params: { path: ref.path, round, max: facts.maxRounds } } };
-    }
-    const params = {
-      path: ref.path,
-      kb: kilobytes(bytes ?? 0),
-      max: kilobytes(planByteLimit(facts.maxBytes, facts.floors, facts.analysis)),
-    };
-    return { decision, summary: { key: from === 'gate' ? 'hub.act.reviewBlockedTooLong' : 'hub.act.reviewIgnoredTooLong', params } };
-  }
-
-  private gateDocument(e: HookEvent, body: string, role: string | null, session: SessionRuntime, now: number): GateDecision {
-    const parsed = parseProtocol(body);
-    const ref = docRef(parsed?.target ?? null, this.docsRoot(), text(e.cwd) ?? session.cwd);
-    const decision = decideDocumentGate({
-      raw: parsed?.target ?? null,
-      path: ref?.path ?? null,
-      changedAt: ref ? this.docs.changedAt(ref) : null,
-      approvedAt: ref ? (this.sql.lastApproved.get(ref.path)?.ts ?? null) : null,
-    });
-    const scope = teamOfSession(session.sessionId);
-    this.sql.insertGate.run(now, scope, ref?.path ?? null, decision.pass ? 'pass' : 'block', decision.reason);
-    this.pushActivity({
-      ts: now,
-      agentKey: e.agent_id ?? session.sessionId,
-      event: 'GateMessage',
-      tool: 'SendMessage',
-      state: null,
-      summary: decision.pass
-        ? { key: 'hub.act.deliveryAccepted', params: { path: ref?.path ?? short(body, 60) } }
-        : ref
-          ? { key: 'hub.act.deliveryBlockedStale', params: { path: ref.path } }
-          : { key: 'hub.act.deliveryBlockedNoPath' },
-    });
-    if (decision.pass && ref && isLeadRole(role)) {
-      if (ref.kind === 'plan') {
-        this.docs.markDelivered(ref, this.sync.base(ref.slug), now);
-        this.refreshDocuments();
-        this.bus.background(this.sync.remove(ref.slug));
-      } else {
-        this.docs.markClosed(ref, now);
-        this.refreshDocuments();
-      }
-    }
-    return decision;
   }
 
   private handleProtocol(message: { to: string; toKey: string | null; text: string }, from: AgentRuntime, session: SessionRuntime, now: number): void {
@@ -1111,7 +880,7 @@ export class Office {
     const round = parsed.round;
     if (parsed.kind === 'review' && isAuthorRole(from.role)) {
       // gate.sh blocks it, but emit.sh runs in the same PreToolUse: no round opens and nothing is committed.
-      const { decision, summary } = this.reviewBlock(ref, round, 'ingest');
+      const { decision, summary } = this.gates.reviewBlock(ref, round, 'ingest');
       if (!decision.pass) {
         if (summary) this.pushActivity({ ts: now, agentKey: from.key, event: 'Review', tool: 'SendMessage', state: null, summary });
         return;
@@ -1332,22 +1101,6 @@ export class Office {
     agent.updatedAt = now;
     this.book.persistAgent(agent);
     this.book.emitAgent(agent, now);
-  }
-
-  private ownerKeys(owner: string | null, scope: string, lead: SessionRuntime): string[] {
-    const inTeam = (a: AgentRuntime) => a.team === scope || a.sessionId === lead.sessionId || a.parentKey === lead.sessionId;
-    const keys = new Set<string>();
-    if (owner) {
-      for (const a of this.book.agents.values()) if (a.name === owner && inTeam(a)) keys.add(a.key);
-      for (const id of this.book.teamMemberIds(scope, owner)) keys.add(id);
-    }
-    if (keys.size === 0) {
-      for (const a of this.book.agents.values()) {
-        const kind = roleKind(a.role);
-        if (inTeam(a) && (kind === 'dev' || kind === 'intern') && a.key !== lead.sessionId) keys.add(a.key);
-      }
-    }
-    return [...keys];
   }
 
   private endSession(session: SessionRuntime, now: number, ghost = false): void {
