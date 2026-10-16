@@ -8,7 +8,7 @@ export const DIRECCION = 'direccion';
 export const REDACCION = 'redaccion';
 export const MANTENIMIENTO = 'mantenimiento';
 export const UNKNOWN_FLOOR = 'desconocida';
-export const RESERVED_SLUGS: readonly string[] = [DIRECCION, REDACCION, MANTENIMIENTO, UNKNOWN_FLOOR];
+export const RESERVED_SLUGS: readonly string[] = [DIRECCION, REDACCION, MANTENIMIENTO, UNKNOWN_FLOOR, 'global'];
 export const REDACCION_DIR = 'redaccion';
 export const TALLER_DIR = 'taller';
 

@@ -194,6 +194,21 @@ const SCHEMA = [
     files TEXT NOT NULL
   )`,
   'CREATE INDEX IF NOT EXISTS alerts_ts ON alerts (ts)',
+  `CREATE TABLE IF NOT EXISTS chat_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts INTEGER NOT NULL,
+    channel TEXT NOT NULL,
+    floor TEXT NOT NULL,
+    author_key TEXT NOT NULL,
+    author_name TEXT NOT NULL,
+    role TEXT,
+    origin TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    text TEXT NOT NULL,
+    files TEXT NOT NULL
+  )`,
+  'CREATE INDEX IF NOT EXISTS chat_channel ON chat_messages (channel, id)',
+  'CREATE INDEX IF NOT EXISTS chat_floor ON chat_messages (floor, id)',
 ];
 
 const DESTRUCTIVE = /\b(DROP|DELETE|TRUNCATE|REPLACE)\b|\bALTER\s+TABLE\s+\S+\s+(DROP|RENAME)\b|\bUPDATE\b/i;

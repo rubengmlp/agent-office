@@ -23,6 +23,7 @@ export const FLOOR_TABLES = [
   'alerts',
   'floor_sync',
   'sync_worktrees',
+  'chat_messages',
 ] as const;
 
 // tasks and gate_decisions have no floor column: their scope is the team of a session or agent of the floor,
