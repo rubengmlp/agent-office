@@ -64,6 +64,15 @@ describe('permission requests in the panel', () => {
     expect(h.office.snapshot().questions).toEqual([]);
   });
 
+  test('a question or a plan approval sent to the terminal never becomes a permission card', async () => {
+    const repo = watched();
+    const ask = ev(LEAD, repo, 'PermissionRequest', { tool_name: 'AskUserQuestion', tool_input: { questions: [{ question: '¿Sigo?', options: [] }] } });
+    expect(await h.office.permission(ask, leadMeta)).toBeNull();
+    const plan = ev(LEAD, repo, 'PermissionRequest', { tool_name: 'ExitPlanMode', tool_input: { plan: '1. hacer x' } });
+    expect(await h.office.permission(plan, leadMeta)).toBeNull();
+    expect(h.office.snapshot().questions).toEqual([]);
+  });
+
   test('nothing is held when nobody watches the panel or the session is not part of the office', async () => {
     h = harness({ holdMs: 60_000 });
     const repo = join(h.root, 'kapper');

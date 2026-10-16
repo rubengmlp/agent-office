@@ -160,6 +160,7 @@ const VERDICT_DEDUP_MS = 10 * 60_000;
 const DAY_MS = 86_400_000;
 const EMPTY_META: HookMeta = { socket: null, token: null, role: null, name: null };
 const NO_TESTS: Matchers = { test: /(?!)/, check: /(?!)/ };
+const NOT_PERMISSIONS: ReadonlySet<string> = new Set(['AskUserQuestion', 'ExitPlanMode']);
 export const DISCARDED_MARK = '> **Descartado**';
 
 export const ROLE_LABELS: Record<RoleId, string> = {
@@ -399,6 +400,7 @@ export class Office {
 
   async permission(e: HookEvent, meta: HookMeta = EMPTY_META): Promise<string | null> {
     if (!isHookEvent(e) || e.hook_event_name !== 'PermissionRequest') return null;
+    if (NOT_PERMISSIONS.has(e.tool_name ?? '')) return null;
     const now = this.now();
     const session = this.touchSession(e, meta, now);
     if (!this.desk.someoneWatching() || !this.inScope(e, session)) return null;
