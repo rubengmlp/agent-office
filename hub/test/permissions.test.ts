@@ -145,11 +145,13 @@ describe('permission modes and clone floors in the launchers', () => {
     const config = testConfig({ floors: { mobile: floor('/m'), old: floor('/o', false) }, departments: { redaccion: true, mantenimiento: false } });
     expect(settingsView(config).permissionModes).toEqual({ direccion: 'auto', redaccion: 'auto', mobile: 'auto' });
     const ok = applySettings(config, { permissionModes: { mobile: 'plan', direccion: 'manual' } });
-    if ('error' in ok) throw new Error(ok.error);
+    if ('error' in ok) throw new Error(JSON.stringify(ok.error));
     expect(ok.config.permissionModes).toEqual({ mobile: 'plan', direccion: 'manual' });
     const bad = applySettings(config, { permissionModes: { mobile: 'bypassPermissions', nada: 'auto' } });
-    expect('error' in bad && bad.error).toContain('Modo de permisos no válido para mobile');
-    expect('error' in bad && bad.error).toContain('"nada"');
+    expect('error' in bad && bad.error).toEqual([
+      { key: 'hub.settings.badPermissionMode', params: { slug: 'mobile' } },
+      { key: 'hub.settings.noTarget', params: { slug: 'nada' } },
+    ]);
     expect(normalizeConfig({ permissionModes: { mobile: 'plan', otra: 'turbo', 'Mal Slug': 'auto' } }).permissionModes).toEqual({ mobile: 'plan' });
   });
 });

@@ -6,7 +6,7 @@ import { realPath } from './floors';
 import type { Office } from './office';
 import type { Profiles } from './profiles';
 import { record, text } from './state-machine';
-import type { FloorAddResult, FloorErrorStatus, FloorFailure, FloorRemoveResult } from './types';
+import type { FloorAddResult, FloorErrorStatus, FloorFailure, FloorRemoveResult, HubText } from './types';
 
 const MAX_PATH = 1000;
 
@@ -28,13 +28,15 @@ export const gitTopLevel: GitTopFn = (dir) => {
   }
 };
 
-function fail(status: FloorErrorStatus, error: string): FloorFailure {
+function fail(status: FloorErrorStatus, error: HubText): FloorFailure {
   return { ok: false, status, error };
 }
 
+// The panel gets the key of a FloorError; template errors and anything unexpected go as raw text.
 function failure(error: unknown): FloorFailure {
-  if (error instanceof FloorConflictError) return fail(409, error.message);
-  if (error instanceof FloorError || error instanceof TemplateError) return fail(400, error.message);
+  if (error instanceof FloorConflictError) return fail(409, error.text ?? error.message);
+  if (error instanceof FloorError) return fail(400, error.text ?? error.message);
+  if (error instanceof TemplateError) return fail(400, error.message);
   return fail(500, (error as Error).message);
 }
 
@@ -50,18 +52,19 @@ export function createFloorAdmin(
     add(raw) {
       const body = record(raw);
       const path = text(body.path);
-      if (!path || path.length > MAX_PATH) return fail(400, 'Indica la ruta del repositorio.');
+      if (!path || path.length > MAX_PATH) return fail(400, { key: 'hub.floors.pathRequired' });
       const slug = text(body.slug) ?? undefined;
       try {
         const current = profiles();
         const plan = planFloor(p, current, path, slug);
         const top = gitTop(plan.path);
-        if (top === null) return fail(400, `${plan.path} no es un repositorio git: añade la carpeta raíz del repositorio.`);
-        if (realPath(top) !== plan.path) {
-          return fail(400, `${plan.path} está dentro del repositorio ${top}: añade la carpeta raíz del repositorio.`);
-        }
+        if (top === null) return fail(400, { key: 'hub.floors.notGitRepo', params: { path: plan.path } });
+        if (realPath(top) !== plan.path) return fail(400, { key: 'hub.floors.insideRepo', params: { path: plan.path, top } });
         if (loadConfig(p).floors[plan.slug]?.managed) {
-          throw new FloorConflictError(`${plan.path} ya es la planta gestionada «${plan.slug}».`, 'managed');
+          throw new FloorConflictError(`${plan.path} ya es la planta gestionada «${plan.slug}».`, 'managed', {
+            key: 'hub.floors.conflictManaged',
+            params: { path: plan.path, slug: plan.slug },
+          });
         }
         const startCommand = writeFloor(p, current, plan);
         reload();
@@ -71,7 +74,7 @@ export function createFloorAdmin(
           path: plan.path,
           stack: plan.stack,
           startCommand,
-          note: `Planta ${plan.slug} (${plan.profile.label}) gestionada. Arranca su jefe con bun run office.`,
+          note: { key: 'hub.floors.added', params: { slug: plan.slug, startCommand } },
         };
       } catch (error) {
         return failure(error);
@@ -82,13 +85,13 @@ export function createFloorAdmin(
       try {
         checkSlug(slug);
       } catch (error) {
-        return fail(400, (error as Error).message);
+        return failure(error);
       }
-      if (removing.has(slug)) return fail(409, `La planta "${slug}" ya se está borrando.`);
+      if (removing.has(slug)) return fail(409, { key: 'hub.floors.removing', params: { slug } });
       const floor = loadConfig(p).floors[slug];
-      if (!floor) return fail(404, `No hay ninguna planta "${slug}".`);
+      if (!floor) return fail(404, { key: 'hub.floors.notFound', params: { slug } });
       const open = office.floorInUse(slug);
-      if (open.length > 0) return fail(409, new FloorInUseError(slug, open).message);
+      if (open.length > 0) return fail(409, new FloorInUseError(slug, open).text);
       // Data first, config last: while the floor is still in config.json, a failure halfway is fixed by repeating the DELETE.
       removing.add(slug);
       try {
@@ -97,8 +100,8 @@ export function createFloorAdmin(
         reload();
         return { ok: true, slug, removed: { files, rows, worktrees } };
       } catch (error) {
-        if (error instanceof FloorInUseError) return fail(409, error.message);
-        if (error instanceof FloorError) return fail(404, error.message);
+        if (error instanceof FloorInUseError) return fail(409, error.text);
+        if (error instanceof FloorError) return fail(404, error.text ?? error.message);
         return fail(500, (error as Error).message);
       } finally {
         removing.delete(slug);

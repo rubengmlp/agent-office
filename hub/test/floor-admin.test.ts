@@ -27,12 +27,12 @@ function gitRepo(root: string, name: string, files: Record<string, string> = {})
 }
 
 function added(result: FloorAddResult) {
-  if (!result.ok) throw new Error(result.error);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
   return result;
 }
 
 function removed(result: FloorRemoveResult) {
-  if (!result.ok) throw new Error(result.error);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
   return result;
 }
 
@@ -106,18 +106,18 @@ describe('floor admin', () => {
     added(admin.add({ path: repo }));
     const mtimes = ROLES.map((role) => statSync(agentFile(p, role, 'mobile')).mtimeMs);
 
-    expect(admin.add({ path: join(h.root, 'nope') })).toMatchObject({ ok: false, status: 400, error: expect.stringContaining('No existe') });
-    expect(admin.add({ path: repo })).toMatchObject({ ok: false, status: 409, error: expect.stringContaining('ya es la planta gestionada') });
+    expect(admin.add({ path: join(h.root, 'nope') })).toMatchObject({ ok: false, status: 400, error: expect.objectContaining({ key: 'hub.floors.missing' }) });
+    expect(admin.add({ path: repo })).toMatchObject({ ok: false, status: 409, error: expect.objectContaining({ key: 'hub.floors.conflictManaged' }) });
     expect(ROLES.map((role) => statSync(agentFile(p, role, 'mobile')).mtimeMs)).toEqual(mtimes);
-    expect(admin.add({ path: repo, slug: 'otra' })).toMatchObject({ ok: false, status: 409, error: expect.stringContaining('ya es la planta') });
-    expect(admin.add({ path: REPO_ROOT })).toMatchObject({ ok: false, status: 400, error: expect.stringContaining('copia de la que corre la oficina') });
-    expect(admin.add({ path: gitRepo(h.root, 'x'), slug: 'redaccion' })).toMatchObject({ ok: false, status: 400, error: expect.stringContaining('reservado') });
+    expect(admin.add({ path: repo, slug: 'otra' })).toMatchObject({ ok: false, status: 409, error: expect.objectContaining({ key: 'hub.floors.pathTaken' }) });
+    expect(admin.add({ path: REPO_ROOT })).toMatchObject({ ok: false, status: 400, error: expect.objectContaining({ key: 'hub.floors.liveCopy' }) });
+    expect(admin.add({ path: gitRepo(h.root, 'x'), slug: 'redaccion' })).toMatchObject({ ok: false, status: 400, error: expect.objectContaining({ key: 'hub.floors.slugReserved' }) });
     expect(admin.add({})).toMatchObject({ ok: false, status: 400 });
 
-    expect(admin.add({ path: makeRepo(h.root, 'sin-git') })).toMatchObject({ ok: false, status: 400, error: expect.stringContaining('no es un repositorio git') });
+    expect(admin.add({ path: makeRepo(h.root, 'sin-git') })).toMatchObject({ ok: false, status: 400, error: expect.objectContaining({ key: 'hub.floors.notGitRepo' }) });
     const sub = join(repo, 'lib');
     mkdirSync(sub);
-    expect(admin.add({ path: sub })).toMatchObject({ ok: false, status: 400, error: expect.stringContaining('dentro del repositorio') });
+    expect(admin.add({ path: sub })).toMatchObject({ ok: false, status: 400, error: expect.objectContaining({ key: 'hub.floors.insideRepo' }) });
     expect(loadConfig(p).floors.lib).toBeUndefined();
   });
 
@@ -242,7 +242,7 @@ describe('floor admin', () => {
   test('a second delete of the same floor while the first runs is refused', async () => {
     floorWithData();
     const first = admin.remove('mobile');
-    expect(await admin.remove('mobile')).toMatchObject({ ok: false, status: 409, error: expect.stringContaining('ya se está borrando') });
+    expect(await admin.remove('mobile')).toMatchObject({ ok: false, status: 409, error: expect.objectContaining({ key: 'hub.floors.removing' }) });
     removed(await first);
   });
 
@@ -252,7 +252,7 @@ describe('floor admin', () => {
       duringGit = null;
       h.office.ingest(ev('dddddddd-0000-0000-0000-000000000004', repo, 'SessionStart'), { socket: null, token: null, role: 'office-lead-mobile', name: 'lead-mobile' });
     };
-    expect(await admin.remove('mobile')).toMatchObject({ ok: false, status: 409, error: expect.stringContaining('lead-mobile') });
+    expect(await admin.remove('mobile')).toMatchObject({ ok: false, status: 409, error: { key: 'hub.floors.inUse', params: { slug: 'mobile', sessions: expect.stringContaining('lead-mobile') } } });
     expect(loadConfig(p).floors.mobile).toBeDefined();
     expect(count(h.db, 'lessons', 'mobile')).toBeGreaterThan(0);
   });
@@ -262,7 +262,7 @@ describe('floor admin', () => {
     config.floors.redaccion = { path: join(h.root, 'docs'), stack: 'generic', managed: false, baseBranch: 'develop' };
     config.permissionModes.redaccion = 'plan';
     saveConfig(p, config);
-    expect(await admin.remove('redaccion')).toMatchObject({ ok: false, status: 400, error: expect.stringContaining('reservado') });
+    expect(await admin.remove('redaccion')).toMatchObject({ ok: false, status: 400, error: expect.objectContaining({ key: 'hub.floors.slugReserved' }) });
     expect(await admin.remove('direccion')).toMatchObject({ ok: false, status: 400 });
     const after = loadConfig(p);
     expect(after.floors.redaccion).toBeDefined();
@@ -274,7 +274,7 @@ describe('floor admin', () => {
     added(admin.add({ path: repo }));
     h.office.ingest(ev(MOBILE_SESSION, repo, 'SessionStart'), { socket: null, token: null, role: 'office-lead-mobile', name: 'lead-mobile' });
 
-    expect(await admin.remove('mobile')).toMatchObject({ ok: false, status: 409, error: expect.stringContaining('lead-mobile') });
+    expect(await admin.remove('mobile')).toMatchObject({ ok: false, status: 409, error: { key: 'hub.floors.inUse', params: { slug: 'mobile', sessions: expect.stringContaining('lead-mobile') } } });
     expect(loadConfig(p).floors.mobile).toBeDefined();
     expect(await admin.remove('nope')).toMatchObject({ ok: false, status: 404 });
     expect(await admin.remove('Mal slug')).toMatchObject({ ok: false, status: 400 });

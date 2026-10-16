@@ -132,7 +132,7 @@ type AlertRow = { id: number; ts: number; level: string; floor: string; agent_ke
 
 export type OrderResult = 'ok' | 'not-found' | 'unreachable' | 'failed';
 
-export type LessonResult = { ok: true; lesson: LessonView } | { ok: false; status: number; error: string };
+export type LessonResult = { ok: true; lesson: LessonView } | { ok: false; status: number; error: HubText };
 
 export type DiscardResult = 'ok' | 'not-found' | 'closed';
 
@@ -558,9 +558,9 @@ export class Office {
     const floor = text(body.floor);
     const role = body.role;
     const lessonText = text(body.text);
-    if (!floor || floor.length > 80) return { ok: false, status: 400, error: 'floor es obligatorio' };
-    if (!isRoleId(role)) return { ok: false, status: 400, error: 'role no es un rol de la oficina' };
-    if (!lessonText || !cleanLesson(lessonText)) return { ok: false, status: 400, error: 'La lección está vacía' };
+    if (!floor || floor.length > 80) return { ok: false, status: 400, error: { key: 'hub.api.floorRequired' } };
+    if (!isRoleId(role)) return { ok: false, status: 400, error: { key: 'hub.api.roleInvalid' } };
+    if (!lessonText || !cleanLesson(lessonText)) return { ok: false, status: 400, error: { key: 'hub.api.lessonEmpty' } };
     const result = captureLesson(
       this.opts.db,
       { floor, role, text: lessonText, origin: 'user', agentKey: null, now: this.now() },
@@ -570,8 +570,8 @@ export class Office {
       this.emit({ type: 'memory', floor, role });
       return { ok: true, lesson: result.lesson };
     }
-    if (result.status === 'duplicate') return { ok: false, status: 409, error: 'Esa lección ya está guardada' };
-    return { ok: false, status: 400, error: 'No se pudo guardar la lección' };
+    if (result.status === 'duplicate') return { ok: false, status: 409, error: { key: 'hub.api.lessonDuplicate' } };
+    return { ok: false, status: 400, error: { key: 'hub.api.lessonSaveFailed' } };
   }
 
   removeLesson(id: number): boolean {

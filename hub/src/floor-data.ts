@@ -1,8 +1,12 @@
 import type { Database } from 'bun:sqlite';
+import type { HubText } from './types';
 
 export class FloorInUseError extends Error {
+  readonly text: HubText;
+
   constructor(slug: string, sessions: readonly string[]) {
     super(`Cierra la sesión lead-${slug} (y su equipo) antes de borrar la planta. Sesiones abiertas: ${sessions.join(', ')}.`);
+    this.text = { key: 'hub.floors.inUse', params: { slug, sessions: sessions.join(', ') } };
   }
 }
 

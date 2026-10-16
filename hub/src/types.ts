@@ -466,15 +466,15 @@ export type SettingsUpdate = {
   permissionModes?: Record<string, PermissionMode>;
 };
 
-export type SettingsResult = { ok: true; regenerated: number; note: string } | { ok: false; error: string };
+export type SettingsResult = { ok: true; regenerated: number; note: HubText[] } | { ok: false; error: HubText[] };
 
 export type FloorAddRequest = { path: string; slug?: string };
 
 export type FloorErrorStatus = 400 | 404 | 409 | 500;
 
-export type FloorFailure = { ok: false; status: FloorErrorStatus; error: string };
+export type FloorFailure = { ok: false; status: FloorErrorStatus; error: HubText };
 
-export type FloorAddResult = { ok: true; slug: string; path: string; stack: Stack; startCommand: string; note: string } | FloorFailure;
+export type FloorAddResult = { ok: true; slug: string; path: string; stack: Stack; startCommand: string; note: HubText } | FloorFailure;
 
 export type FloorRemoveResult = { ok: true; slug: string; removed: { files: number; rows: number; worktrees: number } } | FloorFailure;
 

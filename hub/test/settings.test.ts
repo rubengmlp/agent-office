@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { agentPath } from '../src/agents';
 import { DEFAULT_ROLES, PROFILES_DIR, loadConfig, saveConfig } from '../src/config';
@@ -7,7 +7,7 @@ import { planFloor, writeFloor } from '../src/floor-cli';
 import { loadProfiles } from '../src/profiles';
 import { applySettings, createSettings, settingsView } from '../src/settings';
 import type { OfficeConfig } from '../src/types';
-import { fakePaths, floor, makeRepo, tempDir, testConfig, useGitIdentity } from './helpers';
+import { fakePaths, floor, keyOf, makeRepo, tempDir, testConfig, useGitIdentity } from './helpers';
 
 useGitIdentity();
 const profiles = loadProfiles(PROFILES_DIR);
@@ -22,7 +22,7 @@ describe('settings', () => {
       memory: { maxContextChars: 2000 },
       floors: { mobile: { baseBranch: 'main' } },
     });
-    if ('error' in result) throw new Error(result.error);
+    if ('error' in result) throw new Error(JSON.stringify(result.error));
     expect(result.changed).toBe(true);
     expect(result.config.roles.dev).toEqual({ model: 'haiku', effort: DEFAULT_ROLES.dev.effort });
     expect(result.config.roles['revisor-planes']).toEqual({ model: DEFAULT_ROLES['revisor-planes'].model, effort: 'max' });
@@ -45,10 +45,17 @@ describe('settings', () => {
       floors: { mobile: { baseBranch: '../main' }, nada: { baseBranch: 'main' } },
     });
     expect('error' in result).toBe(true);
-    const error = 'error' in result ? result.error : '';
-    for (const part of ['Modelo no válido para dev', 'Esfuerzo no válido para tester', 'Rol desconocido: jefe', 'departments.redaccion', 'maxRounds', 'maxLessons', 'rama base de mobile', 'No hay ninguna planta "nada"']) {
-      expect(error).toContain(part);
-    }
+    const error = 'error' in result ? result.error : [];
+    expect(error.map(keyOf)).toEqual([
+      'hub.settings.badModel',
+      'hub.settings.badEffort',
+      'hub.settings.unknownRole',
+      'hub.settings.badDepartment',
+      'hub.settings.badRange',
+      'hub.settings.badRange',
+      'hub.settings.badBranch',
+      'hub.settings.noFloor',
+    ]);
   });
 
   test('the view lists roles, departments, limits and floors with their base branch', () => {
@@ -70,7 +77,7 @@ describe('settings', () => {
     const settings = createSettings(p, () => profiles, (config) => saved.push(config));
     expect(settings.view().departments).toEqual({ redaccion: false, mantenimiento: false });
     const result = settings.update({ roles: { dev: { model: 'haiku', effort: 'low' } }, departments: { mantenimiento: true } });
-    expect(result).toMatchObject({ ok: true, regenerated: 3 + 2 + 3 });
+    expect(result).toMatchObject({ ok: true, regenerated: 3 + 2 + 3, note: [{ key: 'hub.settings.saved' }] });
     expect(readFileSync(agentPath(p, 'office-dev-mobile'), 'utf8')).toContain('model: haiku\neffort: low');
     expect(existsSync(agentPath(p, 'office-artesano'))).toBe(true);
     expect(existsSync(agentPath(p, 'office-redactor'))).toBe(false);
@@ -80,9 +87,19 @@ describe('settings', () => {
     expect(loadConfig(p).roles.dev).toEqual({ model: 'haiku', effort: 'low' });
     expect(saved).toHaveLength(1);
     expect(readFileSync(join(p.sessionsDir, 'lead-mantenimiento.sh'), 'utf8')).toContain('/health');
-    expect(settings.update({ roles: { dev: { model: 'haiku' } } })).toMatchObject({ ok: true, regenerated: 0 });
+    expect(settings.update({ roles: { dev: { model: 'haiku' } } })).toMatchObject({ ok: true, regenerated: 0, note: [{ key: 'hub.settings.noChanges' }] });
     expect(settings.update({ review: { maxRounds: 50 } })).toMatchObject({ ok: false });
     expect(saved).toHaveLength(1);
+
+    const repo = loadConfig(p).floors.mobile!.path;
+    rmSync(repo, { recursive: true, force: true });
+    const partial = settings.update({ roles: { dev: { effort: 'high' } } });
+    expect(partial).toMatchObject({ ok: true });
+    expect(partial.ok && partial.note).toContainEqual({
+      key: 'hub.settings.regenerateFailed',
+      params: { slug: 'mobile', error: { key: 'hub.floors.missing', params: { path: repo } } },
+    });
+    expect(saved).toHaveLength(2);
     cleanup();
   });
 });

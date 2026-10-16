@@ -15,7 +15,7 @@ import { DEFAULT_BASE_BRANCH, PROFILES_DIR, REPO_ROOT, TEMPLATES_DIR, expandHome
 import { RESERVED_SLUGS, realPath, slugify } from './floors';
 import { writeOfficeScripts } from './office-sh';
 import { detectStack, loadProfiles, profileFor, type CompiledProfile, type Profiles } from './profiles';
-import type { Stack } from './types';
+import type { HubText, Stack } from './types';
 
 export { expandHome };
 export { render, skillLine } from './agents';
@@ -23,7 +23,15 @@ export { render, skillLine } from './agents';
 export const ROLES = FLOOR_ROLES;
 export type Role = FloorRole;
 
-export class FloorError extends Error {}
+// message is for the terminal (Spanish); text, when there is one, is what the panel translates.
+export class FloorError extends Error {
+  constructor(
+    message: string,
+    readonly text?: HubText,
+  ) {
+    super(message);
+  }
+}
 
 export type FloorConflict = 'name' | 'path' | 'managed';
 
@@ -31,8 +39,9 @@ export class FloorConflictError extends FloorError {
   constructor(
     message: string,
     readonly conflict: FloorConflict,
+    text?: HubText,
   ) {
-    super(message);
+    super(message, text);
   }
 }
 
@@ -45,7 +54,7 @@ export type FloorPlan = {
   existing: string[];
 };
 
-export type RegenerateResult = { slug: string; error?: string };
+export type RegenerateResult = { slug: string; error?: string; text?: HubText };
 
 export function agentFile(p: Paths, role: Role, slug: string): string {
   return agentPath(p, floorAgentName(role, slug));
@@ -67,9 +76,9 @@ export function detectBaseBranch(dir: string): string {
 
 export function checkSlug(slug: string): string {
   if (!/^[a-z0-9][a-z0-9-]*$/.test(slug)) {
-    throw new FloorError(`"${slug}" no vale como nombre de planta: usa minúsculas, números y guiones.`);
+    throw new FloorError(`"${slug}" no vale como nombre de planta: usa minúsculas, números y guiones.`, { key: 'hub.floors.slugInvalid', params: { slug } });
   }
-  if (RESERVED_SLUGS.includes(slug)) throw new FloorError(`"${slug}" es un nombre reservado.`);
+  if (RESERVED_SLUGS.includes(slug)) throw new FloorError(`"${slug}" es un nombre reservado.`, { key: 'hub.floors.slugReserved', params: { slug } });
   return slug;
 }
 
@@ -79,9 +88,9 @@ function resolveDir(target: string): string {
   try {
     real = realpathSync(abs);
   } catch {
-    throw new FloorError(`No existe ${abs}`);
+    throw new FloorError(`No existe ${abs}`, { key: 'hub.floors.missing', params: { path: abs } });
   }
-  if (!statSync(real).isDirectory()) throw new FloorError(`${real} no es una carpeta`);
+  if (!statSync(real).isDirectory()) throw new FloorError(`${real} no es una carpeta`, { key: 'hub.floors.notDir', params: { path: real } });
   return real;
 }
 
@@ -96,16 +105,19 @@ export function planFloor(
   if (path === realPath(REPO_ROOT)) {
     throw new FloorError(
       `${path} es la copia de la que corre la oficina y no puede ser una planta. Trabaja en un clon: git clone ${path} ${path}-dev y añade ese clon.`,
+      { key: 'hub.floors.liveCopy', params: { path } },
     );
   }
   const slug = checkSlug(slugOverride ?? slugify(basename(path)));
   const config = loadConfig(p);
   const taken = config.floors[slug];
   if (taken && realPath(taken.path) !== path) {
-    throw new FloorConflictError(`El nombre "${slug}" ya es la planta de ${taken.path}.`, 'name');
+    throw new FloorConflictError(`El nombre "${slug}" ya es la planta de ${taken.path}.`, 'name', { key: 'hub.floors.slugTaken', params: { slug, path: taken.path } });
   }
   for (const [other, floor] of Object.entries(config.floors)) {
-    if (other !== slug && realPath(floor.path) === path) throw new FloorConflictError(`${path} ya es la planta "${other}".`, 'path');
+    if (other !== slug && realPath(floor.path) === path) {
+      throw new FloorConflictError(`${path} ya es la planta "${other}".`, 'path', { key: 'hub.floors.pathTaken', params: { path, other } });
+    }
   }
   const stack = detectStack(path);
   const profile = profileFor(profiles, stack);
@@ -144,11 +156,11 @@ export function regenerateAgents(
   for (const [slug, floor] of Object.entries(config.floors)) {
     if (!floor.managed) continue;
     try {
-      if (!existsSync(floor.path)) throw new FloorError(`No existe ${floor.path}`);
+      if (!existsSync(floor.path)) throw new FloorError(`No existe ${floor.path}`, { key: 'hub.floors.missing', params: { path: floor.path } });
       files += writeAgentDocs(p, floorAgentDocs(p, config, profiles, slug, floor, templatesDir));
       floors.push({ slug });
     } catch (error) {
-      floors.push({ slug, error: (error as Error).message });
+      floors.push({ slug, error: (error as Error).message, text: error instanceof FloorError ? error.text : undefined });
     }
   }
   files += writeFixedAgents(p, config, profiles, templatesDir);
@@ -175,7 +187,7 @@ export function deleteFloorAgents(p: Paths, slug: string): string[] {
 export function removeFloor(p: Paths, profiles: Profiles, slug: string): string[] {
   const config = loadConfig(p);
   const floor = config.floors[slug];
-  if (!floor) throw new FloorError(`No hay ninguna planta "${slug}".`);
+  if (!floor) throw new FloorError(`No hay ninguna planta "${slug}".`, { key: 'hub.floors.notFound', params: { slug } });
   const removed = deleteFloorAgents(p, slug);
   config.floors[slug] = { ...floor, managed: false };
   saveConfig(p, config);
@@ -187,7 +199,7 @@ export function removeFloor(p: Paths, profiles: Profiles, slug: string): string[
 export function purgeFloor(p: Paths, profiles: Profiles, slug: string): string[] {
   checkSlug(slug);
   const config = loadConfig(p);
-  if (!config.floors[slug]) throw new FloorError(`No hay ninguna planta "${slug}".`);
+  if (!config.floors[slug]) throw new FloorError(`No hay ninguna planta "${slug}".`, { key: 'hub.floors.notFound', params: { slug } });
   const removed = deleteFloorAgents(p, slug);
   delete config.floors[slug];
   delete config.permissionModes[slug];

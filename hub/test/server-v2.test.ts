@@ -31,7 +31,9 @@ describe('hub server v2 routes', () => {
     view: () => settingsView(h.config),
     update: (raw) => {
       updates.push(raw);
-      return raw && typeof raw === 'object' && 'roles' in raw ? { ok: true, regenerated: 11, note: 'Guardado.' } : { ok: false, error: 'Nada que guardar' };
+      return raw && typeof raw === 'object' && 'roles' in raw
+        ? { ok: true, regenerated: 11, note: [{ key: 'hub.settings.saved' }] }
+        : { ok: false, error: [{ key: 'hub.settings.noChanges' }] };
     },
   };
   const floorCalls: unknown[] = [];
@@ -39,12 +41,12 @@ describe('hub server v2 routes', () => {
     add: (raw) => {
       floorCalls.push(raw);
       return raw && typeof raw === 'object' && 'path' in raw
-        ? { ok: true, slug: 'web', path: '/tmp/web', stack: 'node', startCommand: 'claude', note: 'Planta web gestionada.' }
-        : { ok: false, status: 400, error: 'Indica la ruta del repositorio.' };
+        ? { ok: true, slug: 'web', path: '/tmp/web', stack: 'node', startCommand: 'claude', note: { key: 'hub.floors.added', params: { slug: 'web', startCommand: 'claude' } } }
+        : { ok: false, status: 400, error: { key: 'hub.floors.pathRequired' } };
     },
     remove: async (slug) => {
       floorCalls.push(slug);
-      return { ok: false, status: 404, error: `No hay ninguna planta "${slug}".` };
+      return { ok: false, status: 404, error: { key: 'hub.floors.notFound', params: { slug } } };
     },
   };
   let base = '';
@@ -114,7 +116,7 @@ describe('hub server v2 routes', () => {
     expect(view.departments.redaccion).toBe(true);
     const saved = await call('POST', '/api/settings', { roles: { dev: { model: 'haiku' } } });
     expect(saved.status).toBe(200);
-    expect(await saved.json()).toEqual({ ok: true, regenerated: 11, note: 'Guardado.' });
+    expect(await saved.json()).toEqual({ ok: true, regenerated: 11, note: [{ key: 'hub.settings.saved' }] });
     const refused = await call('POST', '/api/settings', { nada: true });
     expect(refused.status).toBe(400);
     expect(updates).toHaveLength(2);
@@ -126,7 +128,7 @@ describe('hub server v2 routes', () => {
     expect(await created.json()).toMatchObject({ ok: true, slug: 'web' });
     const refused = await call('POST', '/api/floors', {});
     expect(refused.status).toBe(400);
-    expect(await refused.json()).toMatchObject({ ok: false, error: 'Indica la ruta del repositorio.' });
+    expect(await refused.json()).toMatchObject({ ok: false, error: { key: 'hub.floors.pathRequired' } });
     const missing = await call('DELETE', '/api/floors/x');
     expect(missing.status).toBe(404);
     expect(floorCalls).toEqual([{ path: '/tmp/web' }, {}, 'x']);
@@ -149,7 +151,9 @@ describe('hub server v2 routes', () => {
   });
 
   test('reports, documents and sources answer with clear errors', async () => {
-    expect((await call('GET', '/api/reports/nadie')).status).toBe(404);
+    const missing = await call('GET', '/api/reports/nadie');
+    expect(missing.status).toBe(404);
+    expect(((await missing.json()) as { error: unknown }).error).toEqual({ key: 'hub.api.noReport' });
     const live = await call('GET', '/api/reports/lead-1');
     expect(((await live.json()) as { agentKey: string }).agentKey).toBe('lead-1');
     expect(await (await call('GET', '/api/documents')).json()).toEqual([]);
