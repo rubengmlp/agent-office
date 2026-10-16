@@ -140,6 +140,8 @@ La v1 se probó el 2026-10-15, con Claude Code 2.1.292, en una planta de pruebas
 
 ## Desarrollo
 
+Para que la oficina trabaje sobre su propio código, sigue [CLAUDE.md](CLAUDE.md). El trabajo se hace en un clon, nunca en la copia de la que corre la oficina, y sin los comandos que administran la oficina real. `.claude/settings.json` deniega esos comandos en Claude Code dentro de este repositorio, también en tus propias sesiones: arranca la oficina desde tu terminal.
+
 ```sh
 bun run test                         # tests del hub
 bun run typecheck                    # hub y ui

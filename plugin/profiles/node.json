@@ -2,6 +2,6 @@
   "label": "Node",
   "skill": null,
   "testRegex": "\\b(vitest|jest)\\b|\\b(npm|pnpm|yarn|bun)\\s+(run\\s+)?test\\b",
-  "checkRegex": "\\beslint\\b|\\bprettier\\s+--check\\b|\\btsc\\b",
-  "testCommand": "npx vitest run <spec>"
+  "checkRegex": "\\beslint\\b|\\bprettier\\s+--check\\b|\\btsc\\b|\\b(npm|pnpm|yarn|bun)\\s+run\\s+(typecheck|lint)\\b",
+  "testCommand": "el script test de package.json (npm test) o, si no lo hay, npx vitest run <spec>"
 }

@@ -53,6 +53,26 @@ describe('floor CLI', () => {
     expect(dev).toContain('php artisan test --filter=<Clase>');
   });
 
+  test('a Node floor takes its test command from the package.json scripts and its lockfile', () => {
+    const bun = makeRepo(ctx.dir, 'office-dev', {
+      'package.json': JSON.stringify({ scripts: { test: 'cd hub && bun test', typecheck: 'tsc --noEmit' } }),
+      'bun.lock': '',
+    });
+    writeFloor(p, profiles, planFloor(p, profiles, bun));
+    const tester = readFileSync(agentFile(p, 'tester', 'office-dev'), 'utf8');
+    expect(tester).toContain('bun run test (el script test de package.json');
+    expect(tester).toContain('bun run typecheck si cambió código TypeScript');
+    expect(tester).not.toContain('vitest');
+
+    const npm = makeRepo(ctx.dir, 'web', { 'package.json': JSON.stringify({ scripts: { test: 'vitest run' } }) });
+    writeFloor(p, profiles, planFloor(p, profiles, npm));
+    expect(readFileSync(agentFile(p, 'lead', 'web'), 'utf8')).toContain('El comando de tests de esta planta es: npm test (el script test');
+
+    const bare = makeRepo(ctx.dir, 'scripts-node', { 'package.json': '{}' });
+    writeFloor(p, profiles, planFloor(p, profiles, bare));
+    expect(readFileSync(agentFile(p, 'tester', 'scripts-node'), 'utf8')).toContain('npx vitest run <spec>');
+  });
+
   test('a repository without a profile skill says so', () => {
     const repo = makeRepo(ctx.dir, 'scripts');
     writeFloor(p, profiles, planFloor(p, profiles, repo));

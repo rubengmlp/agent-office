@@ -51,6 +51,33 @@ export function profileFor(profiles: Profiles, stack: Stack): CompiledProfile {
   return profiles.get(stack) ?? profiles.get('generic') ?? compileProfile('generic', FALLBACK);
 }
 
+function packageScripts(dir: string): Record<string, unknown> | null {
+  try {
+    const raw: unknown = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
+    const scripts = raw && typeof raw === 'object' ? (raw as Record<string, unknown>).scripts : null;
+    return scripts && typeof scripts === 'object' ? (scripts as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+function packageRunner(dir: string): 'bun' | 'pnpm' | 'yarn' | 'npm' {
+  if (existsSync(join(dir, 'bun.lock')) || existsSync(join(dir, 'bun.lockb'))) return 'bun';
+  if (existsSync(join(dir, 'pnpm-lock.yaml'))) return 'pnpm';
+  if (existsSync(join(dir, 'yarn.lock'))) return 'yarn';
+  return 'npm';
+}
+
+export function testCommandFor(dir: string, profile: CompiledProfile): string {
+  if (profile.stack !== 'node') return profile.testCommand;
+  const scripts = packageScripts(dir);
+  if (!scripts || typeof scripts.test !== 'string') return profile.testCommand;
+  const runner = packageRunner(dir);
+  const run = (name: string) => (runner === 'npm' && name === 'test' ? 'npm test' : `${runner} run ${name}`);
+  const typecheck = typeof scripts.typecheck === 'string' ? `, y ${run('typecheck')} si cambió código TypeScript` : '';
+  return `${run('test')} (el script test de package.json; añade la ruta o el filtro de lo que cambió si el script lo admite)${typecheck}`;
+}
+
 export function detectStack(dir: string): Stack {
   if (existsSync(join(dir, 'pubspec.yaml'))) return 'flutter';
   if (existsSync(join(dir, 'composer.json')) && existsSync(join(dir, 'artisan'))) return 'laravel';

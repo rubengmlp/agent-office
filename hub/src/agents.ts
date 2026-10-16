@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { SCRIPTS_DIR, TEMPLATES_DIR, docsRepoPath, writeAtomic, type Paths } from './config';
-import { profileFor, type CompiledProfile, type Profiles } from './profiles';
+import { profileFor, testCommandFor, type CompiledProfile, type Profiles } from './profiles';
 import type { FloorConfig, OfficeConfig, RoleId } from './types';
 
 export class TemplateError extends Error {}
@@ -104,7 +104,7 @@ export function floorAgentDocs(
       slug,
       path: floor.path,
       label: profile.label,
-      testCommand: profile.testCommand,
+      testCommand: testCommandFor(floor.path, profile),
       skillLine: skillLine(profile),
     };
     const content = render(readTemplate(templatesDir, role), vars);
