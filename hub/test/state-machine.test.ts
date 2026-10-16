@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { PROFILES_DIR } from '../src/config';
+import { loadProfiles, profileFor } from '../src/profiles';
 import { classify, type Matchers } from '../src/state-machine';
 import type { HookEvent } from '../src/types';
 import { loadFixture } from './helpers';
@@ -183,5 +185,81 @@ describe('synthetic events from the docs', () => {
     expect(classify({ ...base, hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'Claude needs your permission' }, flutter).state).toBe('asking');
     expect(classify({ ...base, hook_event_name: 'Notification', notification_type: 'idle_prompt' }, flutter).state).toBe('idle');
     expect(classify({ ...base, hook_event_name: 'Notification', notification_type: 'auth_success' }, flutter).state).toBeNull();
+  });
+});
+
+describe('test verdict by result', () => {
+  const generic: Matchers = profileFor(loadProfiles(PROFILES_DIR), 'generic');
+  const run = (
+    hook: 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure',
+    command: string,
+    toolResponse: Record<string, unknown> = { stdout: '', stderr: '', interrupted: false },
+    extra: Partial<HookEvent> = {},
+  ): HookEvent => ({
+    session_id: 's-1',
+    cwd: '/repo',
+    hook_event_name: hook,
+    tool_name: 'Bash',
+    tool_use_id: 'b1',
+    tool_input: { command },
+    ...(hook === 'PostToolUse' ? { tool_response: toolResponse } : {}),
+    ...extra,
+  });
+
+  test('a command that only names test does not count', () => {
+    expect(classify(run('PostToolUse', 'ls test/'), generic).test).toBeNull();
+    expect(classify(run('PostToolUse', 'git commit -m "add test"'), generic).test).toBeNull();
+    expect(classify(run('PostToolUse', 'bun test'), generic).test).toBe('pass');
+  });
+
+  test('a command that cannot go red does not count', () => {
+    for (const command of ['bun test || true', 'bun test || :', 'bun test; true']) {
+      expect(classify(run('PostToolUse', command), generic).test).toBeNull();
+    }
+    expect(classify(run('PreToolUse', 'bun test || true'), generic).state).not.toBe('testing');
+    expect(classify(run('PostToolUseFailure', 'bun test || exit 0', {}, { error: 'Exit code 1', is_interrupt: false }), generic).test).toBeNull();
+  });
+
+  test('the bun summary in red', () => {
+    const c = classify(run('PostToolUse', 'bun test', { stdout: '', stderr: ' 3 pass\n 1 fail\n', interrupted: false }), generic);
+    expect(c.test).toBe('fail');
+    expect(c.summary).toEqual({ key: 'hub.act.testsRed', params: { command: 'bun test' } });
+  });
+
+  test('a non-zero exit code is red', () => {
+    expect(classify(run('PostToolUse', 'bun test', { exit_code: 1, stdout: '', stderr: '' }), generic).test).toBe('fail');
+  });
+
+  test('green with misleading test names', () => {
+    const stderr = '(pass) puerta > Some tests failed en el nombre\n(pass) puerta > 2 failures en el nombre\n 4 pass\n 0 fail\n';
+    expect(classify(run('PostToolUse', 'bun test', { exit_code: 0, interrupted: false, stdout: '', stderr }), generic).test).toBe('pass');
+  });
+
+  test('other runners report red in their summary line', () => {
+    const red = (command: string, stdout: string) => classify(run('PostToolUse', command, { stdout, stderr: '', interrupted: false }), generic).test;
+    expect(red('npx jest', 'Tests:       1 failed, 2 passed, 3 total\n')).toBe('fail');
+    expect(red('pytest -q', '===== 1 failed, 3 passed in 0.2s =====\n')).toBe('fail');
+    expect(red('go test ./...', '--- FAIL: TestX (0.00s)\nFAIL\tpkg 0.1s\n')).toBe('fail');
+    expect(red('vendor/bin/phpunit', 'FAILURES!\nTests: 3, Assertions: 4, Failures: 1.\n')).toBe('fail');
+    expect(red('pytest -q', '===== 3 passed in 0.2s =====\n')).toBe('pass');
+  });
+
+  test('an interrupted run is no result', () => {
+    expect(classify(run('PostToolUse', 'bun test', { interrupted: true, stdout: '', stderr: '' }), generic).test).toBeNull();
+  });
+
+  test('a background run is no result', () => {
+    const background = { tool_input: { command: 'bun test', run_in_background: true } };
+    expect(classify(run('PostToolUse', 'bun test', { stdout: '', stderr: '', interrupted: false }, background), generic).test).toBeNull();
+    expect(classify(run('PostToolUseFailure', 'bun test', {}, { ...background, error: 'Exit code 1', is_interrupt: false }), generic).test).toBeNull();
+  });
+
+  test('flutter with || true does not count', () => {
+    expect(classify(run('PostToolUse', 'flutter test || true'), flutter).test).toBeNull();
+  });
+
+  test('the flutter summary in red', () => {
+    const c = classify(run('PostToolUse', 'flutter test', { stdout: '', stderr: '00:02 +3 -1: Some tests failed.\n', interrupted: false }), flutter);
+    expect(c.test).toBe('fail');
   });
 });

@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PROFILES_DIR } from '../src/config';
+import { ensureDocsRepo } from '../src/docs-repo';
 import { realPath } from '../src/floors';
+import { runGit, type GitRunner } from '../src/git';
 import { Office } from '../src/office';
 import { loadProfiles } from '../src/profiles';
-import type { AgentView, HookMeta } from '../src/types';
-import { ev, floor, harness, loadFixture, type Harness } from './helpers';
+import type { AgentView, HookMeta, Stack } from '../src/types';
+import { ev, floor, git, harness, loadFixture, useGitIdentity, type Harness } from './helpers';
 
 const LEAD = '22222222-bbbb-4ccc-8ddd-000000000002';
 const TEAM = 'session-22222222';
@@ -17,16 +19,49 @@ afterEach(() => h?.cleanup());
 
 const agent = (key: string): AgentView | undefined => h.office.snapshot().agents.find((a) => a.key === key);
 
-function managedRepo(name = 'mobile'): string {
+function managedRepo(name = 'mobile', stack: Stack = 'flutter'): string {
   const repo = join(h.root, name);
   mkdirSync(repo, { recursive: true });
-  h.config.floors[name] = floor(repo);
+  h.config.floors[name] = floor(repo, true, stack);
   return repo;
 }
 
 function observedRepo(name = 'kapper'): string {
   const repo = join(h.root, name);
   mkdirSync(repo, { recursive: true });
+  return repo;
+}
+
+function team(stack: Stack = 'flutter'): string {
+  h = harness();
+  const repo = managedRepo('mobile', stack);
+  h.office.ingest(ev(LEAD, repo, 'SessionStart', { source: 'startup' }), leadMeta);
+  h.office.ingest(
+    ev(LEAD, repo, 'PreToolUse', {
+      tool_name: 'Agent',
+      tool_use_id: 'call-dev',
+      tool_input: { name: 'dev-mobile', subagent_type: 'office-dev-mobile', description: 'pantalla de viajes', prompt: '...' },
+    }),
+  );
+  h.office.ingest(ev(LEAD, repo, 'PostToolUse', { tool_name: 'Agent', tool_use_id: 'call-dev', tool_input: {}, tool_response: { agentId: 'dev-1' } }));
+  return repo;
+}
+
+const done = (repo: string, extra: Record<string, unknown> = {}) =>
+  ev(LEAD, repo, 'PreToolUse', {
+    agent_type: 'office-lead-mobile',
+    tool_name: 'SendMessage',
+    tool_input: { to: 'director', message: 'HECHO: pantalla de viajes — validado por tester-mobile — pendiente: nada' },
+    ...extra,
+  });
+
+function teamWithEdit(): string {
+  h = harness();
+  const repo = managedRepo();
+  h.office.ingest(ev(LEAD, repo, 'SessionStart', { agent_type: 'office-lead-mobile' }), leadMeta);
+  h.office.ingest(
+    ev(LEAD, repo, 'PostToolUse', { agent_id: 'adev-1', agent_type: 'office-dev-mobile', tool_name: 'Write', tool_input: { file_path: join(repo, 'lib', 'a.dart') } }),
+  );
   return repo;
 }
 
@@ -144,20 +179,6 @@ describe('blocked agents', () => {
 });
 
 describe('test gate', () => {
-  function team() {
-    h = harness();
-    const repo = managedRepo();
-    h.office.ingest(ev(LEAD, repo, 'SessionStart', { source: 'startup' }), leadMeta);
-    h.office.ingest(
-      ev(LEAD, repo, 'PreToolUse', {
-        tool_name: 'Agent',
-        tool_use_id: 'call-dev',
-        tool_input: { name: 'dev-mobile', subagent_type: 'office-dev-mobile', description: 'pantalla de viajes', prompt: '...' },
-      }),
-    );
-    h.office.ingest(ev(LEAD, repo, 'PostToolUse', { tool_name: 'Agent', tool_use_id: 'call-dev', tool_input: {}, tool_response: { agentId: 'dev-1' } }));
-    return repo;
-  }
   const edit = (repo: string) =>
     h.office.ingest(
       ev(LEAD, repo, 'PostToolUse', { agent_id: 'dev-1', agent_type: 'office-dev-mobile', tool_name: 'Edit', tool_input: { file_path: join(repo, 'lib', 'trips.dart') } }),
@@ -446,23 +467,6 @@ describe('real agent team capture', () => {
 });
 
 describe('completion gate on HECHO messages', () => {
-  const done = (repo: string, extra: Record<string, unknown> = {}) =>
-    ev(LEAD, repo, 'PreToolUse', {
-      agent_type: 'office-lead-mobile',
-      tool_name: 'SendMessage',
-      tool_input: { to: 'director', message: 'HECHO: pantalla de viajes — validado por tester-mobile — pendiente: nada' },
-      ...extra,
-    });
-
-  function teamWithEdit(): string {
-    h = harness();
-    const repo = managedRepo();
-    h.office.ingest(ev(LEAD, repo, 'SessionStart', { agent_type: 'office-lead-mobile' }), leadMeta);
-    h.office.ingest(
-      ev(LEAD, repo, 'PostToolUse', { agent_id: 'adev-1', agent_type: 'office-dev-mobile', tool_name: 'Write', tool_input: { file_path: join(repo, 'lib', 'a.dart') } }),
-    );
-    return repo;
-  }
 
   test('blocks the lead report while the change has no green tester run, then lets it through', () => {
     const repo = teamWithEdit();
@@ -494,6 +498,260 @@ describe('completion gate on HECHO messages', () => {
     const repo = managedRepo();
     h.office.ingest(ev(LEAD, repo, 'SessionStart', { agent_type: 'office-lead-mobile' }), leadMeta);
     expect(h.office.gateMessage(done(repo)).pass).toBe(true);
+  });
+});
+
+describe('test gate on real changes', () => {
+  const CLEAN = { stdout: '', stderr: '', interrupted: false };
+  const DEV = { agent_id: 'dev-1', agent_type: 'office-dev-mobile' };
+  const TESTER = { agent_id: 'tester-1', agent_type: 'office-tester-mobile' };
+  const edits = (agentKey?: string) =>
+    (agentKey
+      ? h.db.query<{ path: string }, [string]>('SELECT path FROM edits WHERE agent_key = ?').all(agentKey)
+      : h.db.query<{ path: string }, []>('SELECT path FROM edits').all()
+    ).map((row) => row.path);
+
+  function bash(repo: string, who: Record<string, string>, id: string, command: string, between: () => void = () => {}, failed = false): void {
+    h.office.ingest(ev(LEAD, repo, 'PreToolUse', { ...who, tool_name: 'Bash', tool_use_id: id, tool_input: { command } }));
+    between();
+    h.office.ingest(
+      ev(LEAD, repo, failed ? 'PostToolUseFailure' : 'PostToolUse', {
+        ...who,
+        tool_name: 'Bash',
+        tool_use_id: id,
+        tool_input: { command },
+        ...(failed ? { error: 'Exit code 1', is_interrupt: false } : { tool_response: CLEAN }),
+      }),
+    );
+  }
+
+  const testerRun = (repo: string, command: string) =>
+    h.office.ingest(ev(LEAD, repo, 'PostToolUse', { ...TESTER, tool_name: 'Bash', tool_input: { command }, tool_response: CLEAN }));
+
+  function sedTeam(): { repo: string; file: string } {
+    const repo = team('generic');
+    mkdirSync(join(repo, 'lib'), { recursive: true });
+    const file = join(repo, 'lib', 'trips.dart');
+    writeFileSync(file, 'a');
+    return { repo, file };
+  }
+
+  function gitTeam(extra: { git?: GitRunner } = {}): string {
+    useGitIdentity();
+    h = harness(extra);
+    const dir = join(h.root, 'mobile');
+    mkdirSync(join(dir, 'lib'), { recursive: true });
+    git(dir, 'init', '-q');
+    writeFileSync(join(dir, '.gitignore'), 'build/\n');
+    writeFileSync(join(dir, 'lib', 'a.dart'), 'a');
+    git(dir, 'add', '.');
+    git(dir, 'commit', '-q', '-m', 'inicio');
+    const repo = realPath(dir);
+    h.config.floors.mobile = floor(repo);
+    h.office.ingest(ev(LEAD, repo, 'SessionStart', { source: 'startup' }), leadMeta);
+    return repo;
+  }
+
+  const devStarts = (repo: string) => h.office.ingest(ev(LEAD, repo, 'SubagentStart', DEV));
+  const devIdle = (repo: string) => h.office.ingest(ev(LEAD, repo, 'TeammateIdle', { ...DEV, teammate_name: 'dev-mobile', team_name: TEAM }));
+
+  test('sed through Bash counts as a change', () => {
+    const { repo, file } = sedTeam();
+    bash(repo, DEV, 'b1', "sed -i '' 's/a/b/' lib/trips.dart", () => writeFileSync(file, 'bb'));
+    const blocked = h.office.gateMessage(done(repo));
+    expect(blocked.pass).toBe(false);
+    expect(blocked.reason).toContain('Falta tester');
+    expect(blocked.reason).toContain('lib/trips.dart');
+    expect(edits().some((path) => path.includes('s/a/b/'))).toBe(false);
+    h.clock.advance(1000);
+    testerRun(repo, 'bun test test/trips_test.dart');
+    expect(h.office.gateMessage(done(repo)).pass).toBe(true);
+  });
+
+  test('TaskCompleted with the same change', () => {
+    const { repo, file } = sedTeam();
+    bash(repo, DEV, 'b1', "sed -i '' 's/a/b/' lib/trips.dart", () => writeFileSync(file, 'bb'));
+    const close = () => h.office.gate(ev(LEAD, repo, 'TaskCompleted', { task_id: '1', task_subject: 'Pantalla de viajes', team_name: TEAM, teammate_name: 'dev-mobile' }));
+    const blocked = close();
+    expect(blocked.pass).toBe(false);
+    expect(blocked.reason).toContain('lib/trips.dart');
+    h.clock.advance(1000);
+    testerRun(repo, 'bun test test/trips_test.dart');
+    expect(close().pass).toBe(true);
+  });
+
+  test('a Bash that exits red at the end also wrote', () => {
+    const { repo, file } = sedTeam();
+    bash(repo, DEV, 'b1', "sed -i '' 's/a/b/' lib/trips.dart && dart format lib/", () => writeFileSync(file, 'bb'), true);
+    expect(edits('dev-1')).toEqual([realPath(file)]);
+    expect(h.office.gateMessage(done(repo)).pass).toBe(false);
+  });
+
+  test('a read through Bash does not count', () => {
+    const { repo } = sedTeam();
+    bash(repo, DEV, 'b1', 'python3 tool.py lib/trips.dart');
+    expect(edits()).toEqual([]);
+    expect(h.office.gateMessage(done(repo)).pass).toBe(true);
+  });
+
+  test('the developer own tests do not count', () => {
+    const { repo, file } = sedTeam();
+    bash(repo, DEV, 'b1', "sed -i '' 's/a/b/' lib/trips.dart", () => writeFileSync(file, 'bb'));
+    h.clock.advance(1000);
+    testerRun(repo, 'bun test test/trips_test.dart');
+    h.clock.advance(1000);
+    mkdirSync(join(repo, 'test'), { recursive: true });
+    bash(repo, DEV, 'b2', 'bun test test/x.test.ts', () => writeFileSync(join(repo, 'test', 'x.test.ts'), 'snapshot'));
+    expect(h.office.gateMessage(done(repo)).pass).toBe(true);
+  });
+
+  test('git commit does not count but git stash does', () => {
+    const { repo, file } = sedTeam();
+    bash(repo, DEV, 'b1', "sed -i '' 's/a/b/' lib/trips.dart", () => writeFileSync(file, 'bb'));
+    h.clock.advance(1000);
+    testerRun(repo, 'bun test test/trips_test.dart');
+    h.clock.advance(1000);
+    bash(repo, DEV, 'b2', 'git commit -m "x"');
+    bash(repo, DEV, 'b3', 'git stash list');
+    expect(h.office.gateMessage(done(repo)).pass).toBe(true);
+    bash(repo, DEV, 'b4', 'git stash');
+    const blocked = h.office.gateMessage(done(repo));
+    expect(blocked.pass).toBe(false);
+    expect(blocked.reason).toContain('. (git)');
+  });
+
+  test('a call to the chat script names files without changing them', () => {
+    const { repo } = sedTeam();
+    bash(repo, DEV, 'b1', 'sh ~/.claude/office-chat.sh toca lib/trips.dart', () => writeFileSync(join(repo, 'lib', 'trips.dart'), 'bb'));
+    expect(edits()).toEqual([]);
+  });
+
+  test('the turn fingerprint picks up what Bash does not declare', async () => {
+    const repo = gitTeam();
+    devStarts(repo);
+    await h.office.idle();
+    writeFileSync(join(repo, 'lib', 'a.dart'), 'cambio por un generador');
+    mkdirSync(join(repo, 'build'), { recursive: true });
+    writeFileSync(join(repo, 'build', 'out.txt'), 'ignorado');
+    bash(repo, DEV, 'b1', 'bun run gen');
+    devIdle(repo);
+    await h.office.idle();
+    const blocked = h.office.gateMessage(done(repo));
+    expect(blocked.pass).toBe(false);
+    expect(blocked.reason).toContain('lib/a.dart');
+    expect(blocked.reason).not.toContain('build/out.txt');
+    expect(edits('dev-1')).toContain(join(repo, 'lib', 'a.dart'));
+    expect(edits('dev-1').some((path) => path.includes('build'))).toBe(false);
+    h.clock.advance(1000);
+    testerRun(repo, 'flutter test test/a_test.dart');
+    expect(h.office.gateMessage(done(repo)).pass).toBe(true);
+  });
+
+  test('the direct path respects .gitignore while a turn is watched', async () => {
+    const repo = gitTeam();
+    devStarts(repo);
+    await h.office.idle();
+    mkdirSync(join(repo, 'build'), { recursive: true });
+    bash(repo, DEV, 'b1', 'cp lib/a.dart build/copia.dart', () => writeFileSync(join(repo, 'build', 'copia.dart'), 'copia'));
+    writeFileSync(join(repo, 'build', 'a'), 'a');
+    writeFileSync(join(repo, 'build', 'b'), 'b');
+    bash(repo, DEV, 'b2', 'rm -rf build/a build/b', () => {
+      unlinkSync(join(repo, 'build', 'a'));
+      unlinkSync(join(repo, 'build', 'b'));
+    });
+    expect(edits()).toEqual([]);
+  });
+
+  test('the fingerprint does not blind the guard', async () => {
+    useGitIdentity();
+    h = harness({
+      configure: (config) => {
+        config.departments = { redaccion: true, mantenimiento: false };
+      },
+    });
+    const docs = realPath(join(h.root, 'docs'));
+    ensureDocsRepo(docs);
+    h.office.refreshDocuments();
+    const dir = join(h.root, 'mobile');
+    mkdirSync(join(dir, 'lib'), { recursive: true });
+    git(dir, 'init', '-q');
+    writeFileSync(join(dir, 'lib', 'a.dart'), 'a');
+    git(dir, 'add', '.');
+    git(dir, 'commit', '-q', '-m', 'inicio');
+    const repo = realPath(dir);
+    h.config.floors.mobile = floor(repo);
+    const RED = 'dddddddd-0000-4000-8000-000000000001';
+    const cwd = join(docs, 'redaccion');
+    h.office.ingest(ev(RED, cwd, 'SessionStart', {}), { socket: null, token: null, role: 'office-lead-redaccion', name: 'lead-redaccion' });
+    h.office.ingest(ev(RED, cwd, 'SubagentStart', { agent_id: 'ared-1', agent_type: 'office-redactor' }));
+    await h.office.idle();
+    h.clock.advance(1000);
+    h.office.ingest(ev(LEAD, repo, 'SessionStart', { source: 'startup' }), leadMeta);
+    devStarts(repo);
+    await h.office.idle();
+    writeFileSync(join(repo, 'lib', 'a.dart'), 'cambio que nadie declara');
+    h.clock.advance(1000);
+    devIdle(repo);
+    await h.office.idle();
+    expect(edits('dev-1')).toEqual([join(repo, 'lib', 'a.dart')]);
+    h.clock.advance(1000);
+    h.office.ingest(ev(RED, cwd, 'SubagentStop', { agent_id: 'ared-1', agent_type: 'office-redactor' }));
+    await h.office.idle();
+    const alerts = h.db.query<{ level: string; floor: string; files: string }, []>('SELECT level, floor, files FROM alerts').all();
+    expect(alerts).toEqual([{ level: 'posible', floor: 'mobile', files: JSON.stringify([join(repo, 'lib', 'a.dart')]) }]);
+  });
+
+  test('a commit in the turn does not hide the changes', async () => {
+    const repo = gitTeam();
+    devStarts(repo);
+    await h.office.idle();
+    writeFileSync(join(repo, 'lib', 'a.dart'), 'cambio con commit');
+    git(repo, 'commit', '-qam', 'x');
+    devIdle(repo);
+    await h.office.idle();
+    const blocked = h.office.gateMessage(done(repo));
+    expect(blocked.pass).toBe(false);
+    expect(blocked.reason).toContain('lib/a.dart');
+  });
+
+  test('a commit of what was already tested does not block', async () => {
+    const repo = gitTeam();
+    devStarts(repo);
+    await h.office.idle();
+    writeFileSync(join(repo, 'lib', 'a.dart'), 'cambio ya probado');
+    devIdle(repo);
+    await h.office.idle();
+    h.clock.advance(1000);
+    testerRun(repo, 'flutter test test/a_test.dart');
+    h.clock.advance(1000);
+    devStarts(repo);
+    await h.office.idle();
+    git(repo, 'commit', '-qam', 'x');
+    bash(repo, DEV, 'b1', 'git commit -am x');
+    devIdle(repo);
+    await h.office.idle();
+    expect(h.office.gateMessage(done(repo)).pass).toBe(true);
+  });
+
+  test('a fingerprint in progress closes the gate', async () => {
+    let slow = false;
+    const slowGit: GitRunner = async (cwd, args, timeoutMs) => {
+      if (slow) await Bun.sleep(200);
+      return runGit(cwd, args, timeoutMs);
+    };
+    const repo = gitTeam({ git: slowGit });
+    devStarts(repo);
+    await h.office.idle();
+    writeFileSync(join(repo, 'lib', 'a.dart'), 'cambio aún sin huella');
+    slow = true;
+    devIdle(repo);
+    const pending = h.office.gateMessage(done(repo));
+    expect(pending.pass).toBe(false);
+    expect(pending.reason).toContain('huella');
+    await h.office.idle();
+    const settled = h.office.gateMessage(done(repo));
+    expect(settled.pass).toBe(false);
+    expect(settled.reason).toContain('lib/a.dart');
   });
 });
 

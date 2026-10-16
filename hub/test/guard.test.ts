@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { realPath } from '../src/floors';
-import { runGit } from '../src/git';
+import { runGit, type GitRunner } from '../src/git';
 import { GuardWatch, guardDecision, shellPaths, snapshotRepo, changedFiles, type GuardContext, type GuardFinding } from '../src/guard';
 import { git, tempDir, useGitIdentity } from './helpers';
 
@@ -210,6 +210,99 @@ describe('fingerprint safety net', () => {
     mkdirSync(join(skills, 'pdf'), { recursive: true });
     writeFileSync(join(skills, 'pdf', 'SKILL.md'), '---\nname: pdf\n---\n');
     expect(await w.finish('lead-mant')).toEqual([]);
+    t.cleanup();
+  });
+
+  function counted(delayMs = 0): { git: GitRunner; calls: { cwd: string; args: string[] }[] } {
+    const calls: { cwd: string; args: string[] }[] = [];
+    const git: GitRunner = async (cwd, args, timeoutMs) => {
+      calls.push({ cwd, args });
+      if (delayMs > 0) await Bun.sleep(delayMs);
+      return runGit(cwd, args, timeoutMs);
+    };
+    return { git, calls };
+  }
+
+  function changesWatch(floors: { slug: string; path: string }[], git: GitRunner, headDiff = true) {
+    const findings: GuardFinding[] = [];
+    let clock = 1_000;
+    const w = new GuardWatch({
+      git,
+      headDiff,
+      floors: () => floors,
+      now: () => (clock += 1000),
+      attributed: () => new Set(),
+      active: () => false,
+      exempt: () => [],
+      report: (f) => findings.push(f),
+    });
+    return { w, findings };
+  }
+
+  test('the baseline is narrowed to the requested floors', async () => {
+    const mobile = repo();
+    const other = repo();
+    const { git, calls } = counted();
+    const floors = [{ slug: 'mobile', path: mobile.floor }, { slug: 'otra', path: other.floor }];
+    const { w, findings } = changesWatch(floors, git, false);
+    w.start('dev-1', [floors[0]!]);
+    await w.ready('dev-1');
+    writeFileSync(join(other.floor, 'lib', 'a.dart'), 'cambio en otra planta');
+    expect(await w.finish('dev-1')).toEqual([]);
+    expect(findings).toEqual([]);
+    expect(calls.filter((call) => call.cwd === other.floor)).toHaveLength(0);
+    mobile.cleanup();
+    other.cleanup();
+  });
+
+  test('busy while finishing', async () => {
+    const t = repo();
+    const { git } = counted(50);
+    const { w } = changesWatch([{ slug: 'mobile', path: t.floor }], git);
+    w.start('dev-1');
+    await w.ready('dev-1');
+    expect(w.busy('mobile')).toBe(false);
+    const finishing = w.finish('dev-1');
+    expect(w.busy('mobile')).toBe(true);
+    expect(w.busy('otra')).toBe(false);
+    await finishing;
+    expect(w.busy('mobile')).toBe(false);
+    t.cleanup();
+  });
+
+  test('a changed HEAD brings the diff', async () => {
+    const t = repo();
+    const { w } = changesWatch([{ slug: 'mobile', path: t.floor }], runGit);
+    w.start('dev-1');
+    await w.ready('dev-1');
+    writeFileSync(join(t.floor, 'lib', 'a.dart'), 'cambio y commit en el mismo turno');
+    git(t.floor, 'commit', '-qam', 'x');
+    const found = await w.finish('dev-1');
+    expect(found[0]?.files).toEqual([join(t.floor, 'lib', 'a.dart')]);
+    t.cleanup();
+  });
+
+  test('a changed HEAD does not bring what was already dirty', async () => {
+    const t = repo();
+    writeFileSync(join(t.floor, 'lib', 'a.dart'), 'cambio ya probado');
+    const { w } = changesWatch([{ slug: 'mobile', path: t.floor }], runGit);
+    w.start('dev-1');
+    await w.ready('dev-1');
+    git(t.floor, 'commit', '-qam', 'x');
+    expect(await w.finish('dev-1')).toEqual([]);
+    t.cleanup();
+  });
+
+  test('without headDiff there is no rev-parse', async () => {
+    const t = repo();
+    const { git: counter, calls } = counted();
+    const { w } = changesWatch([{ slug: 'mobile', path: t.floor }], counter, false);
+    w.start('dev-1');
+    await w.ready('dev-1');
+    git(t.floor, 'commit', '--allow-empty', '-qm', 'x');
+    await w.finish('dev-1');
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.some((call) => call.args[0] === 'rev-parse' || call.args[0] === 'diff')).toBe(false);
     t.cleanup();
   });
 

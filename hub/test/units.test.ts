@@ -299,7 +299,7 @@ describe('scope and roles', () => {
 });
 
 describe('gate decision', () => {
-  const base = { officeTeam: true, floorManaged: true, owner: 'dev-mobile', lastOwnerEdit: 100, lastTesterGreen: null };
+  const base = { officeTeam: true, floorManaged: true, owner: 'dev-mobile', lastOwnerEdit: 100, lastTesterGreen: null, changed: [], fingerprintPending: false };
   test('rules', () => {
     expect(decideGate({ ...base, officeTeam: false }).pass).toBe(true);
     expect(decideGate({ ...base, floorManaged: false }).pass).toBe(true);
@@ -308,6 +308,21 @@ describe('gate decision', () => {
     expect(decideGate({ ...base, lastTesterGreen: 100 }).pass).toBe(false);
     expect(decideGate({ ...base, lastTesterGreen: 101 }).pass).toBe(true);
     expect(decideGate(base).reason).toContain('de dev-mobile');
+  });
+
+  test('GateFacts: a fingerprint still running closes the gate, and the reason lists the changed files', () => {
+    const pending = decideGate({ ...base, lastOwnerEdit: null, fingerprintPending: true });
+    expect(pending.pass).toBe(false);
+    expect(pending.reason).toContain('huella');
+    expect(decideGate({ ...base, officeTeam: false, fingerprintPending: true }).pass).toBe(true);
+    const listed = decideGate({ ...base, changed: ['lib/a.dart', 'lib/b.dart'] });
+    expect(listed.reason).toContain('lib/a.dart, lib/b.dart');
+    const many = Array.from({ length: 11 }, (_, i) => `lib/f${i}.dart`);
+    const long = decideGate({ ...base, changed: many });
+    expect(long.reason).toContain('lib/f7.dart');
+    expect(long.reason).not.toContain('lib/f8.dart');
+    expect(long.reason).toContain('(y 3 más)');
+    expect(decideGate({ ...base, changed: many.slice(0, 2), changedTotal: 40 }).reason).toContain('(y 38 más)');
   });
 });
 
