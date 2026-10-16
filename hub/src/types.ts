@@ -156,6 +156,7 @@ export type QuestionView = {
   id: string;
   kind?: QuestionKind;
   detail?: string;
+  tool?: string;
   agentKey: string;
   sessionId: string;
   floor: string;

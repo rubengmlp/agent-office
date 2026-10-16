@@ -33,7 +33,7 @@ describe('permission requests in the panel', () => {
     const repo = watched();
     const pending = h.office.permission(request(repo, 'bun run hub'), leadMeta);
     const question = h.office.snapshot().questions[0];
-    expect(question).toMatchObject({ kind: 'permission', detail: 'bun run hub', agentKey: LEAD, floor: 'mobile' });
+    expect(question).toMatchObject({ kind: 'permission', detail: 'bun run hub', tool: 'Bash', agentKey: LEAD, floor: 'mobile' });
     expect(question?.questions[0]?.question).toBe('¿Permites a lead-mobile ejecutar este comando?');
     expect(h.office.answer(question!.id, { [question!.questions[0]!.question]: 'Quizá' })).toBe('invalid');
     expect(h.office.answer(question!.id, { [question!.questions[0]!.question]: 'Permitir' })).toBe('ok');

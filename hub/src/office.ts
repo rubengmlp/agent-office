@@ -413,6 +413,7 @@ export class Office {
         id,
         kind: 'permission',
         detail: permissionDetail(tool, input),
+        tool: text(e.tool_name) ?? undefined,
         agentKey: key,
         sessionId: e.session_id,
         floor: session.floor,
