@@ -1,7 +1,7 @@
 import type { Database } from 'bun:sqlite';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join, relative, resolve } from 'node:path';
+import { basename, join, relative, resolve } from 'node:path';
 import { CHAT_SCRIPT, managedFloors } from './agents';
 import { ChatDesk, GLOBAL_CHANNEL, READ_LIMIT, SNAPSHOT_LIMIT, USER_NAME, isChatKind, normalizeChatPath, type ChatAuthor, type ChatError, type ChatUnread } from './chat';
 import { chatInboxText, deliver, encodeInbox, orderText } from './courier';
@@ -34,7 +34,6 @@ import {
   GHOST_MS,
   GHOST_TOOL_MS,
   HOLDS_QUESTION,
-  LAUNCH_CHECK_MS,
   LEAD_BUSY,
   MAX_ALERTS,
   MAX_MESSAGES,
@@ -44,9 +43,6 @@ import {
   NOT_PERMISSIONS,
   NO_TESTS,
   READ_CAP_TOOLS,
-  RULES_MAX_CHARS,
-  SAFE_ID,
-  SAFE_NAME,
   TURN_OVER,
   UNDO_MS,
   DAY_MS,
@@ -67,7 +63,6 @@ import {
 } from './office-state';
 import { chatFreeCommand, withoutChatCalls } from './chat-commands';
 import {
-  RULES_NOTE,
   STATUS_REQUEST,
   VERDICT_DETAILS,
   DISCARDED_MARK,
@@ -85,22 +80,21 @@ import {
   withoutDiscardMark,
 } from './office-texts';
 import { OfficeBus } from './office-bus';
+import { RulesDesk } from './rules-desk';
 import { SessionBook } from './session-book';
-import { ownerEdits, prepare, type AlertRow, type SessionRow, type Sql } from './office-sql';
+import { ownerEdits, prepare, type AlertRow, type Sql } from './office-sql';
 import { publicDetail, publicSummary, publicText, storedPayload, visibleKind } from './privacy';
 import { detectStack, profileFor, type Profiles } from './profiles';
 import { BRIEF_PREFIX, docRef, parseProtocol, parseWaiting, type DocRef } from './protocol';
 import { PERMISSION_ALLOW, PERMISSION_DENY, QuestionDesk, parseQuestions } from './questions';
 import { buildReport, saveReport, savedReport, savedReports } from './reports';
 import {
-  canonicalRole,
   contextFree,
   departmentOf,
   inOfficeScope,
   isAuthorRole,
   isDepartmentFloor,
   isLeadRole,
-  isOfficeRole,
   isVerdictRole,
   noLessons,
   remembers,
@@ -236,6 +230,7 @@ export class Office {
   private readonly docsQueue = new GitQueue();
   private readonly bus: OfficeBus;
   private readonly book: SessionBook;
+  private readonly rules: RulesDesk;
   private readonly now: () => number;
   private readonly deliverFn: typeof deliver;
   private readonly git: GitRunner;
@@ -256,19 +251,15 @@ export class Office {
   private readonly readCapNoted = new Set<string>();
   private readonly lastUserInput = new Map<string, number>();
   private readonly briefAllowance = new Map<string, number>();
-  private readonly tmux: TmuxFn;
   private readonly undoMs: number;
   private readonly removals = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly deciding = new Set<string>();
-  private readonly hashes = new Map<string, { mtime: number; size: number; hash: string | null }>();
-  private lastLaunchCheck = 0;
 
   constructor(private readonly opts: OfficeOptions) {
     this.config = opts.config;
     this.profiles = opts.profiles;
     this.now = opts.now ?? Date.now;
     this.deliverFn = opts.deliverFn ?? deliver;
-    this.tmux = opts.tmux ?? runTmux;
     this.bus = new OfficeBus(opts.log ?? ((text) => console.error(`Agent Office: ${text}`)));
     this.undoMs = opts.undoMs ?? UNDO_MS;
     this.git = opts.git ?? runGit;
@@ -287,9 +278,18 @@ export class Office {
       config: () => this.config,
       claudeHome: opts.claudeHome,
       tokens: (key) => this.meter.totals(key),
-      flags: (session) => this.sessionFlags(session),
-      restored: (session, row) => this.restoredSession(session, row),
+      flags: (session) => this.rules.flags(session),
+      restored: (session, row) => this.rules.restored(session, row),
       floors: this.floors,
+    });
+    this.rules = new RulesDesk({
+      sql: this.sql,
+      now: this.now,
+      bus: this.bus,
+      book: this.book,
+      launch: opts.launch,
+      tmux: opts.tmux,
+      free: (session, ignoreMain) => this.sessionFree(session, ignoreMain),
     });
     this.desk = new QuestionDesk(
       {
@@ -430,7 +430,7 @@ export class Office {
     const now = this.now();
     this.dumpRaw(e, now);
     const session = this.book.touchSession(e, meta, now);
-    if (e.hook_event_name === 'SessionStart' && (e.source === 'startup' || e.source === 'resume')) this.setBaseline(session);
+    if (e.hook_event_name === 'SessionStart' && (e.source === 'startup' || e.source === 'resume')) this.rules.setBaseline(session);
     const kind = visibleKind(session.floorKind, this.book.sessionInOffice(session, text(e.team_name)));
     const matchers = isDepartmentFloor(session.floorKind) ? NO_TESTS : profileFor(this.profiles, session.stack);
     const c = withoutChatCalls(classify(e, matchers), e, matchers);
@@ -1051,7 +1051,7 @@ export class Office {
       if (session.endedAt !== null && now - session.endedAt > FORGET_ENDED_MS) this.book.sessions.delete(session.sessionId);
     }
     this.detectStalls(now);
-    this.refreshSessionFlags(now);
+    this.rules.refreshSessionFlags(now);
   }
 
   // No socket and no events: nobody can reach it and nobody is using it. A tool still open keeps it alive for longer.
@@ -1109,40 +1109,13 @@ export class Office {
         this.book.emitAgent(agent, now);
       }
     }
-    this.refreshSessionFlags(now, true);
+    this.rules.refreshSessionFlags(now, true);
     this.bus.emit({ type: 'floors', data: this.floors.views() });
     this.bus.emit({ type: 'settings', data: settingsView(config) });
     this.docs.watch();
     this.refreshDocuments();
   }
 
-  async relaunch(sessionId: string, resume: boolean = RELAUNCH_RESUMES): Promise<RelaunchResult> {
-    const session = this.book.sessions.get(sessionId);
-    if (!session || session.endedAt !== null) return 'not-found';
-    if (!this.book.sessionInOffice(session)) return 'not-office';
-    const script = this.launchFile(session);
-    if (!script || !existsSync(script)) return 'no-script';
-    if (!this.sessionFree(session)) return 'busy';
-    if (resume && !SAFE_ID.test(sessionId)) return 'failed';
-    const name = session.name ?? '';
-    let windows: { code: number; stdout: string };
-    try {
-      windows = await this.tmux(['list-windows', '-t', TMUX_SESSION, '-F', '#{window_name}']);
-    } catch {
-      return 'no-tmux';
-    }
-    if (windows.code !== 0) return 'no-tmux';
-    if (!windows.stdout.split('\n').some((line) => line.trim() === name)) return 'no-window';
-    const command = resume ? `${sq(script)} --resume ${sessionId}` : sq(script);
-    try {
-      const respawned = await this.tmux(['respawn-window', '-k', '-t', `${TMUX_SESSION}:=${name}`, command]);
-      if (respawned.code !== 0) return 'failed';
-    } catch {
-      return 'failed';
-    }
-    this.pushActivity({ ts: this.now(), agentKey: sessionId, event: 'Relaunch', tool: null, state: null, summary: { key: 'hub.act.relaunched', params: { who: name } } });
-    return 'ok';
-  }
 
   private gateBrief(e: HookEvent): GateDecision {
     const to = (text(record(e.tool_input).to) ?? '').split('@')[0] ?? '';
@@ -1266,167 +1239,24 @@ export class Office {
     return true;
   }
 
-  private fileHash(path: string): string | null {
-    let stat;
-    try {
-      stat = statSync(path);
-    } catch {
-      this.hashes.delete(path);
-      return null;
-    }
-    const cached = this.hashes.get(path);
-    if (cached && cached.mtime === stat.mtimeMs && cached.size === stat.size) return cached.hash;
-    let hash: string | null = null;
-    try {
-      hash = createHash('sha256').update(readFileSync(path)).digest('hex').slice(0, 16);
-    } catch {
-      hash = null;
-    }
-    this.hashes.set(path, { mtime: stat.mtimeMs, size: stat.size, hash });
-    return hash;
-  }
 
-  private roleOf(session: SessionRuntime): string | null {
-    const role = canonicalRole(session.role ?? this.book.agents.get(session.sessionId)?.role ?? null);
-    return role && isOfficeRole(role) && SAFE_NAME.test(role) ? role : null;
-  }
 
-  private rulesFiles(session: SessionRuntime): string[] {
-    const launch = this.opts.launch;
-    const role = this.roleOf(session);
-    if (!launch || !role) return [];
-    return role === 'office-director' ? [join(launch.agentsDir, `${role}.md`), launch.directorFloors] : [join(launch.agentsDir, `${role}.md`)];
-  }
 
-  private launchFile(session: SessionRuntime): string | null {
-    const launch = this.opts.launch;
-    if (!launch || !session.name || !SAFE_NAME.test(session.name) || !this.roleOf(session)) return null;
-    return join(launch.sessionsDir, `${session.name}.sh`);
-  }
 
-  private rulesHash(session: SessionRuntime): string | null {
-    const files = this.rulesFiles(session);
-    const hashes = files.map((file) => this.fileHash(file));
-    if (hashes.length === 0 || hashes[0] === null) return null;
-    return createHash('sha256').update(hashes.map((hash) => hash ?? '-').join(':')).digest('hex').slice(0, 16);
-  }
 
-  private rulesText(session: SessionRuntime): string | null {
-    const files = this.rulesFiles(session);
-    if (files.length === 0) return null;
-    const parts: string[] = [];
-    for (const [index, file] of files.entries()) {
-      try {
-        const content = readFileSync(file, 'utf8');
-        parts.push((index === 0 ? withoutFrontmatter(content) : content).trim());
-      } catch {
-        if (index === 0) return null;
-      }
-    }
-    return parts.join('\n\n');
-  }
 
-  private rulesCopy(session: SessionRuntime): string | null {
-    const launch = this.opts.launch;
-    if (!launch || !session.name || !SAFE_NAME.test(session.name)) return null;
-    return join(dirname(launch.sessionsDir), 'rules', `${session.name}.md`);
-  }
 
-  private readRulesCopy(session: SessionRuntime): string | null {
-    const file = this.rulesCopy(session);
-    if (!file) return null;
-    try {
-      return readFileSync(file, 'utf8');
-    } catch {
-      return null;
-    }
-  }
 
-  private saveRulesCopy(session: SessionRuntime): void {
-    const file = this.rulesCopy(session);
-    const rules = this.rulesText(session);
-    if (!file || rules === null) return;
-    try {
-      mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-      writeAtomic(file, rules, 0o600);
-    } catch {
-      return;
-    }
-  }
 
-  private setBaseline(session: SessionRuntime): void {
-    if (!this.opts.launch) return;
-    const script = this.launchFile(session);
-    session.rulesHash = this.rulesHash(session);
-    session.launchHash = script ? this.fileHash(script) : null;
-    session.needsRelaunch = false;
-    this.saveRulesCopy(session);
-    this.sql.updateHashes.run(session.rulesHash, session.launchHash, session.sessionId);
-    this.book.emitSession(session);
-  }
 
-  private rulesBlock(agent: AgentRuntime, session: SessionRuntime): string | null {
-    if (session.rulesHash === null || !this.rulesPending(session)) return null;
-    const rules = this.rulesText(session);
-    const current = this.rulesHash(session);
-    if (rules === null || current === null) return null;
-    const base = this.readRulesCopy(session);
-    session.rulesHash = current;
-    this.sql.updateHashes.run(session.rulesHash, session.launchHash, session.sessionId);
-    this.saveRulesCopy(session);
-    this.book.emitSession(session);
-    if (base === rules) return null;
-    const body = base !== null && rules.length > RULES_MAX_CHARS ? changedSections(rules, base) : rules;
-    this.pushActivity({
-      ts: this.now(),
-      agentKey: agent.key,
-      event: 'Rules',
-      tool: null,
-      state: null,
-      summary: { key: 'hub.act.rulesReloaded', params: { who: agent.name ?? agent.key } },
-    });
-    return `${RULES_NOTE}\n\n${body}`;
-  }
 
-  private rulesPending(session: SessionRuntime): boolean {
-    if (session.rulesHash === null) return false;
-    const current = this.rulesHash(session);
-    return current !== null && current !== session.rulesHash;
-  }
 
-  private relaunchNeeded(session: SessionRuntime): boolean {
-    if (!this.opts.launch || session.launchHash === null) return false;
-    const script = this.launchFile(session);
-    return !script || this.fileHash(script) !== session.launchHash;
-  }
 
-  private restoredSession(session: SessionRuntime, row: SessionRow): void {
-    if (this.opts.launch && (row.rules_hash === null || row.launch_hash === null)) {
-      session.rulesHash ??= this.rulesHash(session);
-      const script = this.launchFile(session);
-      session.launchHash ??= script ? this.fileHash(script) : null;
-      this.sql.updateHashes.run(session.rulesHash, session.launchHash, session.sessionId);
-    }
-    session.needsRelaunch = this.relaunchNeeded(session);
-  }
 
-  private sessionFlags(session: SessionRuntime): { rulesPending: boolean; canRelaunch: boolean } {
-    const script = this.launchFile(session);
-    return {
-      rulesPending: this.rulesPending(session),
-      canRelaunch: session.endedAt === null && script !== null && existsSync(script) && this.sessionFree(session),
-    };
-  }
 
-  private refreshSessionFlags(now: number, force = false): void {
-    if (!this.opts.launch) return;
-    const due = force || now - this.lastLaunchCheck >= LAUNCH_CHECK_MS;
-    if (due) this.lastLaunchCheck = now;
-    for (const session of this.book.sessions.values()) {
-      if (session.endedAt !== null) continue;
-      if (due) session.needsRelaunch = this.relaunchNeeded(session);
-      this.book.refreshFlags(session);
-    }
+
+  relaunch(sessionId: string, resume?: boolean): Promise<RelaunchResult> {
+    return this.rules.relaunch(sessionId, resume);
   }
 
   private docsRoot(): string {
@@ -1616,7 +1446,7 @@ export class Office {
   // The rules when they changed, first; memory on start only, and the chat lines the agent has not seen yet on start and on every turn.
   private injection(event: string, agent: AgentRuntime, session: SessionRuntime): string | null {
     const blocks = [
-      event === 'UserPromptSubmit' && agent.key === session.sessionId ? this.rulesBlock(agent, session) : null,
+      event === 'UserPromptSubmit' && agent.key === session.sessionId ? this.rules.rulesBlock(agent, session) : null,
       event === 'UserPromptSubmit' ? null : this.memoryBlock(agent, session),
       this.chatBlock(agent, session),
     ].filter((block): block is string => block !== null);
@@ -2339,27 +2169,9 @@ function waitsFor(who: string, from: AgentRuntime): boolean {
 }
 
 
-function withoutFrontmatter(content: string): string {
-  return content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
-}
 
-function sectionsOf(content: string): Map<string, string> {
-  const sections = new Map<string, string>();
-  for (const chunk of content.split(/^(?=## )/m)) sections.set(chunk.split('\n')[0] ?? '', chunk.trim());
-  return sections;
-}
 
-function changedSections(current: string, base: string): string {
-  const before = sectionsOf(base);
-  const changed = [...sectionsOf(current)].filter(([heading, body]) => before.get(heading) !== body).map(([, body]) => body);
-  return changed.length > 0 ? changed.join('\n\n') : current.slice(0, RULES_MAX_CHARS);
-}
 
-async function runTmux(args: string[]): Promise<{ code: number; stdout: string }> {
-  const proc = Bun.spawn(['tmux', ...args], { stdout: 'pipe', stderr: 'ignore' });
-  const [stdout, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
-  return { code, stdout };
-}
 
 
 function fingerprintKey(floor: string, ts: number, path: string): string {
