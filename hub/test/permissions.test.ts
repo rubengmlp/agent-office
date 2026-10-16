@@ -113,6 +113,35 @@ describe('permission modes and clone floors in the launchers', () => {
     cleanup();
   });
 
+  test('each lead opens with the model of its floor or department', () => {
+    const { dir, cleanup } = tempDir();
+    const p = fakePaths(dir);
+    const docs = join(dir, 'docs');
+    mkdirSync(docs, { recursive: true });
+    mkdirSync(p.skillsDir, { recursive: true });
+    const config = testConfig({
+      docsRepo: docs,
+      departments: { redaccion: true, mantenimiento: true },
+      floors: { mobile: floor(makeRepo(dir, 'mobile')), backend: floor(makeRepo(dir, 'backend'), true, 'laravel') },
+      floorRoles: {
+        mobile: { lead: { model: 'opus', effort: 'high' }, dev: { model: 'haiku', effort: 'low' } },
+        redaccion: { lead: { model: 'fable', effort: 'max' } },
+      },
+    });
+    const specs = sessionSpecs(config, p, '/ws');
+    const flags = (name: string) => {
+      const args = specs.find((s) => s.name === name)!.extraArgs;
+      return [args[args.indexOf('--model') + 1], args[args.indexOf('--effort') + 1]];
+    };
+    expect(flags('lead-mobile')).toEqual(['opus', 'high']);
+    expect(flags('lead-backend')).toEqual(['sonnet', 'medium']);
+    expect(flags('lead-redaccion')).toEqual(['fable', 'max']);
+    expect(flags('lead-mantenimiento')).toEqual(['sonnet', 'medium']);
+    expect(flags('director')).toEqual(['fable', 'xhigh']);
+    expect(specs.find((s) => s.name === 'lead-mantenimiento')!.extraArgs.slice(0, 2)).toEqual(['--add-dir', p.skillsDir]);
+    cleanup();
+  });
+
   test('floor leads read the plans folder and may not write it, only while Redacción is active', () => {
     const { dir, cleanup } = tempDir();
     const p = fakePaths(dir);

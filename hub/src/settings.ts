@@ -4,7 +4,9 @@ import {
   docsRepoPath,
   loadConfig,
   permissionModeFor,
+  roleSettingsFor,
   saveConfig,
+  targetRoles,
   validBranch,
   validEffort,
   validInt,
@@ -16,7 +18,7 @@ import { ensureDocsRepo } from './docs-repo';
 import { regenerateAgents } from './floor-cli';
 import type { Profiles } from './profiles';
 import { record } from './state-machine';
-import type { OfficeConfig, SettingsResult, SettingsView } from './types';
+import type { OfficeConfig, RoleId, RoleSettings, SettingsResult, SettingsTarget, SettingsView } from './types';
 
 export const SETTINGS_NOTE =
   'Guardado. Los agentes y los lanzadores se han regenerado: los cambios valen para las sesiones y los equipos nuevos. Las sesiones abiertas siguen con su configuración hasta que las reinicies (bun run office).';
@@ -31,11 +33,26 @@ export function permissionTargets(config: OfficeConfig): string[] {
   return targets;
 }
 
+const TARGET_LABELS: Record<string, string> = { redaccion: 'Redacción', mantenimiento: 'Mantenimiento' };
+
+function settingsTargets(config: OfficeConfig): SettingsTarget[] {
+  return permissionTargets(config)
+    .filter((id) => id !== 'direccion')
+    .map((id) => ({
+      id,
+      label: TARGET_LABELS[id] ?? id,
+      stack: config.floors[id]?.stack ?? null,
+      roles: [...targetRoles(id)],
+    }));
+}
+
 export function settingsView(config: OfficeConfig): SettingsView {
   const permissionModes: SettingsView['permissionModes'] = {};
   for (const slug of permissionTargets(config)) permissionModes[slug] = permissionModeFor(config, slug);
   return {
     roles: structuredClone(config.roles),
+    floorRoles: structuredClone(config.floorRoles),
+    targets: settingsTargets(config),
     departments: { ...config.departments },
     review: { ...config.review },
     memory: { ...config.memory },
@@ -67,6 +84,56 @@ export function applySettings(config: OfficeConfig, raw: unknown): { config: Off
     if (r.effort !== undefined) {
       if (validEffort(r.effort)) role.effort = r.effort;
       else errors.push(`Esfuerzo no válido para ${id}: low, medium, high, xhigh o max.`);
+    }
+  }
+  const allowedTargets = new Set(['direccion', 'redaccion', 'mantenimiento', ...Object.keys(next.floors)]);
+  for (const [target, value] of Object.entries(record(update.floorRoles))) {
+    if (target === 'direccion' || !allowedTargets.has(target)) {
+      errors.push(`No hay ninguna planta "${target}".`);
+      continue;
+    }
+    for (const [id, change] of Object.entries(record(value))) {
+      if (!(ROLE_IDS as readonly string[]).includes(id)) {
+        errors.push(`Rol desconocido: ${id}`);
+        continue;
+      }
+      if (!targetRoles(target).includes(id as RoleId)) {
+        errors.push(`El rol ${id} no existe en la planta ${target}.`);
+        continue;
+      }
+      const roleId = id as RoleId;
+      if (change === null) {
+        const overrides = next.floorRoles[target];
+        if (overrides) {
+          delete overrides[roleId];
+          if (Object.keys(overrides).length === 0) delete next.floorRoles[target];
+        }
+        continue;
+      }
+      if (typeof change !== 'object' || Array.isArray(change)) {
+        errors.push(`Los ajustes de ${id} en ${target} tienen que ser un objeto o null.`);
+        continue;
+      }
+      const r = record(change);
+      const merged: RoleSettings = { ...roleSettingsFor(next, target, roleId) };
+      let valid = true;
+      if (r.model !== undefined) {
+        if (validModel(r.model)) merged.model = r.model;
+        else {
+          valid = false;
+          errors.push(`Modelo no válido para ${id} en ${target}: usa un alias (opus, sonnet, haiku, fable, inherit) o un id completo.`);
+        }
+      }
+      if (r.effort !== undefined) {
+        if (validEffort(r.effort)) merged.effort = r.effort;
+        else {
+          valid = false;
+          errors.push(`Esfuerzo no válido para ${id} en ${target}: low, medium, high, xhigh o max.`);
+        }
+      }
+      if (valid && (r.model !== undefined || r.effort !== undefined)) {
+        next.floorRoles[target] = { ...next.floorRoles[target], [roleId]: merged };
+      }
     }
   }
   const departments = record(update.departments);
@@ -101,7 +168,6 @@ export function applySettings(config: OfficeConfig, raw: unknown): { config: Off
     else errors.push(`"${String(branch)}" no vale como rama base de ${slug}.`);
   }
   const modes = record(update.permissionModes);
-  const allowedTargets = new Set(['direccion', 'redaccion', 'mantenimiento', ...Object.keys(next.floors)]);
   for (const [slug, mode] of Object.entries(modes)) {
     if (!allowedTargets.has(slug)) {
       errors.push(`No hay ninguna sesión de la oficina para "${slug}".`);

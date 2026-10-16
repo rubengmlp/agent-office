@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { managedFloors } from './agents';
-import { PLUGIN_DIR, REPO_ROOT, WORKSPACE_DIR, docsRepoPath, permissionModeFor, writeAtomic, type Paths } from './config';
+import { PLUGIN_DIR, REPO_ROOT, WORKSPACE_DIR, docsRepoPath, permissionModeFor, roleSettingsFor, writeAtomic, type Paths } from './config';
 import { MANTENIMIENTO, REDACCION, REDACCION_DIR, TALLER_DIR, realPath } from './floors';
 import { profileFor, type Profiles } from './profiles';
 import type { OfficeConfig, PermissionMode, RoleSettings } from './types';
@@ -71,7 +71,6 @@ export function denyWrites(dirs: readonly string[]): string[] {
 }
 
 export function sessionSpecs(config: OfficeConfig, p: Paths, workspaceDir = WORKSPACE_DIR, liveRoot = REPO_ROOT): SessionSpec[] {
-  const lead = modelArgs(config.roles.lead);
   const addDirs = directorReadDirs(config, p).flatMap((dir) => ['--add-dir', dir]);
   const specs: SessionSpec[] = [
     {
@@ -95,7 +94,7 @@ export function sessionSpecs(config: OfficeConfig, p: Paths, workspaceDir = WORK
       cwd: floor.path,
       role: `office-lead-${slug}`,
       agent: `office-lead-${slug}`,
-      extraArgs: [...plans.flatMap((dir) => ['--add-dir', dir]), ...lead],
+      extraArgs: [...plans.flatMap((dir) => ['--add-dir', dir]), ...modelArgs(roleSettingsFor(config, slug, 'lead'))],
       needsHub: false,
       permissionMode: permissionModeFor(config, slug),
       settings: Object.keys(permissions).length > 0 ? { ...BASE_SETTINGS, permissions } : BASE_SETTINGS,
@@ -108,7 +107,7 @@ export function sessionSpecs(config: OfficeConfig, p: Paths, workspaceDir = WORK
       cwd: join(docs, REDACCION_DIR),
       role: 'office-lead-redaccion',
       agent: 'office-lead-redaccion',
-      extraArgs: lead,
+      extraArgs: modelArgs(roleSettingsFor(config, REDACCION, 'lead')),
       needsHub: true,
       permissionMode: permissionModeFor(config, REDACCION),
       settings: BASE_SETTINGS,
@@ -120,7 +119,7 @@ export function sessionSpecs(config: OfficeConfig, p: Paths, workspaceDir = WORK
       cwd: join(docs, TALLER_DIR),
       role: 'office-lead-mantenimiento',
       agent: 'office-lead-mantenimiento',
-      extraArgs: ['--add-dir', p.skillsDir, ...lead],
+      extraArgs: ['--add-dir', p.skillsDir, ...modelArgs(roleSettingsFor(config, MANTENIMIENTO, 'lead'))],
       needsHub: true,
       permissionMode: permissionModeFor(config, MANTENIMIENTO),
       settings: BASE_SETTINGS,

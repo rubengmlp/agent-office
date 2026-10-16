@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { SCRIPTS_DIR, TEMPLATES_DIR, docsRepoPath, writeAtomic, type Paths } from './config';
+import { SCRIPTS_DIR, TEMPLATES_DIR, docsRepoPath, roleSettingsFor, writeAtomic, type Paths } from './config';
 import { profileFor, testCommandFor, type CompiledProfile, type Profiles } from './profiles';
 import type { FloorConfig, OfficeConfig, RoleId } from './types';
 
@@ -67,8 +67,14 @@ export function floorsList(config: OfficeConfig, profiles: Profiles): string {
     .join('\n');
 }
 
-export function commonVars(p: Paths, config: OfficeConfig, profiles: Profiles, roleId: RoleId): Record<string, string> {
-  const role = config.roles[roleId];
+export function commonVars(
+  p: Paths,
+  config: OfficeConfig,
+  profiles: Profiles,
+  roleId: RoleId,
+  target?: string | null,
+): Record<string, string> {
+  const role = roleSettingsFor(config, target, roleId);
   return {
     model: role.model,
     effort: role.effort,
@@ -100,7 +106,7 @@ export function floorAgentDocs(
   return FLOOR_ROLES.map((role) => {
     const name = floorAgentName(role, slug);
     const vars = {
-      ...commonVars(p, config, profiles, role),
+      ...commonVars(p, config, profiles, role, slug),
       slug,
       path: floor.path,
       label: profile.label,
@@ -118,7 +124,7 @@ export function fixedAgentDocs(p: Paths, config: OfficeConfig, profiles: Profile
     roleId: a.roleId,
     template: a.template,
     file: agentPath(p, a.name),
-    content: render(readTemplate(templatesDir, a.template), commonVars(p, config, profiles, a.roleId)),
+    content: render(readTemplate(templatesDir, a.template), commonVars(p, config, profiles, a.roleId, a.department)),
   }));
 }
 

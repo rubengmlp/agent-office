@@ -143,6 +143,27 @@ describe('floor CLI', () => {
     expect(readFileSync(agentPath(p, 'office-lead-mantenimiento'), 'utf8')).toContain(p.skillsDir);
   });
 
+  test('a floor override reaches only the agents of that floor and its department', () => {
+    const config = loadConfig(p);
+    config.floorRoles = {
+      mobile: { dev: { model: 'fable', effort: 'xhigh' }, lead: { model: 'opus', effort: 'low' } },
+      redaccion: { 'revisor-planes': { model: 'sonnet', effort: 'low' }, lead: { model: 'haiku', effort: 'medium' } },
+    };
+    saveConfig(p, config);
+    writeFloor(p, profiles, planFloor(p, profiles, makeRepo(ctx.dir, 'mobile', { 'pubspec.yaml': '' })));
+    writeFloor(p, profiles, planFloor(p, profiles, makeRepo(ctx.dir, 'backend', { 'artisan': '' })));
+    expect(readFileSync(agentFile(p, 'dev', 'mobile'), 'utf8')).toContain('model: fable\neffort: xhigh');
+    expect(readFileSync(agentFile(p, 'lead', 'mobile'), 'utf8')).toContain('model: opus\neffort: low');
+    expect(readFileSync(agentFile(p, 'tester', 'mobile'), 'utf8')).toContain('model: sonnet\neffort: medium');
+    expect(readFileSync(agentFile(p, 'dev', 'backend'), 'utf8')).toContain('model: opus\neffort: high');
+    expect(readFileSync(agentFile(p, 'lead', 'backend'), 'utf8')).toContain('model: sonnet\neffort: medium');
+    expect(readFileSync(agentPath(p, 'office-revisor-planes'), 'utf8')).toContain('model: sonnet\neffort: low');
+    expect(readFileSync(agentPath(p, 'office-lead-redaccion'), 'utf8')).toContain('model: haiku\neffort: medium');
+    expect(readFileSync(agentPath(p, 'office-redactor'), 'utf8')).toContain('model: fable\neffort: xhigh');
+    expect(readFileSync(agentPath(p, 'office-lead-mantenimiento'), 'utf8')).toContain('model: sonnet\neffort: medium');
+    expect(readFileSync(agentPath(p, 'office-director'), 'utf8')).toContain('model: fable\neffort: xhigh');
+  });
+
   test('turning a department off removes its agents and its launcher', () => {
     writeFloor(p, profiles, planFloor(p, profiles, makeRepo(ctx.dir, 'mobile')));
     expect(existsSync(agentPath(p, 'office-artesano'))).toBe(true);

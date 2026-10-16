@@ -33,10 +33,13 @@ export type ReviewConfig = { maxRounds: number };
 
 export type MemoryConfig = { maxLessons: number; maxLessonsPerSession: number; maxContextChars: number };
 
+export type FloorRoles = Record<string, Partial<Record<RoleId, RoleSettings>>>;
+
 export type OfficeConfig = {
   configVersion: number;
   floors: Record<string, FloorConfig>;
   roles: Record<RoleId, RoleSettings>;
+  floorRoles: FloorRoles;
   docsRepo: string;
   departments: DepartmentsConfig;
   review: ReviewConfig;
@@ -277,8 +280,12 @@ export type GuardAlert = {
   files: string[];
 };
 
+export type SettingsTarget = { id: string; label: string; stack: Stack | null; roles: RoleId[] };
+
 export type SettingsView = {
   roles: Record<RoleId, RoleSettings>;
+  floorRoles: FloorRoles;
+  targets: SettingsTarget[];
   departments: DepartmentsConfig;
   review: ReviewConfig;
   memory: MemoryConfig;
@@ -290,6 +297,7 @@ export type SettingsView = {
 
 export type SettingsUpdate = {
   roles?: Partial<Record<RoleId, Partial<RoleSettings>>>;
+  floorRoles?: Record<string, Partial<Record<RoleId, Partial<RoleSettings> | null>>>;
   departments?: Partial<DepartmentsConfig>;
   review?: Partial<ReviewConfig>;
   memory?: Partial<MemoryConfig>;

@@ -6,6 +6,7 @@ import type {
   DepartmentsConfig,
   Effort,
   FloorConfig,
+  FloorRoles,
   MemoryConfig,
   OfficeConfig,
   PermissionMode,
@@ -84,6 +85,12 @@ export const DEFAULT_ROLES: Record<RoleId, RoleSettings> = {
   'revisor-skills': { model: 'opus', effort: 'high' },
 };
 
+export const TARGET_ROLES: Record<'managed' | 'redaccion' | 'mantenimiento', readonly RoleId[]> = {
+  managed: ['lead', 'dev', 'tester'],
+  redaccion: ['lead', 'redactor', 'revisor-planes'],
+  mantenimiento: ['lead', 'artesano', 'revisor-skills'],
+};
+
 export const DEFAULT_BASE_BRANCH = 'develop';
 
 export const CONFIG_VERSION = 2;
@@ -103,6 +110,7 @@ export const DEFAULT_CONFIG: OfficeConfig = {
   configVersion: CONFIG_VERSION,
   floors: {},
   roles: DEFAULT_ROLES,
+  floorRoles: {},
   docsRepo: '~/Projects/office-docs',
   departments: { redaccion: true, mantenimiento: true },
   review: { maxRounds: 4 },
@@ -144,6 +152,14 @@ export function permissionModeFor(config: OfficeConfig, slug: string): Permissio
   return config.permissionModes[slug] ?? DEFAULT_PERMISSION_MODE;
 }
 
+export function targetRoles(target: string): readonly RoleId[] {
+  return target === 'redaccion' || target === 'mantenimiento' ? TARGET_ROLES[target] : TARGET_ROLES.managed;
+}
+
+export function roleSettingsFor(config: OfficeConfig, target: string | null | undefined, roleId: RoleId): RoleSettings {
+  return (target ? config.floorRoles[target]?.[roleId] : undefined) ?? config.roles[roleId];
+}
+
 export function validInt(value: unknown, limit: { min: number; max: number }): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= limit.min && value <= limit.max;
 }
@@ -179,6 +195,23 @@ function normalizeRoles(raw: unknown): Record<RoleId, RoleSettings> {
     if (validEffort(r.effort)) roles[id].effort = r.effort;
   }
   return roles;
+}
+
+function normalizeFloorRoles(raw: unknown): FloorRoles {
+  const floorRoles: FloorRoles = {};
+  const src = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  for (const [target, value] of Object.entries(src)) {
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(target) || !value || typeof value !== 'object') continue;
+    const roles: Partial<Record<RoleId, RoleSettings>> = {};
+    for (const id of targetRoles(target)) {
+      const r = (value as Record<string, unknown>)[id];
+      if (!r || typeof r !== 'object') continue;
+      const { model, effort } = r as Record<string, unknown>;
+      if (validModel(model) && validEffort(effort)) roles[id] = { model, effort };
+    }
+    if (Object.keys(roles).length > 0) floorRoles[target] = roles;
+  }
+  return floorRoles;
 }
 
 function normalizeFloors(raw: unknown): Record<string, FloorConfig> {
@@ -226,6 +259,7 @@ export function normalizeConfig(raw: unknown): OfficeConfig {
     configVersion: validInt(src.configVersion, { min: 1, max: 1000 }) ? src.configVersion : 1,
     floors: normalizeFloors(src.floors),
     roles: normalizeRoles(src.roles),
+    floorRoles: normalizeFloorRoles(src.floorRoles),
     docsRepo: typeof src.docsRepo === 'string' && src.docsRepo.trim() ? src.docsRepo.trim() : d.docsRepo,
     departments: normalizedDepartments,
     review: normalizedReview,

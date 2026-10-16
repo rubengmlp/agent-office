@@ -61,6 +61,88 @@ describe('settings', () => {
     expect(view.port).toBe(4747);
   });
 
+  test('the view lists the targets with their roles and only the overrides', () => {
+    const config = testConfig({
+      departments: { redaccion: true, mantenimiento: true },
+      floors: { b: floor('/b', true, 'laravel'), a: floor('/a'), old: floor('/o', false) },
+      floorRoles: { a: { dev: { model: 'haiku', effort: 'low' } } },
+    });
+    const view = settingsView(config);
+    expect(view.targets).toEqual([
+      { id: 'redaccion', label: 'Redacción', stack: null, roles: ['lead', 'redactor', 'revisor-planes'] },
+      { id: 'mantenimiento', label: 'Mantenimiento', stack: null, roles: ['lead', 'artesano', 'revisor-skills'] },
+      { id: 'a', label: 'a', stack: 'flutter', roles: ['lead', 'dev', 'tester'] },
+      { id: 'b', label: 'b', stack: 'laravel', roles: ['lead', 'dev', 'tester'] },
+    ]);
+    expect(view.floorRoles).toEqual({ a: { dev: { model: 'haiku', effort: 'low' } } });
+    expect(settingsView(testConfig()).targets).toEqual([]);
+  });
+
+  test('a floor override merges onto the inherited role, null removes it and nothing else changes', () => {
+    const config = testConfig({ floors: { mobile: floor('/m') } });
+    const set = applySettings(config, { floorRoles: { mobile: { dev: { model: 'haiku' } } } });
+    if ('error' in set) throw new Error(set.error);
+    expect(set.changed).toBe(true);
+    expect(set.config.floorRoles).toEqual({ mobile: { dev: { model: 'haiku', effort: DEFAULT_ROLES.dev.effort } } });
+    expect(set.config.roles.dev).toEqual(DEFAULT_ROLES.dev);
+    expect(config.floorRoles).toEqual({});
+    const refined = applySettings(set.config, { floorRoles: { mobile: { dev: { effort: 'low' } } } });
+    if ('error' in refined) throw new Error(refined.error);
+    expect(refined.config.floorRoles.mobile?.dev).toEqual({ model: 'haiku', effort: 'low' });
+    const cleared = applySettings(set.config, { floorRoles: { mobile: { dev: null } } });
+    if ('error' in cleared) throw new Error(cleared.error);
+    expect(cleared.config.floorRoles).toEqual({});
+    expect(applySettings(config, { floorRoles: { mobile: { dev: null } } })).toMatchObject({ changed: false });
+    expect(applySettings(config, { floorRoles: { mobile: { dev: {} } } })).toMatchObject({ changed: false });
+  });
+
+  test('an invalid floor override is explained and nothing is applied', () => {
+    const config = testConfig({ floors: { mobile: floor('/m') } });
+    const result = applySettings(config, {
+      roles: { dev: { model: 'sonnet' } },
+      floorRoles: {
+        nada: { dev: { model: 'haiku' } },
+        direccion: { lead: { model: 'haiku' } },
+        mobile: { redactor: { model: 'haiku' }, dev: { model: 'opus; rm -rf /' }, tester: { effort: 'turbo' }, jefe: { model: 'opus' }, lead: 'opus' },
+      },
+    });
+    expect('error' in result).toBe(true);
+    const error = 'error' in result ? result.error : '';
+    for (const part of [
+      'No hay ninguna planta "nada"',
+      'No hay ninguna planta "direccion"',
+      'El rol redactor no existe en la planta mobile',
+      'Modelo no válido para dev en mobile',
+      'Esfuerzo no válido para tester en mobile',
+      'Rol desconocido: jefe',
+      'lead en mobile tienen que ser un objeto o null',
+    ]) {
+      expect(error).toContain(part);
+    }
+  });
+
+  test('saving a mobile override regenerates only office-dev-mobile and null restores the global role', () => {
+    const { dir, cleanup } = tempDir();
+    const p = fakePaths(dir);
+    saveConfig(p, testConfig({ docsRepo: join(dir, 'docs'), departments: { redaccion: true, mantenimiento: false } }));
+    writeFloor(p, profiles, planFloor(p, profiles, makeRepo(dir, 'mobile', { 'pubspec.yaml': '' })));
+    writeFloor(p, profiles, planFloor(p, profiles, makeRepo(dir, 'backend', { artisan: '' })));
+    const settings = createSettings(p, () => profiles, () => {});
+    const global = `model: ${DEFAULT_ROLES.dev.model}\neffort: ${DEFAULT_ROLES.dev.effort}`;
+    expect(settings.update({ floorRoles: { mobile: { dev: { model: 'haiku', effort: 'low' } }, redaccion: { 'revisor-planes': { model: 'sonnet' } } } })).toMatchObject({ ok: true });
+    expect(readFileSync(agentPath(p, 'office-dev-mobile'), 'utf8')).toContain('model: haiku\neffort: low');
+    expect(readFileSync(agentPath(p, 'office-dev-backend'), 'utf8')).toContain(global);
+    expect(readFileSync(agentPath(p, 'office-revisor-planes'), 'utf8')).toContain(`model: sonnet\neffort: ${DEFAULT_ROLES['revisor-planes'].effort}`);
+    expect(loadConfig(p).floorRoles.mobile?.dev).toEqual({ model: 'haiku', effort: 'low' });
+    expect(settings.view().floorRoles.mobile?.dev).toEqual({ model: 'haiku', effort: 'low' });
+    expect(settings.update({ floorRoles: { mobile: { dev: null }, redaccion: { 'revisor-planes': null } } })).toMatchObject({ ok: true });
+    expect(readFileSync(agentPath(p, 'office-dev-mobile'), 'utf8')).toContain(global);
+    expect(loadConfig(p).floorRoles).toEqual({});
+    expect(settings.update({ floorRoles: { nada: { dev: { model: 'haiku' } } } })).toMatchObject({ ok: false });
+    expect(loadConfig(p).floorRoles).toEqual({});
+    cleanup();
+  });
+
   test('saving writes the config, regenerates every agent with the chosen model and creates the documents repository', () => {
     const { dir, cleanup } = tempDir();
     const p = fakePaths(dir);

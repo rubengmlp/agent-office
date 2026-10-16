@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { CONFIG_VERSION, DEFAULT_ROLES, PROFILES_DIR, createKeyIfMissing, defaultConfig, loadConfig, migrateConfig, normalizeConfig, saveConfig } from '../src/config';
+import { CONFIG_VERSION, DEFAULT_ROLES, PROFILES_DIR, createKeyIfMissing, defaultConfig, loadConfig, migrateConfig, normalizeConfig, roleSettingsFor, saveConfig } from '../src/config';
 import { configTargets, watchTargets } from '../src/config-watch';
 import { openDb } from '../src/db';
 import { decideGate } from '../src/gate';
@@ -34,6 +34,34 @@ describe('config', () => {
     expect(c.memory).toEqual({ maxLessons: 10, maxLessonsPerSession: 3, maxContextChars: 4000 });
     expect(c.departments).toEqual({ redaccion: false, mantenimiento: true });
     expect(c.docsRepo).toBe('~/Projects/office-docs');
+  });
+
+  test('floor roles keep only valid targets, roles of that target and complete valid settings', () => {
+    const c = normalizeConfig({
+      floorRoles: {
+        mobile: { dev: { model: 'fable', effort: 'xhigh' }, redactor: { model: 'opus', effort: 'low' }, tester: { model: 'sonnet' }, lead: { model: 'bad model!', effort: 'low' } },
+        redaccion: { 'revisor-planes': { model: 'sonnet', effort: 'medium' }, dev: { model: 'opus', effort: 'high' } },
+        'Mal Slug': { dev: { model: 'opus', effort: 'high' } },
+        vacia: { dev: { model: 'x y', effort: 'high' } },
+        texto: 'no',
+      },
+    });
+    expect(c.floorRoles).toEqual({
+      mobile: { dev: { model: 'fable', effort: 'xhigh' } },
+      redaccion: { 'revisor-planes': { model: 'sonnet', effort: 'medium' } },
+    });
+    expect(normalizeConfig({}).floorRoles).toEqual({});
+    expect(normalizeConfig({ floorRoles: [] }).floorRoles).toEqual({});
+    expect(defaultConfig().floorRoles).toEqual({});
+  });
+
+  test('roleSettingsFor prefers the floor override and falls back to the global role', () => {
+    const config = testConfig({ floorRoles: { mobile: { dev: { model: 'haiku', effort: 'low' } } } });
+    expect(roleSettingsFor(config, 'mobile', 'dev')).toEqual({ model: 'haiku', effort: 'low' });
+    expect(roleSettingsFor(config, 'mobile', 'tester')).toEqual(DEFAULT_ROLES.tester);
+    expect(roleSettingsFor(config, 'backend', 'dev')).toEqual(DEFAULT_ROLES.dev);
+    expect(roleSettingsFor(config, null, 'dev')).toEqual(DEFAULT_ROLES.dev);
+    expect(roleSettingsFor(config, undefined, 'director')).toEqual(DEFAULT_ROLES.director);
   });
 
   test('a v1 config gains the v2 defaults without losing its floors', () => {
