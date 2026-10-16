@@ -46,6 +46,7 @@ export class LiftController {
   private openFor = 0;
   private detour: Detour | null = null;
   private pending: LiftEvent[] = [];
+  private readonly events: LiftEvent[] = [];
 
   constructor(private readonly options: LiftOptions) {}
 
@@ -110,14 +111,17 @@ export class LiftController {
   }
 
   cancel(key: string): void {
+    this.pending = this.pending.filter((event) => event.key !== key);
     this.waiting = this.waiting.filter((rider) => rider.key !== key);
     this.entering = this.entering.filter((entry) => entry.rider.key !== key);
     this.inside = this.inside.filter((rider) => rider.key !== key);
   }
 
-  tick(dt: number): LiftEvent[] {
-    const events = this.pending;
-    this.pending = [];
+  tick(dt: number): readonly LiftEvent[] {
+    const events = this.events;
+    events.length = 0;
+    events.push(...this.pending);
+    this.pending.length = 0;
     const { speed, doorTime, dwell, maxDwell } = this.options;
     switch (this.state) {
       case 'idle':

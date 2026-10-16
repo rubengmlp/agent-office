@@ -179,6 +179,34 @@ describe('LiftController', () => {
   });
 });
 
+describe('cancelling', () => {
+  test('a cancelled rider loses the events still waiting for the next tick', () => {
+    const controller = lift('c');
+    controller.request(rider('r1', 'b', 'a'));
+    controller.setStops(stops([['a', 0], ['c', 40]]));
+    controller.cancel('r1');
+    expect(controller.tick(DT)).toEqual([]);
+  });
+
+  test('a stop removed while the cabin travels to it cancels its riders and the cabin stops', () => {
+    const controller = lift('a');
+    controller.request(rider('r1', 'a', 'c'));
+    until(controller, (event) => event.type === 'boarded');
+    controller.aboard('r1');
+    for (let index = 0; index < 100 && controller.phase !== 'moving'; index += 1) controller.tick(DT);
+    controller.tick(DT);
+    const position = controller.position;
+    expect(position).toBeGreaterThan(0);
+    controller.setStops(stops([['a', 0], ['b', 20]]));
+    expect(controller.tick(DT)).toEqual([{ type: 'cancelled', key: 'r1' }]);
+    expect(controller.riders).toEqual([]);
+    const log = run(controller, 3);
+    expect(log.events).toEqual([]);
+    expect(controller.phase).toBe('idle');
+    expect(controller.position).toBeLessThanOrEqual(position + OPTIONS.speed * DT);
+  });
+});
+
 describe('stops on the way', () => {
   test('riders heading the same way are picked up and dropped off on the way, others wait', () => {
     const controller = lift('a');
