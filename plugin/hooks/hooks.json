@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/emit.sh\" events",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/office-hook.sh\"",
             "timeout": 5
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/emit.sh\" events",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/office-hook.sh\"",
             "timeout": 5
           }
         ]
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/emit.sh\" events",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/office-hook.sh\"",
             "timeout": 5
           }
         ]
@@ -38,7 +38,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/emit.sh\" ask",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/office-hook.sh\" ask",
             "timeout": 3600
           }
         ]
@@ -48,17 +48,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/gate.sh\" gate-message",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/guard.sh\"",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/office-hook.sh\" gate-message",
             "timeout": 5
           }
         ]
@@ -70,7 +60,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/emit.sh\" events",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/office-hook.sh\"",
             "timeout": 5
           }
         ]
@@ -82,7 +72,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/emit.sh\" events",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/office-hook.sh\"",
             "timeout": 5
           }
         ]
@@ -94,7 +84,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/emit.sh\" events",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/office-hook.sh\"",
             "timeout": 5
           }
         ]
@@ -104,7 +94,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/emit.sh\" permission",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/office-hook.sh\" permission",
             "timeout": 3600
           }
         ]
@@ -115,7 +105,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/emit.sh\" events",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/office-hook.sh\"",
             "timeout": 5
           }
         ]
@@ -126,7 +116,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/emit.sh\" events",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/office-hook.sh\"",
             "timeout": 5
           }
         ]
@@ -137,7 +127,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/emit.sh\" events",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/office-hook.sh\"",
             "timeout": 5
           }
         ]
@@ -148,7 +138,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/emit.sh\" events",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/office-hook.sh\"",
             "timeout": 5
           }
         ]
@@ -159,7 +149,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/emit.sh\" events",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/office-hook.sh\"",
             "timeout": 5
           }
         ]
@@ -170,7 +160,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/emit.sh\" events",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/office-hook.sh\"",
             "timeout": 5
           }
         ]
@@ -181,7 +171,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/emit.sh\" events",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/office-hook.sh\"",
             "timeout": 5
           }
         ]
@@ -192,7 +182,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/gate.sh\" gate",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/office-hook.sh\"",
             "timeout": 5
           }
         ]

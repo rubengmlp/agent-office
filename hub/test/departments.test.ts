@@ -221,7 +221,7 @@ describe('Redacción review loop', () => {
     expect(over.pass).toBe(false);
     expect(over.reason).toContain('ronda 3');
     expect(over.reason).toContain('2 rondas');
-    // emit.sh fires in the same PreToolUse whatever gate.sh answers: ingest must ignore it too.
+    // /hook ingests the same PreToolUse whatever /gate-message answers: ingest must ignore it too.
     say(LEAD, cwd, 'ared-1', 'redactor-login', 'team-lead', `REVISAR: ${PLAN} ronda 3`);
     await h.office.idle();
     expect(doc(PLAN)).toMatchObject({ status: 'revision', round: 2 });
