@@ -7,7 +7,8 @@ import type { Store } from '../store';
 import { relativeTime } from '../time';
 import type { AgentView, FloorView } from '../types';
 import { panelSection } from './section';
-import { mainSession, relaunchButton, runSessionAction, stalledText, statusButton } from './session-controls';
+import { relaunchable } from './orderable';
+import { canAskStatus, mainSession, relaunchButton, runSessionAction, stalledText, statusButton } from './session-controls';
 
 type TimeNode = { node: HTMLElement; text: (now: number) => string };
 
@@ -40,13 +41,14 @@ function agentRow(store: Store, row: Row, times: TimeNode[], now: number): HTMLE
 function sessionActions(store: Store, agent: AgentView, depth: number, times: TimeNode[], now: number): HTMLElement | null {
   const session = mainSession(store, agent);
   const stalled = agent.stalledSince;
-  const relaunch = session?.needsRelaunch === true && session.endedAt === null;
+  const relaunch = relaunchable(session);
   if (stalled === null && !relaunch) return null;
   const items: HTMLElement[] = [];
   if (stalled !== null) {
     const mark = el('span', 'chip floors-stalled', stalledText(stalled, now));
     times.push({ node: mark, text: (at) => stalledText(stalled, at) });
-    items.push(mark, statusButton(agent));
+    items.push(mark);
+    if (canAskStatus(store, agent)) items.push(statusButton(agent));
   }
   if (relaunch && session) items.push(relaunchButton(session));
   const actions = el('div', 'floors-actions', ...items);
