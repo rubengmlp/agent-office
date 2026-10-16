@@ -25,6 +25,17 @@ export type Role = FloorRole;
 
 export class FloorError extends Error {}
 
+export type FloorConflict = 'name' | 'path' | 'managed';
+
+export class FloorConflictError extends FloorError {
+  constructor(
+    message: string,
+    readonly conflict: FloorConflict,
+  ) {
+    super(message);
+  }
+}
+
 export type FloorPlan = {
   slug: string;
   path: string;
@@ -91,10 +102,10 @@ export function planFloor(
   const config = loadConfig(p);
   const taken = config.floors[slug];
   if (taken && realPath(taken.path) !== path) {
-    throw new FloorError(`El nombre "${slug}" ya es la planta de ${taken.path}. Elige otro con --slug.`);
+    throw new FloorConflictError(`El nombre "${slug}" ya es la planta de ${taken.path}.`, 'name');
   }
   for (const [other, floor] of Object.entries(config.floors)) {
-    if (other !== slug && realPath(floor.path) === path) throw new FloorError(`${path} ya es la planta "${other}".`);
+    if (other !== slug && realPath(floor.path) === path) throw new FloorConflictError(`${path} ya es la planta "${other}".`, 'path');
   }
   const stack = detectStack(path);
   const profile = profileFor(profiles, stack);
@@ -149,10 +160,7 @@ export function regenerateAll(p: Paths, profiles: Profiles, templatesDir = TEMPL
   return regenerateAgents(p, profiles, templatesDir).floors;
 }
 
-export function removeFloor(p: Paths, profiles: Profiles, slug: string): string[] {
-  const config = loadConfig(p);
-  const floor = config.floors[slug];
-  if (!floor) throw new FloorError(`No hay ninguna planta "${slug}".`);
+export function deleteFloorAgents(p: Paths, slug: string): string[] {
   const removed: string[] = [];
   for (const role of ROLES) {
     const file = agentFile(p, role, slug);
@@ -161,7 +169,27 @@ export function removeFloor(p: Paths, profiles: Profiles, slug: string): string[
       removed.push(file);
     }
   }
+  return removed;
+}
+
+export function removeFloor(p: Paths, profiles: Profiles, slug: string): string[] {
+  const config = loadConfig(p);
+  const floor = config.floors[slug];
+  if (!floor) throw new FloorError(`No hay ninguna planta "${slug}".`);
+  const removed = deleteFloorAgents(p, slug);
   config.floors[slug] = { ...floor, managed: false };
+  saveConfig(p, config);
+  writeFixedAgents(p, config, profiles);
+  writeOfficeScripts(p, config, profiles);
+  return removed;
+}
+
+export function purgeFloor(p: Paths, profiles: Profiles, slug: string): string[] {
+  const config = loadConfig(p);
+  if (!config.floors[slug]) throw new FloorError(`No hay ninguna planta "${slug}".`);
+  const removed = deleteFloorAgents(p, slug);
+  delete config.floors[slug];
+  delete config.permissionModes[slug];
   saveConfig(p, config);
   writeFixedAgents(p, config, profiles);
   writeOfficeScripts(p, config, profiles);
@@ -215,7 +243,13 @@ async function cli(argv: string[]): Promise<void> {
     return;
   }
   if (command === 'add' && positional[0]) {
-    const plan = planFloor(p, profiles, positional[0], option('--slug'));
+    let plan: FloorPlan;
+    try {
+      plan = planFloor(p, profiles, positional[0], option('--slug'));
+    } catch (error) {
+      if (error instanceof FloorConflictError && error.conflict === 'name') throw new FloorError(`${error.message} Elige otro con --slug.`);
+      throw error;
+    }
     if (plan.existing.length > 0 && !flag('--yes')) {
       const ok = await askYesNo(`Ya existen ${plan.existing.length} agentes de la planta ${plan.slug}. ¿Sobrescribirlos?`);
       if (!ok) throw new FloorError('Cancelado: no se ha tocado nada. Usa --yes para sobrescribir sin preguntar.');
