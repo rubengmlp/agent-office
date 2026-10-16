@@ -128,9 +128,16 @@ export class Store {
         this.floors = message.data;
         this.mark('floors');
         break;
-      case 'agent':
-        this.agents.set(message.data.key, message.data);
-        this.debouncer.observe(message.data);
+      case 'agent': {
+        const agent = withDefaults(message.data);
+        this.agents.set(agent.key, agent);
+        this.debouncer.observe(agent);
+        this.mark('agents');
+        break;
+      }
+      case 'agent-gone':
+        if (!this.agents.delete(message.key)) break;
+        this.debouncer.forget(message.key);
         this.mark('agents');
         break;
       case 'session':
@@ -229,6 +236,10 @@ export class Store {
     return [...this.agents.values()].filter((agent) => this.isVisible(agent));
   }
 
+  officeAgents(): AgentView[] {
+    return this.visibleAgents().filter((agent) => !agent.away);
+  }
+
   floorList(): FloorView[] {
     const known = new Map<string, FloorView>(this.floors.map((floor) => [floor.slug, floor]));
     for (const agent of this.agents.values()) {
@@ -266,7 +277,8 @@ export class Store {
     this.floors = snapshot.floors;
     this.agents.clear();
     this.debouncer.clear();
-    for (const agent of snapshot.agents) {
+    for (const raw of snapshot.agents) {
+      const agent = withDefaults(raw);
       this.agents.set(agent.key, agent);
       this.debouncer.observe(agent);
     }
@@ -306,6 +318,16 @@ export class Store {
     this.dirty.clear();
     for (const listener of [...this.listeners]) listener(changed);
   }
+}
+
+export function withDefaults(agent: AgentView): AgentView {
+  const partial: Partial<Pick<AgentView, 'file' | 'task' | 'away'>> = agent;
+  return {
+    ...agent,
+    file: partial.file ?? null,
+    task: partial.task ?? null,
+    away: partial.away ?? agent.endedAt !== null,
+  };
 }
 
 export function memoryKey(floor: string, role: RoleId): string {
