@@ -4,6 +4,7 @@ import type { Server, ServerWebSocket } from 'bun';
 import { Hono, type Context, type Next } from 'hono';
 import { clampWait, errorTextFor } from './chat';
 import type { FloorAdmin } from './floor-admin';
+import { hookResponse, runHook } from './hook';
 import { isRoleId } from './memory';
 import { isHookEvent, type Office, type RelaunchResult } from './office';
 import { claimLaunchToken, mintPanelToken, verifyPanelToken } from './panel-auth';
@@ -73,6 +74,12 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
     const event = await readJson(c);
     const output = isHookEvent(event) ? office.ingest(event, metaOf(c)) : null;
     return output ? c.body(output, 200, { 'Content-Type': 'application/json' }) : c.body(null, 200);
+  });
+
+  app.post('/hook', requireKey, async (c) => {
+    const event = await readJson(c);
+    if (!isHookEvent(event)) return c.text('pass');
+    return c.text(hookResponse(runHook(office, event, metaOf(c), (error) => console.error(`Agent Office: /hook ingest: ${(error as Error).message}`))));
   });
 
   app.post('/guard', requireKey, async (c) => {

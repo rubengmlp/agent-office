@@ -5,11 +5,13 @@ import { CONFIG_VERSION, DEFAULT_ROLES, PROFILES_DIR, createIdIfMissing, createK
 import { configTargets, watchTargets } from '../src/config-watch';
 import { openDb } from '../src/db';
 import { decideGate, decideReadCap, decideReviewGate, planByteLimit, type ReviewGateFacts } from '../src/gate';
+import { hookResponse, runHook } from '../src/hook';
 import { directorFloorsText, modelArgs, officeScript, sessionScript, sessionSpecs, sq } from '../src/office-sh';
 import { loadProfiles } from '../src/profiles';
 import { prune } from '../src/prune';
 import { departmentOf, inOfficeScope, roleFromName, roleIdOf, roleKind } from '../src/scope';
 import { hostAllowed, keyMatches, originAllowed } from '../src/security';
+import type { HookEvent } from '../src/types';
 import { fakePaths, floor, tempDir, testConfig } from './helpers';
 
 describe('config', () => {
@@ -458,5 +460,48 @@ describe('review gate', () => {
 
   test('the round is checked before the size', () => {
     expect(decideReviewGate(facts({ round: 3, bytes: 90_000 }))).toMatchObject({ pass: false, cause: 'rounds' });
+  });
+});
+
+describe('single hook', () => {
+  const event = (hook: string, tool?: string): HookEvent => ({ session_id: 's', hook_event_name: hook, ...(tool ? { tool_name: tool } : {}) });
+  const fake = (calls: string[], ingest: () => string | null) =>
+    ({
+      ingest: () => {
+        calls.push('ingest');
+        return ingest();
+      },
+      guard: () => {
+        calls.push('guard');
+        return { pass: false, reason: 'Guardia de Agent Office: fuera' };
+      },
+      gate: () => {
+        calls.push('gate');
+        return { pass: true, reason: 'ok' };
+      },
+    }) as unknown as Parameters<typeof runHook>[0];
+
+  test('a guarded PreToolUse is ingested first and then guarded, even when ingest throws', () => {
+    const calls: string[] = [];
+    const errors: unknown[] = [];
+    const result = runHook(fake(calls, () => { throw new Error('db'); }), event('PreToolUse', 'Edit'), { socket: null, token: null, role: null, name: null }, (error) => errors.push(error));
+    expect(calls).toEqual(['ingest', 'guard']);
+    expect(result).toEqual({ emit: null, decision: { pass: false, reason: 'Guardia de Agent Office: fuera' } });
+    expect(errors).toHaveLength(1);
+  });
+
+  test('other events are only ingested and TaskCompleted only goes through the gate', () => {
+    const calls: string[] = [];
+    const meta = { socket: null, token: null, role: null, name: null };
+    expect(runHook(fake(calls, () => '{"x":1}'), event('PreToolUse', 'Read'), meta, () => {})).toEqual({ emit: '{"x":1}', decision: { pass: true, reason: 'sin puerta' } });
+    expect(runHook(fake(calls, () => null), event('PostToolUse', 'Edit'), meta, () => {}).decision.pass).toBe(true);
+    expect(runHook(fake(calls, () => null), event('TaskCompleted'), meta, () => {})).toEqual({ emit: null, decision: { pass: true, reason: 'ok' } });
+    expect(calls).toEqual(['ingest', 'ingest', 'gate']);
+  });
+
+  test('the answer is block:<one line>, pass with the emit on the next lines, or pass', () => {
+    expect(hookResponse({ emit: '{"a":1}', decision: { pass: false, reason: 'a\n  b' } })).toBe('block:a b');
+    expect(hookResponse({ emit: '{"a":1}', decision: { pass: true, reason: '' } })).toBe('pass\n{"a":1}');
+    expect(hookResponse({ emit: null, decision: { pass: true, reason: '' } })).toBe('pass');
   });
 });

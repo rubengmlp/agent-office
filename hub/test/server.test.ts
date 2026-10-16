@@ -121,7 +121,7 @@ describe('hub server', () => {
     const asPanel = { 'X-Office-Panel': token };
     expect((await fetch(`${base}/api/state`, { headers: asPanel })).status).toBe(200);
     expect((await post('/api/orders', { sessionId: 'nadie', text: 'hola' }, asPanel)).status).toBe(404);
-    for (const path of ['/events', '/guard', '/gate', '/gate-message', '/usage', '/chat']) {
+    for (const path of ['/events', '/hook', '/guard', '/gate', '/gate-message', '/usage', '/chat']) {
       expect((await post(path, { session_id: 'x', hook_event_name: 'Stop' }, asPanel)).status, path).toBe(401);
       expect((await post(path, { session_id: 'x', hook_event_name: 'Stop' }, { 'X-Office-Key': token })).status, path).toBe(401);
     }

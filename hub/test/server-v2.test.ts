@@ -133,6 +133,55 @@ describe('hub server v2 routes', () => {
     expect((await fetch(`${base}/guard`, { method: 'POST', body: '{}' })).status).toBe(401);
   });
 
+  test('/hook answers pass with the memory of a starting lead and 401 without the key', async () => {
+    const hook = (body: unknown, extra: Record<string, string> = {}) =>
+      fetch(`${base}/hook`, { method: 'POST', headers: { ...headers, ...extra }, body: JSON.stringify(body) });
+    const res = await hook(
+      { session_id: 'lead-hook-1', cwd: repo, hook_event_name: 'SessionStart', source: 'startup' },
+      { 'X-Office-Role': 'office-lead-mobile', 'X-Office-Name': 'lead-mobile' },
+    );
+    const [first, ...rest] = (await res.text()).split('\n');
+    expect(first).toBe('pass');
+    const body = JSON.parse(rest.join('\n')) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } };
+    expect(body.hookSpecificOutput.hookEventName).toBe('SessionStart');
+    expect(body.hookSpecificOutput.additionalContext).toContain('Pide siempre el contrato');
+    expect(await (await hook({ session_id: 'lead-hook-1', cwd: repo, hook_event_name: 'Stop' })).text()).toBe('pass');
+    expect(await (await hook('nada')).text()).toBe('pass');
+    expect((await fetch(`${base}/hook`, { method: 'POST', body: '{}' })).status).toBe(401);
+  });
+
+  test('/hook records the event and applies the guard in the same request', async () => {
+    const pre = (tool: string, file: string) =>
+      fetch(`${base}/hook`, {
+        method: 'POST',
+        headers: { ...headers, 'X-Office-Role': 'office-lead-redaccion' },
+        body: JSON.stringify({ session_id: 'red-hook-1', cwd: join(docs, 'redaccion'), hook_event_name: 'PreToolUse', tool_name: tool, tool_input: { file_path: file, content: 'x' } }),
+      });
+    const blocked = await (await pre('Write', '/etc/x.md')).text();
+    expect(blocked).toStartWith('block:Guardia de Agent Office');
+    expect(blocked).not.toContain('\n');
+    expect(h.office.snapshot().agents.find((a) => a.key === 'red-hook-1')?.tool).toBe('Write');
+    expect(await (await pre('Read', join(docs, 'redaccion', 'planes', 'x.md'))).text()).toBe('pass');
+    expect(h.office.snapshot().agents.find((a) => a.key === 'red-hook-1')?.tool).toBe('Read');
+  });
+
+  test('/hook passes the read cap denial through and TaskCompleted goes through the gate', async () => {
+    h.config.review.maxReviewerReads = 1;
+    const read = () =>
+      fetch(`${base}/hook`, {
+        method: 'POST',
+        headers: { ...headers, 'X-Office-Role': 'office-revisor-planes' },
+        body: JSON.stringify({ session_id: 'rev-hook-1', cwd: join(docs, 'redaccion'), hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: join(docs, 'x.md') } }),
+      });
+    expect(await (await read()).text()).toBe('pass');
+    const denied = (await (await read()).text()).split('\n');
+    expect(denied[0]).toBe('pass');
+    expect(JSON.parse(denied.slice(1).join('\n')).hookSpecificOutput.permissionDecision).toBe('deny');
+    h.config.review.maxReviewerReads = 30;
+    const done = await call('POST', '/hook', { session_id: 'solo-1', cwd: repo, hook_event_name: 'TaskCompleted', task_id: '1', task_subject: 'x' });
+    expect(await done.text()).toBe('pass');
+  });
+
   test('settings go through the settings service', async () => {
     const view = (await (await call('GET', '/api/settings')).json()) as { departments: { redaccion: boolean } };
     expect(view.departments.redaccion).toBe(true);
