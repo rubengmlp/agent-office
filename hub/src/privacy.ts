@@ -6,6 +6,11 @@ export function isPrivate(kind: FloorKind): boolean {
   return kind === 'observed';
 }
 
+// A session that is not of the office is kept like one in an observed floor, wherever it runs.
+export function visibleKind(kind: FloorKind, inOffice: boolean): FloorKind {
+  return inOffice ? kind : 'observed';
+}
+
 export function storedPayload(e: HookEvent, kind: FloorKind): string | null {
   if (isPrivate(kind)) return null;
   const { transcript_path: _transcript, agent_transcript_path: _agentTranscript, ...rest } = e;

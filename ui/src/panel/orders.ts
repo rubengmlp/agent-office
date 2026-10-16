@@ -4,6 +4,7 @@ import { t } from '../i18n';
 import { agentName, floorLabel } from '../labels';
 import type { Store } from '../store';
 import type { SessionView } from '../types';
+import { orderable, orderableSessions } from './orderable';
 import { panelSection } from './section';
 
 const DIRECTOR_ROLES: ReadonlySet<string> = new Set(['office-director', 'office:director']);
@@ -38,8 +39,7 @@ export function mountOrders(host: HTMLElement, store: Store, actions: Actions): 
   let signature: string | null = null;
   let sent = false;
 
-  const eligible = (): SessionView[] =>
-    [...store.sessions.values()].filter((session) => session.canReceive && session.endedAt === null);
+  const eligible = (): SessionView[] => orderableSessions(store.sessions.values());
 
   const refresh = (): void => {
     const enabled = actions.ordersEnabled;
@@ -95,7 +95,7 @@ export function mountOrders(host: HTMLElement, store: Store, actions: Actions): 
     if (textarea.value.trim() !== '') return;
     const session = store.sessions.get(agent.sessionId);
     manualChoice = false;
-    preselect = session && session.canReceive && session.endedAt === null ? session.sessionId : null;
+    preselect = session && orderable(session) ? session.sessionId : null;
     prefillText = t('orders.blockReply', { name: agentName(agent) });
     textarea.value = prefillText;
   };

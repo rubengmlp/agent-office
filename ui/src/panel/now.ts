@@ -7,7 +7,7 @@ import type { Store } from '../store';
 import { clockTime, relativeTime } from '../time';
 import type { ActivityView, AgentView } from '../types';
 import { panelSection } from './section';
-import { runSessionAction, stalledText, statusButton } from './session-controls';
+import { canAskStatus, runSessionAction, stalledText, statusButton } from './session-controls';
 
 const STEP_LIMIT = 5;
 
@@ -55,12 +55,12 @@ function tokensRow(agent: AgentView): HTMLElement | null {
   return row;
 }
 
-function stalledLine(agent: AgentView, now: number, times: TimeNode[]): HTMLElement | null {
+function stalledLine(store: Store, agent: AgentView, now: number, times: TimeNode[]): HTMLElement | null {
   const since = agent.stalledSince;
   if (since === null) return null;
   const mark = el('span', 'chip floors-stalled', stalledText(since, now));
   times.push({ node: mark, text: (at) => stalledText(since, at) });
-  return el('div', 'now-actions', mark, statusButton(agent));
+  return el('div', 'now-actions', mark, canAskStatus(store, agent) ? statusButton(agent) : null);
 }
 
 export function mountNow(host: HTMLElement, store: Store, api: OfficeApi | null): void {
@@ -97,7 +97,7 @@ export function mountNow(host: HTMLElement, store: Store, api: OfficeApi | null)
       el('div', 'now-head', icon, el('div', 'now-headline', el('p', 'now-title', doing), since)),
       chips(agent, now, times),
       tokensRow(agent),
-      stalledLine(agent, now, times),
+      stalledLine(store, agent, now, times),
       agent.task ? el('p', 'now-task', el('span', 'muted', `${t('now.task')} `), agent.task) : null,
       el('h4', 'now-steps-title section-title', t('now.steps')),
       steps.length > 0 ? el('ul', 'now-steps', ...steps.map(stepItem)) : el('p', 'muted hint', t('now.noActivity')),

@@ -20,6 +20,7 @@ async function freePort(): Promise<number> {
 
 describe('hub server v2 routes', () => {
   const h = harness({
+    deliverFn: async () => {},
     configure: (config) => {
       config.departments = { redaccion: true, mantenimiento: true };
     },
@@ -180,6 +181,42 @@ describe('hub server v2 routes', () => {
     h.config.review.maxReviewerReads = 30;
     const done = await call('POST', '/hook', { session_id: 'solo-1', cwd: repo, hook_event_name: 'TaskCompleted', task_id: '1', task_subject: 'x' });
     expect(await done.text()).toBe('pass');
+  });
+
+  test('orders reach only sessions of the office', async () => {
+    const personal = join(h.root, 'personal');
+    mkdirSync(personal, { recursive: true });
+    const socket = join(h.root, 'me.sock');
+    writeFileSync(socket, '');
+    const start = (sessionId: string, cwd: string, extra: Record<string, string> = {}) =>
+      fetch(`${base}/events`, {
+        method: 'POST',
+        headers: { ...headers, 'X-Office-Socket': socket, 'X-Office-Token': 'tok', ...extra },
+        body: JSON.stringify({ session_id: sessionId, cwd, hook_event_name: 'SessionStart', source: 'startup' }),
+      });
+    await start('me-1', personal);
+    const refused = await call('POST', '/api/orders', { sessionId: 'me-1', text: 'hola' });
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({ error: { key: 'hub.api.sessionNotOffice' } });
+    await start('me-2', repo);
+    expect((await call('POST', '/api/orders', { sessionId: 'me-2', text: 'hola' })).status).toBe(403);
+    await start('lead-2', repo, { 'X-Office-Role': 'office-lead-mobile', 'X-Office-Name': 'lead-mobile' });
+    expect((await call('POST', '/api/orders', { sessionId: 'lead-2', text: 'hola' })).status).toBe(200);
+  });
+
+  test('status and relaunch refuse sessions outside the office', async () => {
+    const socket = join(h.root, 'me-4.sock');
+    writeFileSync(socket, '');
+    await fetch(`${base}/events`, {
+      method: 'POST',
+      headers: { ...headers, 'X-Office-Socket': socket, 'X-Office-Token': 'tok' },
+      body: JSON.stringify({ session_id: 'me-4', cwd: repo, hook_event_name: 'SessionStart', source: 'startup' }),
+    });
+    for (const action of ['status', 'relaunch']) {
+      const res = await call('POST', `/api/sessions/me-4/${action}`, {});
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ error: { key: 'hub.api.sessionNotOffice' } });
+    }
   });
 
   test('settings go through the settings service', async () => {

@@ -31,6 +31,12 @@ const GIT_WRITES = new Set([
   'add', 'am', 'apply', 'checkout', 'cherry-pick', 'clean', 'clone', 'commit', 'init', 'merge', 'mv', 'pull',
   'push', 'rebase', 'reset', 'restore', 'revert', 'rm', 'stash', 'switch', 'tag', 'worktree',
 ]);
+const GIT_TREE = new Set([
+  'apply', 'am', 'checkout', 'cherry-pick', 'clean', 'merge', 'mv', 'pull', 'rebase', 'reset', 'restore', 'revert', 'rm', 'stash', 'switch',
+]);
+const GIT_READ_STASH = new Set(['list', 'show']);
+const IGNORE_CHECK_MAX = 50;
+const DIFF_LIMIT = 5000;
 const OUTPUT_FLAGS = new Set(['-o', '--output', '--out', '--path', '--dest', '--destination', '--target', '--output-dir', '--outdir']);
 
 // The order of a writer (redactor-<slug>) or a skillwright (artesano-<name>), from the name its lead gave it.
@@ -236,6 +242,76 @@ export function shellPaths(command: string): ShellPath[] {
   return out.filter((p) => p.path.length > 0);
 }
 
+export type ShellWrites = { paths: string[]; gitTree: boolean };
+
+function changesGitTree(words: string[], cwd: string | null, root: string, home: string): boolean {
+  let dir = cwd ?? root;
+  let i = 0;
+  while (i < words.length) {
+    const w = words[i] ?? '';
+    if (w === '-C' && words[i + 1] !== undefined) {
+      dir = resolvePath(words[i + 1] ?? '', dir, home);
+      i += 2;
+      continue;
+    }
+    if (w === '-c' || w === '--git-dir' || w === '--work-tree') {
+      i += 2;
+      continue;
+    }
+    if (!w.startsWith('-')) break;
+    i++;
+  }
+  const sub = words[i];
+  if (!sub || !GIT_TREE.has(sub)) return false;
+  if (!isInside(realPath(dir), root)) return false;
+  if (sub === 'stash') {
+    const action = words.slice(i + 1).find((w) => !w.startsWith('-'));
+    if (action && GIT_READ_STASH.has(action)) return false;
+  }
+  return true;
+}
+
+// Files inside the floor that a shell line may write: candidates, not changes; only the ones whose fingerprint
+// changes between PreToolUse and PostToolUse count. gitTree: the line runs a git command that changes the work tree.
+export function shellWrites(command: string, cwd: string | null, root: string, home = homedir()): ShellWrites {
+  const floor = realPath(root);
+  const gitDir = join(floor, '.git');
+  const paths = new Set<string>();
+  for (const ref of shellPaths(command)) {
+    if (!ref.write) continue;
+    const target = resolvePath(ref.path, cwd, home);
+    if (target !== floor && isInside(target, floor) && !isInside(target, gitDir)) paths.add(target);
+  }
+  let gitTree = false;
+  for (const segment of tokenize(command)) {
+    const words = [...segment];
+    while (words.length > 0 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0] ?? '')) words.shift();
+    if (basename(words.shift() ?? '') !== 'git') continue;
+    if (changesGitTree(words, cwd, floor, home)) gitTree = true;
+  }
+  return { paths: [...paths], gitTree };
+}
+
+// The paths git ignores in the repository at root. A floor that is not a repository, or a git that fails, ignores nothing.
+export function gitIgnored(root: string, paths: string[]): Set<string> {
+  const out = new Set<string>();
+  if (paths.length === 0) return out;
+  const asked = paths.slice(0, IGNORE_CHECK_MAX);
+  try {
+    const r = Bun.spawnSync(['git', '-C', root, 'check-ignore', '-z', '--stdin'], {
+      stdin: Buffer.from(`${asked.join('\0')}\0`),
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' },
+    });
+    if (r.exitCode !== 0 && r.exitCode !== 1) return out;
+    for (const entry of r.stdout.toString().split('\0')) if (entry) out.add(isAbsolute(entry) ? entry : join(root, entry));
+  } catch {
+    return out;
+  }
+  return out;
+}
+
 export type GuardDecision = GateDecision & { target?: string };
 
 function block(reason: string, target: string): GuardDecision {
@@ -292,7 +368,7 @@ export function guardDecision(g: GuardInput, ctx: GuardContext): GuardDecision {
 
 export type Snapshot = Map<string, string>;
 
-function fingerprint(abs: string): string {
+export function fingerprint(abs: string): string {
   try {
     const st = statSync(abs);
     return `${Math.round(st.mtimeMs)}:${st.size}`;
@@ -323,7 +399,7 @@ export function changedFiles(before: Snapshot, after: Snapshot): string[] {
   return out.sort();
 }
 
-type Baseline = { startedAt: number; floors: Map<string, Snapshot> };
+type Baseline = { startedAt: number; floors: Map<string, Snapshot>; heads: Map<string, string>; paths: Map<string, string> };
 
 export type GuardFinding = { ts: number; level: GuardAlertLevel; floor: string; agentKey: string; files: string[] };
 
@@ -335,10 +411,15 @@ export type WatchDeps = {
   active: (floor: string, from: number, to: number) => boolean;
   exempt: (agentKey: string) => string[];
   report: (finding: GuardFinding) => void;
+  // Also counts the files of the commits made during the turn that the turn really touched.
+  headDiff?: boolean;
 };
 
 export class GuardWatch {
   private readonly baselines = new Map<string, Promise<Baseline>>();
+  private readonly requested = new Map<string, string[]>();
+  private readonly finishing = new Map<number, string[]>();
+  private finishes = 0;
 
   constructor(private readonly deps: WatchDeps) {}
 
@@ -346,30 +427,50 @@ export class GuardWatch {
     return this.baselines.has(agentKey);
   }
 
-  start(agentKey: string): void {
+  start(agentKey: string, floors: GuardFloor[] = this.deps.floors()): void {
     if (this.baselines.has(agentKey)) return;
-    this.baselines.set(agentKey, this.capture());
+    this.requested.set(agentKey, floors.map((f) => f.slug));
+    this.baselines.set(agentKey, this.capture(floors));
   }
 
   async ready(agentKey: string): Promise<void> {
     await this.baselines.get(agentKey);
   }
 
+  // True while a finish that includes the floor is still comparing.
+  busy(slug: string): boolean {
+    for (const slugs of this.finishing.values()) if (slugs.includes(slug)) return true;
+    return false;
+  }
+
   async finish(agentKey: string): Promise<GuardFinding[]> {
     const pending = this.baselines.get(agentKey);
     if (!pending) return [];
     this.baselines.delete(agentKey);
+    const id = ++this.finishes;
+    this.finishing.set(id, this.requested.get(agentKey) ?? []);
+    this.requested.delete(agentKey);
+    try {
+      return await this.compare(agentKey, pending);
+    } finally {
+      this.finishing.delete(id);
+    }
+  }
+
+  private async compare(agentKey: string, pending: Promise<Baseline>): Promise<GuardFinding[]> {
     const before = await pending;
-    const after = await this.capture();
+    const after = await this.capture(this.deps.floors().filter((f) => before.floors.has(f.slug)));
     const exempt = this.deps.exempt(agentKey);
     const findings: GuardFinding[] = [];
     for (const [floor, snapshot] of after.floors) {
       const previous = before.floors.get(floor);
       if (!previous) continue;
+      const changed = new Set(changedFiles(previous, snapshot));
+      for (const file of await this.committed(floor, before, after, previous)) changed.add(file);
       const attributed = this.deps.attributed(floor, before.startedAt, after.startedAt);
-      const files = changedFiles(previous, snapshot).filter(
-        (file) => !attributed.has(realPath(file)) && !exempt.some((dir) => isInside(realPath(file), dir)),
-      );
+      const files = [...changed]
+        .sort()
+        .filter((file) => !attributed.has(realPath(file)) && !exempt.some((dir) => isInside(realPath(file), dir)));
       if (files.length === 0) continue;
       const level: GuardAlertLevel = this.deps.active(floor, before.startedAt, after.startedAt) ? 'posible' : 'alerta';
       const finding = { ts: after.startedAt, level, floor, agentKey, files };
@@ -379,13 +480,38 @@ export class GuardWatch {
     return findings;
   }
 
-  private async capture(): Promise<Baseline> {
+  // Files of the commits made during the turn that were clean at its start or changed since: a commit of what was
+  // already dirty with the same fingerprint is not a change of this turn.
+  private async committed(slug: string, before: Baseline, after: Baseline, previous: Snapshot): Promise<string[]> {
+    const from = before.heads.get(slug);
+    const to = after.heads.get(slug);
+    const repo = after.paths.get(slug);
+    if (!from || !to || from === to || !repo) return [];
+    const r = await this.deps.git(repo, ['diff', '--name-only', '-z', from, to], 30_000);
+    if (r.code !== 0) return [];
+    return r.stdout
+      .split('\0')
+      .filter((file) => file.length > 0)
+      .slice(0, DIFF_LIMIT)
+      .map((file) => join(repo, file))
+      .filter((abs) => {
+        const was = previous.get(abs);
+        return was === undefined || was !== fingerprint(abs);
+      });
+  }
+
+  private async capture(floors: GuardFloor[]): Promise<Baseline> {
     const startedAt = this.deps.now();
-    const floors = new Map<string, Snapshot>();
-    for (const floor of this.deps.floors()) {
+    const out: Baseline = { startedAt, floors: new Map(), heads: new Map(), paths: new Map() };
+    for (const floor of floors) {
       const snapshot = await snapshotRepo(this.deps.git, floor.path);
-      if (snapshot) floors.set(floor.slug, snapshot);
+      if (!snapshot) continue;
+      out.floors.set(floor.slug, snapshot);
+      out.paths.set(floor.slug, floor.path);
+      if (!this.deps.headDiff) continue;
+      const head = await this.deps.git(floor.path, ['rev-parse', 'HEAD'], 30_000);
+      if (head.code === 0) out.heads.set(floor.slug, head.stdout.trim());
     }
-    return { startedAt, floors };
+    return out;
   }
 }

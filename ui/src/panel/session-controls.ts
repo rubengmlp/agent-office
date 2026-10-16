@@ -5,9 +5,14 @@ import { agentName } from '../labels';
 import type { Store } from '../store';
 import { duration } from '../time';
 import type { AgentView, SessionView } from '../types';
+import { statusAllowed } from './orderable';
 
 export function mainSession(store: Store, agent: AgentView): SessionView | undefined {
   return agent.key === agent.sessionId ? store.sessions.get(agent.sessionId) : undefined;
+}
+
+export function canAskStatus(store: Store, agent: AgentView): boolean {
+  return statusAllowed(store.sessions.get(agent.sessionId));
 }
 
 export function stalledText(since: number, now: number): string {

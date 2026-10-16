@@ -4,12 +4,27 @@ export type GateFacts = {
   owner: string | null;
   lastOwnerEdit: number | null;
   lastTesterGreen: number | null;
+  changed: string[];
+  changedTotal?: number;
+  fingerprintPending: boolean;
 };
 
 export type GateDecision = { pass: boolean; reason: string };
 
+const LISTED_FILES = 8;
+
+function changedList(f: GateFacts): string {
+  if (f.changed.length === 0) return '';
+  const shown = f.changed.slice(0, LISTED_FILES);
+  const more = Math.max(f.changedTotal ?? f.changed.length, f.changed.length) - shown.length;
+  return ` Ficheros cambiados sin tester: ${shown.join(', ')}${more > 0 ? ` (y ${more} más)` : ''}.`;
+}
+
 export function decideGate(f: GateFacts): GateDecision {
   if (!f.officeTeam || !f.floorManaged) return { pass: true, reason: 'fuera de la oficina' };
+  if (f.fingerprintPending) {
+    return { pass: false, reason: 'La huella de cambios del desarrollador aún se está calculando; vuelve a intentarlo en unos segundos.' };
+  }
   if (f.lastOwnerEdit === null) return { pass: true, reason: 'sin cambios en el repositorio' };
   if (f.lastTesterGreen !== null && f.lastTesterGreen > f.lastOwnerEdit) {
     return { pass: true, reason: 'tester en verde después del último cambio' };
@@ -17,7 +32,7 @@ export function decideGate(f: GateFacts): GateDecision {
   const who = f.owner ? ` de ${f.owner}` : '';
   return {
     pass: false,
-    reason: `Falta tester: no hay tests en verde de un tester de esta planta posteriores al último cambio${who}. Pide al tester que pruebe lo que cambió y vuelve a intentarlo. Un test del propio desarrollador no cuenta.`,
+    reason: `Falta tester: no hay tests en verde de un tester de esta planta posteriores al último cambio${who}. Pide al tester que pruebe lo que cambió y vuelve a intentarlo. Un test del propio desarrollador no cuenta.${changedList(f)}`,
   };
 }
 

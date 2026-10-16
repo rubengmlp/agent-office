@@ -176,6 +176,7 @@ export type HubTextParams = {
   'hub.api.orderFields': undefined;
   'hub.api.orderTooLong': undefined;
   'hub.api.sessionNotFound': undefined;
+  'hub.api.sessionNotOffice': undefined;
   'hub.api.orderFailed': undefined;
   'hub.api.settingsUnavailable': undefined;
   'hub.api.floorsUnavailable': undefined;
@@ -467,6 +468,7 @@ export type SessionView = {
   rulesPending: boolean;
   canRelaunch: boolean;
   relaunchResumes: boolean;
+  office: boolean;
 };
 
 export type ActivityView = {

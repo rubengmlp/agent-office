@@ -21,5 +21,6 @@ export function prune(db: Database, now: number, retentionDays: number): number 
   run('DELETE FROM token_cursor WHERE updated_at < ?');
   run('DELETE FROM agents WHERE COALESCE(ended_at, updated_at) < ?');
   run('DELETE FROM sessions WHERE COALESCE(ended_at, updated_at) < ?');
+  run('DELETE FROM reports WHERE updated_at < ? AND role_id IS NULL');
   return removed;
 }
