@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { agentPath } from '../src/agents';
-import { DEFAULT_ROLES, PROFILES_DIR, loadConfig, saveConfig } from '../src/config';
+import { DEFAULT_ROLES, PROFILES_DIR, loadConfig, normalizeConfig, saveConfig } from '../src/config';
 import { planFloor, writeFloor } from '../src/floor-cli';
 import { loadProfiles } from '../src/profiles';
 import { applySettings, createSettings, settingsView } from '../src/settings';
@@ -33,6 +33,21 @@ describe('settings', () => {
     expect(result.config.floors.mobile?.baseBranch).toBe('main');
     expect(config.roles.dev.model).toBe(DEFAULT_ROLES.dev.model);
     expect(applySettings(config, {})).toMatchObject({ changed: false });
+  });
+
+  test('leaveAfterMinutes is shown, changed within its limits and normalized', () => {
+    const config = testConfig();
+    expect(config.leaveAfterMinutes).toBe(5);
+    expect(settingsView(config).leaveAfterMinutes).toBe(5);
+    const result = applySettings(config, { leaveAfterMinutes: 12 });
+    if ('error' in result) throw new Error(result.error);
+    expect(result.config.leaveAfterMinutes).toBe(12);
+    for (const value of [0, 61, 2.5, '10']) {
+      const rejected = applySettings(config, { leaveAfterMinutes: value });
+      expect('error' in rejected ? rejected.error : '').toContain('leaveAfterMinutes va de 1 a 60');
+    }
+    expect(normalizeConfig({ leaveAfterMinutes: 90 }).leaveAfterMinutes).toBe(5);
+    expect(normalizeConfig({ leaveAfterMinutes: 30 }).leaveAfterMinutes).toBe(30);
   });
 
   test('every invalid value is explained and nothing is applied', () => {

@@ -104,6 +104,7 @@ export const LIMITS = {
   maxLessons: { min: 1, max: 200 },
   maxLessonsPerSession: { min: 0, max: 20 },
   maxContextChars: { min: 500, max: 20000 },
+  leaveAfterMinutes: { min: 1, max: 60 },
 } as const;
 
 export const DEFAULT_CONFIG: OfficeConfig = {
@@ -117,6 +118,7 @@ export const DEFAULT_CONFIG: OfficeConfig = {
   memory: { maxLessons: 30, maxLessonsPerSession: 3, maxContextChars: 4000 },
   permissionModes: {},
   blockedAfterMinutes: 5,
+  leaveAfterMinutes: 5,
   retentionDays: 14,
   port: 4747,
 };
@@ -266,6 +268,7 @@ export function normalizeConfig(raw: unknown): OfficeConfig {
     memory: normalizedMemory,
     permissionModes,
     blockedAfterMinutes: positive(src.blockedAfterMinutes, d.blockedAfterMinutes),
+    leaveAfterMinutes: int(src.leaveAfterMinutes, LIMITS.leaveAfterMinutes, d.leaveAfterMinutes),
     retentionDays: positive(src.retentionDays, d.retentionDays),
     port: positive(src.port, d.port),
   };

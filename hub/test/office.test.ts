@@ -508,3 +508,162 @@ describe('session liveness', () => {
     ]);
   });
 });
+
+describe('what each agent is on', () => {
+  test('the file is relative to the floor, only its name outside it, and clears on a new turn', () => {
+    h = harness();
+    const repo = managedRepo();
+    h.office.ingest(ev(LEAD, repo, 'SessionStart', {}), leadMeta);
+    expect(agent(LEAD)?.file).toBeNull();
+    h.office.ingest(ev(LEAD, repo, 'PreToolUse', { tool_name: 'Edit', tool_input: { file_path: join(repo, 'lib', 'login.dart') } }));
+    expect(agent(LEAD)?.file).toBe(join('lib', 'login.dart'));
+    h.office.ingest(ev(LEAD, repo, 'PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } }));
+    expect(agent(LEAD)?.file).toBe(join('lib', 'login.dart'));
+    h.office.ingest(ev(LEAD, repo, 'PreToolUse', { tool_name: 'Read', tool_input: { file_path: join(h.root, 'docs', 'plan.md') } }));
+    expect(agent(LEAD)?.file).toBe('plan.md');
+    h.office.ingest(ev(LEAD, repo, 'PreToolUse', { tool_name: 'Grep', tool_input: { pattern: 'x', path: join(repo, 'lib') } }));
+    expect(agent(LEAD)?.file).toBe('plan.md');
+    h.office.ingest(ev(LEAD, repo, 'UserPromptSubmit', { prompt: 'Sigue con el registro' }));
+    expect(agent(LEAD)?.file).toBeNull();
+  });
+
+  test('an observed floor shows only the file name', () => {
+    h = harness();
+    const repo = observedRepo();
+    h.office.ingest(ev('obs-1', repo, 'PreToolUse', { tool_name: 'Edit', tool_input: { file_path: join(repo, 'src', 'secreto.ts') } }));
+    h.office.ingest(ev('obs-1', repo, 'UserPromptSubmit', { prompt: 'Arregla el pago' }));
+    expect(agent('obs-1')?.task).toBeNull();
+    h.office.ingest(ev('obs-1', repo, 'PreToolUse', { tool_name: 'Edit', tool_input: { file_path: join(repo, 'src', 'secreto.ts') } }));
+    expect(agent('obs-1')?.file).toBe('secreto.ts');
+  });
+
+  test('the task is the first line of the last message or order received that is not protocol', async () => {
+    h = harness({ deliverFn: async () => {} });
+    const repo = managedRepo();
+    const socket = join(h.root, 'lead.sock');
+    writeFileSync(socket, '');
+    h.office.ingest(ev(LEAD, repo, 'SessionStart', {}), { ...leadMeta, socket });
+    h.office.ingest(
+      ev(LEAD, repo, 'PreToolUse', {
+        tool_name: 'Agent',
+        tool_use_id: 'call-dev',
+        tool_input: { name: 'dev-mobile', subagent_type: 'office-dev-mobile', description: 'pantalla de viajes', prompt: '...' },
+      }),
+    );
+    h.office.ingest(ev(LEAD, repo, 'PostToolUse', { tool_name: 'Agent', tool_use_id: 'call-dev', tool_input: {}, tool_response: { agentId: 'dev-1' } }));
+    h.office.ingest(ev(LEAD, repo, 'SubagentStart', { agent_id: 'dev-1', agent_type: 'office-dev-mobile' }));
+    expect(agent('dev-1')?.task).toBe('pantalla de viajes');
+
+    const send = (message: string) =>
+      h.office.ingest(ev(LEAD, repo, 'PreToolUse', { tool_name: 'SendMessage', tool_input: { to: 'dev-mobile', message } }));
+    send('\nEmpieza por la tarea 1: el login\nDetalles: usa el repositorio nuevo');
+    expect(agent('dev-1')?.task).toBe('Empieza por la tarea 1: el login');
+    send('LECCIÓN: los tests van antes');
+    expect(agent('dev-1')?.task).toBe('Empieza por la tarea 1: el login');
+    send(`Ahora el registro ${'x'.repeat(200)}`);
+    expect(agent('dev-1')?.task?.length).toBe(120);
+    expect(agent('dev-1')?.task).toStartWith('Ahora el registro');
+    expect(agent(LEAD)?.task).toBeNull();
+
+    expect(await h.office.order(LEAD, 'Prioriza el login\ny luego el perfil')).toBe('ok');
+    expect(agent(LEAD)?.task).toBe('Prioriza el login');
+    h.office.ingest(ev(LEAD, repo, 'UserPromptSubmit', { prompt: '[Agent Office] Orden del usuario desde el panel de la oficina: Cierra la rama' }));
+    expect(agent(LEAD)?.task).toBe('Cierra la rama');
+    h.office.ingest(ev(LEAD, repo, 'UserPromptSubmit', { prompt: '/clear' }));
+    h.office.ingest(ev(LEAD, repo, 'UserPromptSubmit', { prompt: 'HECHO: todo listo' }));
+    expect(agent(LEAD)?.task).toBe('Cierra la rama');
+  });
+});
+
+describe('agents going home', () => {
+  const lastAgent = (key: string): AgentView | undefined => {
+    for (let index = h.messages.length - 1; index >= 0; index -= 1) {
+      const msg = h.messages[index];
+      if (msg?.type === 'agent' && msg.data.key === key) return msg.data;
+    }
+    return undefined;
+  };
+
+  function teamWithDev(): string {
+    h = harness();
+    const repo = managedRepo();
+    h.office.ingest(ev(LEAD, repo, 'SessionStart', {}), leadMeta);
+    h.office.ingest(ev(LEAD, repo, 'TeammateIdle', { agent_id: 'dev-1', teammate_name: 'dev-mobile', team_name: TEAM }));
+    return repo;
+  }
+
+  test('an idle teammate leaves after leaveAfterMinutes; the lead and the director never do', () => {
+    teamWithDev();
+    h.office.ingest(ev('dir-1', h.workspace, 'SessionStart', {}), { socket: null, token: null, role: 'office-director', name: 'director' });
+    h.clock.advance(4 * 60_000);
+    h.office.tick();
+    expect(agent('dev-1')?.away).toBe(false);
+    h.clock.advance(60_000 + 1);
+    h.office.tick();
+    expect(agent('dev-1')?.away).toBe(true);
+    expect(lastAgent('dev-1')?.away).toBe(true);
+    h.clock.advance(60 * 60_000);
+    h.office.tick();
+    expect(agent(LEAD)).toMatchObject({ state: 'idle', away: false });
+    expect(agent('dir-1')).toMatchObject({ roleKind: 'director', away: false });
+  });
+
+  test('the configured minutes are respected', () => {
+    h = harness({ configure: (config) => (config.leaveAfterMinutes = 15) });
+    const repo = managedRepo();
+    h.office.ingest(ev(LEAD, repo, 'SessionStart', {}), leadMeta);
+    h.office.ingest(ev(LEAD, repo, 'TeammateIdle', { agent_id: 'dev-1', teammate_name: 'dev-mobile', team_name: TEAM }));
+    h.clock.advance(14 * 60_000);
+    h.office.tick();
+    expect(agent('dev-1')?.away).toBe(false);
+    h.clock.advance(60_000 + 1);
+    h.office.tick();
+    expect(agent('dev-1')?.away).toBe(true);
+  });
+
+  test('the team waits at its desks while the lead is working', () => {
+    const repo = teamWithDev();
+    h.office.ingest(ev(LEAD, repo, 'PreToolUse', { tool_name: 'Bash', tool_input: { command: 'git status' } }));
+    h.clock.advance(20 * 60_000);
+    h.office.tick();
+    expect(agent(LEAD)?.state).toBe('working');
+    expect(agent('dev-1')?.away).toBe(false);
+    h.office.ingest(ev(LEAD, repo, 'Stop', {}));
+    h.office.tick();
+    expect(agent('dev-1')?.away).toBe(true);
+  });
+
+  test('any new event or a message brings it back', () => {
+    const repo = teamWithDev();
+    h.clock.advance(6 * 60_000);
+    h.office.tick();
+    expect(agent('dev-1')?.away).toBe(true);
+    h.office.ingest(ev(LEAD, repo, 'PreToolUse', { agent_id: 'dev-1', tool_name: 'Read', tool_input: { file_path: join(repo, 'a.dart') } }));
+    expect(agent('dev-1')?.away).toBe(false);
+
+    h.office.ingest(ev(LEAD, repo, 'TeammateIdle', { agent_id: 'dev-1', teammate_name: 'dev-mobile', team_name: TEAM }));
+    h.clock.advance(6 * 60_000);
+    h.office.tick();
+    expect(agent('dev-1')?.away).toBe(true);
+    h.office.ingest(ev(LEAD, repo, 'PreToolUse', { tool_name: 'SendMessage', tool_input: { to: 'dev-mobile', message: 'Revisa el registro' } }));
+    expect(agent('dev-1')).toMatchObject({ away: false, task: 'Revisa el registro' });
+    expect(lastAgent('dev-1')?.away).toBe(false);
+    h.office.tick();
+    expect(agent('dev-1')?.away).toBe(false);
+  });
+
+  test('an ended agent is away at once and agent-gone is sent when the hub forgets it', () => {
+    h = harness();
+    const repo = managedRepo();
+    h.office.ingest(ev(LEAD, repo, 'SessionStart', {}), leadMeta);
+    h.office.ingest(ev(LEAD, repo, 'SubagentStart', { agent_id: 'sub-1', agent_type: 'Explore' }));
+    expect(agent('sub-1')?.away).toBe(false);
+    h.office.ingest(ev(LEAD, repo, 'SubagentStop', { agent_id: 'sub-1', agent_type: 'Explore' }));
+    expect(agent('sub-1')).toMatchObject({ state: 'done', away: true });
+    h.clock.advance(10 * 60_000 + 1);
+    h.office.tick();
+    expect(agent('sub-1')).toBeUndefined();
+    expect(h.messages.at(-1)).toEqual({ type: 'agent-gone', key: 'sub-1' });
+    expect(h.messages.filter((m) => m.type === 'agent-gone')).toHaveLength(1);
+  });
+});

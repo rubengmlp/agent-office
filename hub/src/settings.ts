@@ -59,6 +59,7 @@ export function settingsView(config: OfficeConfig): SettingsView {
     docsRepo: config.docsRepo,
     port: config.port,
     permissionModes,
+    leaveAfterMinutes: config.leaveAfterMinutes,
     floors: Object.entries(config.floors)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([slug, f]) => ({ slug, path: f.path, stack: f.stack, managed: f.managed, baseBranch: f.baseBranch })),
@@ -175,6 +176,10 @@ export function applySettings(config: OfficeConfig, raw: unknown): { config: Off
     }
     if (validPermissionMode(mode)) next.permissionModes[slug] = mode;
     else errors.push(`Modo de permisos no válido para ${slug}: auto, manual, acceptEdits, plan o dontAsk.`);
+  }
+  if (update.leaveAfterMinutes !== undefined) {
+    if (validInt(update.leaveAfterMinutes, LIMITS.leaveAfterMinutes)) next.leaveAfterMinutes = update.leaveAfterMinutes;
+    else errors.push(`leaveAfterMinutes va de ${LIMITS.leaveAfterMinutes.min} a ${LIMITS.leaveAfterMinutes.max}.`);
   }
   if (errors.length > 0) return { error: errors.join(' ') };
   return { config: next, changed: JSON.stringify(next) !== JSON.stringify(config) };

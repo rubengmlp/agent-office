@@ -1,9 +1,9 @@
 import type { Database } from 'bun:sqlite';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join, relative, resolve } from 'node:path';
 import { managedFloors } from './agents';
-import { deliver, encodeInbox, orderText } from './courier';
+import { deliver, encodeInbox, ORDER_LEAD, ORDER_PREFIX, orderText } from './courier';
 import { commitDocument } from './docs-repo';
 import { DocumentDesk } from './documents';
 import {
@@ -22,7 +22,7 @@ import { decideDocumentGate, decideGate, type GateDecision } from './gate';
 import { GitQueue, runGit, type GitRunner } from './git';
 import { GUARDED_TOOLS, GuardWatch, guardDecision, zonesFor, type GuardContext, type GuardFinding } from './guard';
 import { captureLesson, cleanLesson, deleteLesson, isRoleId, listLessons, memoryContext } from './memory';
-import { publicDetail, publicSummary, publicText, storedPayload } from './privacy';
+import { isPrivate, publicDetail, publicSummary, publicText, storedPayload } from './privacy';
 import { detectStack, profileFor, type Profiles } from './profiles';
 import { docRef, parseProtocol, type DocRef } from './protocol';
 import { PERMISSION_ALLOW, PERMISSION_DENY, QuestionDesk, parseQuestions } from './questions';
@@ -43,7 +43,18 @@ import {
   roleKind,
 } from './scope';
 import { settingsView } from './settings';
-import { DONE_PREFIX, classify, idText, record, short, text, type Classified, type Matchers, type SpawnCall } from './state-machine';
+import {
+  DONE_PREFIX,
+  EDIT_TOOLS,
+  classify,
+  idText,
+  record,
+  short,
+  text,
+  type Classified,
+  type Matchers,
+  type SpawnCall,
+} from './state-machine';
 import { SyncDesk, type SyncResult } from './sync';
 import type {
   ActivityView,
@@ -99,6 +110,9 @@ type AgentRuntime = {
   retiredAt: number | null;
   retiredAwake: boolean;
   awaitingAnswer: boolean;
+  file: string | null;
+  task: string | null;
+  away: boolean;
 };
 
 type SessionRuntime = {
@@ -179,6 +193,10 @@ const NOT_PERMISSIONS: ReadonlySet<string> = new Set(['AskUserQuestion', 'ExitPl
 const TURN_OVER: ReadonlySet<string> = new Set(['SubagentStop', 'Stop', 'TeammateIdle', 'SessionEnd']);
 const HOLDS_QUESTION: ReadonlySet<string> = new Set(['SubagentStop', 'Stop', 'TeammateIdle', 'Notification', 'PostToolUse', 'PostToolUseFailure']);
 const ANSWERS_QUESTION: ReadonlySet<string> = new Set(['PreToolUse', 'UserPromptSubmit', 'SubagentStart']);
+const NEW_TURN: ReadonlySet<string> = new Set(['UserPromptSubmit', 'SubagentStart']);
+const FILE_TOOLS: ReadonlySet<string> = new Set([...EDIT_TOOLS, 'Read', 'NotebookRead']);
+const LEAD_BUSY: ReadonlySet<AgentState> = new Set<AgentState>(['working', 'reading', 'testing', 'checking', 'talking']);
+const TASK_MAX = 120;
 const VERDICT_LABELS: Record<Exclude<VerdictKind, 'tests'>, string> = {
   approved: 'aprobado',
   improve: 'mejorar',
@@ -386,6 +404,13 @@ export class Office {
     if (c.blocked) agent.blockedReason = kind === 'observed' ? 'bloqueado' : c.blocked;
     else if (c.unblock) agent.blockedReason = null;
     if (c.filePath) agent.touchedFloor = this.touchedFloor(c.filePath, agent.floor);
+    agent.away = false;
+    if (NEW_TURN.has(c.event)) agent.file = null;
+    if (c.event === 'PreToolUse' && c.filePath && FILE_TOOLS.has(c.tool ?? '')) agent.file = this.fileLabel(c.filePath, session);
+    if (c.event === 'UserPromptSubmit' && agent.key === session.sessionId) {
+      const task = taskLine(publicText(text(e.prompt), kind));
+      if (task) agent.task = task;
+    }
     const closing = text(e.last_assistant_message);
     if (closing && remembers(kind) && (c.event === 'SubagentStop' || c.event === 'Stop')) agent.closing = closing;
     agent.updatedAt = now;
@@ -601,6 +626,13 @@ export class Office {
       state: null,
       summary: `orden desde el panel: ${short(body, 60)}`,
     });
+    const main = this.agents.get(sessionId);
+    const task = taskLine(publicText(body, session.floorKind));
+    if (main && main.retiredAt === null && task) {
+      main.task = task;
+      main.away = false;
+      this.emitAgent(main, this.now());
+    }
     return 'ok';
   }
 
@@ -717,6 +749,12 @@ export class Office {
     for (const agent of [...this.agents.values()]) {
       if (agent.endedAt !== null && now - agent.endedAt > FORGET_ENDED_MS) {
         this.agents.delete(agent.key);
+        this.emit({ type: 'agent-gone', key: agent.key });
+        continue;
+      }
+      if (this.goesHome(agent, now)) {
+        agent.away = true;
+        this.emitAgent(agent, now);
         continue;
       }
       if (this.view(agent, now).state !== agent.sentState) this.emitAgent(agent, now);
@@ -1239,6 +1277,9 @@ export class Office {
         retiredAt: null,
         retiredAwake: false,
         awaitingAnswer: false,
+        file: null,
+        task: null,
+        away: false,
       };
       this.agents.set(agent.key, agent);
     }
@@ -1300,6 +1341,7 @@ export class Office {
 
   private applySpawn(agent: AgentRuntime, call: SpawnCall): void {
     if (!agent.name && call.name) agent.name = call.name;
+    if (!agent.task) agent.task = taskLine(publicText(call.description, agent.floorKind));
     if (call.subagentType) {
       agent.spawnType = canonicalRole(call.subagentType);
       agent.role = agent.spawnType;
@@ -1330,8 +1372,40 @@ export class Office {
     if (this.messages.length > MAX_MESSAGES) this.messages.splice(0, this.messages.length - MAX_MESSAGES);
     this.emit({ type: 'message', data: view });
     const recipient = toKey ? this.agents.get(toKey) : undefined;
+    if (recipient && recipient !== from) this.messageReceived(recipient, body, now);
     if (recipient && recipient !== from && recipient.awaitingAnswer) this.answerReceived(recipient, now);
     if (body) this.handleProtocol({ to: message.to, toKey, text: body }, from, session, now);
+  }
+
+  private messageReceived(agent: AgentRuntime, body: string | null, now: number): void {
+    if (agent.retiredAt !== null || agent.endedAt !== null) return;
+    const task = taskLine(body);
+    if (!task && !agent.away) return;
+    if (task) agent.task = task;
+    if (agent.away) {
+      agent.away = false;
+      agent.updatedAt = now;
+    }
+    this.emitAgent(agent, now);
+  }
+
+  private goesHome(agent: AgentRuntime, now: number): boolean {
+    if (agent.away || !agent.teammate || agent.endedAt !== null || agent.retiredAt !== null) return false;
+    if (agent.state !== 'idle' || agent.blockedReason !== null || agent.awaitingAnswer) return false;
+    if (now - agent.updatedAt < this.config.leaveAfterMinutes * 60_000) return false;
+    const lead = this.agents.get(agent.sessionId);
+    if (!lead || lead === agent || lead.endedAt !== null) return true;
+    return !LEAD_BUSY.has(this.view(lead, now).state);
+  }
+
+  private fileLabel(filePath: string, session: SessionRuntime): string {
+    const name = basename(filePath);
+    if (isPrivate(session.floorKind)) return name;
+    const root = this.floors.resolve(session.cwd).path;
+    if (!root) return name;
+    const file = realPath(resolve(session.cwd ?? root, filePath));
+    const base = realPath(root);
+    return file !== base && isInside(file, base) ? relative(base, file) : name;
   }
 
   private answerReceived(agent: AgentRuntime, now: number): void {
@@ -1520,6 +1594,9 @@ export class Office {
       stateSince: agent.stateSince,
       updatedAt: agent.updatedAt,
       endedAt: agent.endedAt,
+      file: agent.file,
+      task: agent.task,
+      away: agent.away || agent.endedAt !== null || agent.retiredAt !== null,
     };
   }
 
@@ -1599,6 +1676,9 @@ export class Office {
         retiredAt: null,
         retiredAwake: false,
         awaitingAnswer: false,
+        file: null,
+        task: null,
+        away: false,
       });
       this.sessions.set(row.session_id, {
         sessionId: row.session_id,
@@ -1642,6 +1722,19 @@ export function executeOrderText(doc: Pick<DocumentView, 'path' | 'title' | 'rou
     `Léelo en \`${docsRepo}/${doc.path}\`, divídelo por planta según sus Pasos y manda a cada jefe${leads} su parte con la ruta del plan; ya lo conocen por el aviso PLAN de Redacción.`,
     'Avísame cuando terminen todas.',
   ].join(' ');
+}
+
+export function taskLine(body: string | null): string | null {
+  if (!body) return null;
+  let rest = body.trim();
+  if (rest.startsWith(ORDER_LEAD)) rest = rest.slice(ORDER_LEAD.length).trim();
+  else if (rest.startsWith(ORDER_PREFIX) || rest.startsWith('<') || rest.startsWith('/')) return null;
+  if (parseProtocol(rest) !== null) return null;
+  const line = rest
+    .split('\n')
+    .map((part) => part.trim())
+    .find((part) => part.length > 0);
+  return line ? short(line, TASK_MAX) : null;
 }
 
 export function historyPath(slug: string): string {

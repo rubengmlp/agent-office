@@ -46,6 +46,7 @@ export type OfficeConfig = {
   memory: MemoryConfig;
   permissionModes: Record<string, PermissionMode>;
   blockedAfterMinutes: number;
+  leaveAfterMinutes: number;
   retentionDays: number;
   port: number;
 };
@@ -134,6 +135,9 @@ export type AgentView = {
   stateSince: number;
   updatedAt: number;
   endedAt: number | null;
+  file: string | null;
+  task: string | null;
+  away: boolean;
 };
 
 export type FloorView = {
@@ -292,6 +296,7 @@ export type SettingsView = {
   docsRepo: string;
   port: number;
   permissionModes: Record<string, PermissionMode>;
+  leaveAfterMinutes: number;
   floors: { slug: string; path: string; stack: Stack; managed: boolean; baseBranch: string }[];
 };
 
@@ -303,6 +308,7 @@ export type SettingsUpdate = {
   memory?: Partial<MemoryConfig>;
   floors?: Record<string, { baseBranch?: string }>;
   permissionModes?: Record<string, PermissionMode>;
+  leaveAfterMinutes?: number;
 };
 
 export type SettingsResult = { ok: true; regenerated: number; note: string } | { ok: false; error: string };
@@ -329,6 +335,7 @@ export type ServerMessage =
   | { type: 'snapshot'; data: Snapshot }
   | { type: 'floors'; data: FloorView[] }
   | { type: 'agent'; data: AgentView }
+  | { type: 'agent-gone'; key: string }
   | { type: 'session'; data: SessionView }
   | { type: 'question'; data: QuestionView }
   | { type: 'question-closed'; id: string; outcome: QuestionOutcome }

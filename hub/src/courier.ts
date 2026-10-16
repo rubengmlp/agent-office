@@ -2,8 +2,10 @@ import { createConnection } from 'node:net';
 
 export const ORDER_PREFIX = '[Agent Office]';
 
+export const ORDER_LEAD = `${ORDER_PREFIX} Orden del usuario desde el panel de la oficina:`;
+
 export function orderText(text: string): string {
-  return `${ORDER_PREFIX} Orden del usuario desde el panel de la oficina: ${text.trim()}`;
+  return `${ORDER_LEAD} ${text.trim()}`;
 }
 
 export function encodeInbox(token: string | null, content: string): string {
