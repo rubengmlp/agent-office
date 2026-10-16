@@ -1,5 +1,5 @@
 import { basename } from 'node:path';
-import type { AgentState, HookEvent } from './types';
+import type { AgentState, HookEvent, HubText } from './types';
 
 export type Matchers = { test: RegExp; check: RegExp };
 
@@ -25,7 +25,7 @@ export type Classified = {
   parentKey: string | null;
   role: string | null;
   state: AgentState | null;
-  detail: string;
+  detail: HubText;
   tool: string | null;
   filePath: string | null;
   command: string | null;
@@ -41,7 +41,7 @@ export type Classified = {
   task: TaskInfo | null;
   teammate: string | null;
   team: string | null;
-  summary: string;
+  summary: HubText;
 };
 
 export const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
@@ -111,9 +111,14 @@ export function classify(e: HookEvent, m: Matchers): Classified {
 
   switch (e.hook_event_name) {
     case 'SessionStart':
-      return { ...base, state: 'idle', detail: 'esperando', summary: `sesión iniciada (${text(e.source) ?? 'startup'})` };
+      return {
+        ...base,
+        state: 'idle',
+        detail: { key: 'hub.detail.waiting' },
+        summary: { key: 'hub.act.sessionStart', params: { source: text(e.source) ?? 'startup' } },
+      };
     case 'UserPromptSubmit':
-      return { ...base, state: 'working', detail: 'pensando', unblock: true, summary: 'nuevo turno' };
+      return { ...base, state: 'working', detail: { key: 'hub.detail.thinking' }, unblock: true, summary: { key: 'hub.act.newTurn' } };
     case 'PreToolUse':
       return preTool(base, e, input, m);
     case 'PostToolUse':
@@ -124,31 +129,38 @@ export function classify(e: HookEvent, m: Matchers): Classified {
       return {
         ...base,
         state: 'asking',
-        detail: `permiso: ${base.tool ?? '?'}`,
-        summary: `pide permiso para ${base.tool ?? '?'}`,
+        detail: { key: 'hub.detail.permission', params: { tool: base.tool ?? '?' } },
+        summary: { key: 'hub.act.permission', params: { tool: base.tool ?? '?' } },
       };
     case 'Notification':
       return notification(base, e);
     case 'SubagentStart':
-      return { ...base, state: 'working', detail: 'empieza', summary: `empieza ${base.role ?? 'subagente'}` };
-    case 'SubagentStop':
+      return {
+        ...base,
+        state: 'working',
+        detail: { key: 'hub.detail.starting' },
+        summary: { key: 'hub.act.subagentStart', params: { who: base.role ?? { key: 'hub.who.subagent' } } },
+      };
+    case 'SubagentStop': {
+      const last = text(e.last_assistant_message);
       return {
         ...base,
         state: 'done',
         ended: true,
-        detail: short(text(e.last_assistant_message) ?? 'terminado', 120),
-        summary: 'termina',
+        detail: last ? short(last, 120) : { key: 'hub.detail.finished' },
+        summary: { key: 'hub.act.done' },
       };
+    }
     case 'Stop':
-      return { ...base, state: 'idle', detail: 'esperando', summary: 'fin de turno' };
+      return { ...base, state: 'idle', detail: { key: 'hub.detail.waiting' }, summary: { key: 'hub.act.turnEnd' } };
     case 'SessionEnd':
       return {
         ...base,
         state: 'done',
         ended: true,
         sessionEnded: true,
-        detail: text(e.reason) ?? 'fin',
-        summary: `sesión terminada (${text(e.reason) ?? '?'})`,
+        detail: text(e.reason) ?? { key: 'hub.detail.end' },
+        summary: { key: 'hub.act.sessionEnd', params: { reason: text(e.reason) ?? '?' } },
       };
     case 'TeammateIdle': {
       const name = text(e.teammate_name);
@@ -158,9 +170,9 @@ export function classify(e: HookEvent, m: Matchers): Classified {
         agentKey,
         parentKey: agentKey === e.session_id ? null : e.session_id,
         state: 'idle',
-        detail: 'esperando',
+        detail: { key: 'hub.detail.waiting' },
         teammate: name,
-        summary: `${name ?? 'compañero'} queda libre`,
+        summary: { key: 'hub.act.teammateIdle', params: { who: name ?? { key: 'hub.who.teammate' } } },
       };
     }
     case 'TaskCreated':
@@ -168,7 +180,7 @@ export function classify(e: HookEvent, m: Matchers): Classified {
         ...base,
         task: { taskId: idText(e.task_id), subject: text(e.task_subject), owner: null, status: 'pending' },
         teammate: text(e.teammate_name),
-        summary: `tarea creada: ${short(text(e.task_subject) ?? '', 60)}`,
+        summary: { key: 'hub.act.taskCreated', params: { subject: short(text(e.task_subject) ?? '', 60) } },
       };
     default:
       return base;
@@ -182,30 +194,35 @@ function preTool(base: Classified, e: HookEvent, input: Record<string, unknown>,
   if (tool === 'Bash') {
     const command = text(input.command) ?? '';
     if (m.test.test(command)) {
-      return { ...working, state: 'testing', command, test: 'start', detail: short(command), summary: `tests: ${short(command, 60)}` };
+      return { ...working, state: 'testing', command, test: 'start', detail: short(command), summary: { key: 'hub.act.tests', params: { command: short(command, 60) } } };
     }
     if (m.check.test(command)) {
-      return { ...working, state: 'checking', command, detail: short(command), summary: `revisa: ${short(command, 60)}` };
+      return { ...working, state: 'checking', command, detail: short(command), summary: { key: 'hub.act.check', params: { command: short(command, 60) } } };
     }
-    return { ...working, state: 'working', command, detail: short(command), summary: `ejecuta: ${short(command, 60)}` };
+    return { ...working, state: 'working', command, detail: short(command), summary: { key: 'hub.act.run', params: { command: short(command, 60) } } };
   }
 
   if (EDIT_TOOLS.has(tool)) {
     const filePath = text(input.file_path) ?? text(input.notebook_path);
     const name = filePath ? basename(filePath) : tool;
-    return { ...working, state: 'working', filePath, detail: name, summary: `edita ${name}` };
+    return { ...working, state: 'working', filePath, detail: name, summary: { key: 'hub.act.edit', params: { name } } };
   }
 
   if (READ_TOOLS.has(tool)) {
     const filePath = text(input.file_path) ?? text(input.path);
     const what = filePath ? basename(filePath) : (text(input.pattern) ?? text(input.url) ?? text(input.query) ?? tool);
-    return { ...working, state: 'reading', filePath, detail: short(what), summary: `lee ${short(what, 60)}` };
+    return { ...working, state: 'reading', filePath, detail: short(what), summary: { key: 'hub.act.read', params: { what: short(what, 60) } } };
   }
 
   if (tool === 'AskUserQuestion') {
     const questions = Array.isArray(input.questions) ? input.questions : [];
-    const first = text(record(questions[0]).question) ?? 'pregunta';
-    return { ...working, state: 'asking', detail: short(first), summary: `pregunta: ${short(first, 60)}` };
+    const first = text(record(questions[0]).question);
+    return {
+      ...working,
+      state: 'asking',
+      detail: first ? short(first) : { key: 'hub.detail.question' },
+      summary: { key: 'hub.act.question', params: { text: first ? short(first, 60) : { key: 'hub.detail.question' } } },
+    };
   }
 
   if (tool === 'SendMessage') {
@@ -219,7 +236,7 @@ function preTool(base: Classified, e: HookEvent, input: Record<string, unknown>,
       blocked: blocked ? short(body, 160) : null,
       unblock: !blocked,
       detail: `→ ${to}`,
-      summary: `${blocked ? 'avisa de un bloqueo' : 'escribe'} a ${to}: ${short(body || text(input.summary) || '', 60)}`,
+      summary: { key: blocked ? 'hub.act.blockedMessage' : 'hub.act.message', params: { to, text: short(body || text(input.summary) || '', 60) } },
     };
   }
 
@@ -230,13 +247,13 @@ function preTool(base: Classified, e: HookEvent, input: Record<string, unknown>,
       description: text(input.description),
       subagentType: text(input.subagent_type),
     };
-    const who = spawnCall.name ?? spawnCall.subagentType ?? 'subagente';
+    const who: HubText = spawnCall.name ?? spawnCall.subagentType ?? { key: 'hub.who.subagent' };
     return {
       ...working,
       state: 'working',
       spawnCall,
-      detail: `delega: ${short(spawnCall.description ?? who, 60)}`,
-      summary: `delega en ${who}`,
+      detail: { key: 'hub.detail.delegates', params: { what: spawnCall.description ? short(spawnCall.description, 60) : who } },
+      summary: { key: 'hub.act.delegate', params: { who } },
     };
   }
 
@@ -247,8 +264,24 @@ function preTool(base: Classified, e: HookEvent, input: Record<string, unknown>,
       owner: text(input.owner),
       status: text(input.status),
     };
-    const label = tool === 'TaskCreate' ? `crea tarea: ${short(task.subject ?? '', 50)}` : `actualiza tarea ${task.taskId ?? ''}`;
-    return { ...working, state: 'working', task, detail: label.trim(), summary: label.trim() };
+    if (tool === 'TaskCreate') {
+      const subject = short(task.subject ?? '', 50);
+      return {
+        ...working,
+        state: 'working',
+        task,
+        detail: { key: 'hub.detail.createsTask', params: { subject } },
+        summary: { key: 'hub.act.taskCreate', params: { subject } },
+      };
+    }
+    const id = task.taskId ?? '';
+    return {
+      ...working,
+      state: 'working',
+      task,
+      detail: { key: 'hub.detail.updatesTask', params: { id } },
+      summary: { key: 'hub.act.taskUpdate', params: { id } },
+    };
   }
 
   return { ...working, state: 'working', detail: tool, summary: tool };
@@ -260,14 +293,21 @@ function postTool(base: Classified, e: HookEvent, input: Record<string, unknown>
   if (tool === 'Bash') {
     const command = text(input.command) ?? '';
     if (m.test.test(command)) {
-      return { ...base, state: 'working', command, test: 'pass', detail: 'tests en verde', summary: `tests en verde: ${short(command, 60)}` };
+      return {
+        ...base,
+        state: 'working',
+        command,
+        test: 'pass',
+        detail: { key: 'hub.detail.testsGreen' },
+        summary: { key: 'hub.act.testsGreen', params: { command: short(command, 60) } },
+      };
     }
-    return { ...base, command, summary: `ok: ${short(command, 60)}` };
+    return { ...base, command, summary: { key: 'hub.act.ok', params: { what: short(command, 60) } } };
   }
 
   if (EDIT_TOOLS.has(tool)) {
     const filePath = text(input.file_path) ?? text(input.notebook_path);
-    return { ...base, filePath, edit: filePath ?? '', summary: `editado ${filePath ? basename(filePath) : tool}` };
+    return { ...base, filePath, edit: filePath ?? '', summary: { key: 'hub.act.edited', params: { name: filePath ? basename(filePath) : tool } } };
   }
 
   if (SPAWN_TOOLS.has(tool)) {
@@ -276,7 +316,7 @@ function postTool(base: Classified, e: HookEvent, input: Record<string, unknown>
     return {
       ...base,
       spawned: agentId && e.tool_use_id ? { toolUseId: e.tool_use_id, agentId, teammate: response.status === 'teammate_spawned' } : null,
-      summary: 'subagente en marcha',
+      summary: { key: 'hub.act.subagentRunning' },
     };
   }
 
@@ -286,15 +326,15 @@ function postTool(base: Classified, e: HookEvent, input: Record<string, unknown>
     return {
       ...base,
       task: { taskId, subject: text(input.subject), owner: text(input.owner), status: 'pending' },
-      summary: taskId ? `tarea ${taskId} creada` : 'tarea creada',
+      summary: taskId ? { key: 'hub.act.taskCreatedId', params: { id: taskId } } : { key: 'hub.act.taskCreatedPlain' },
     };
   }
 
   if (tool === 'AskUserQuestion') {
-    return { ...base, state: 'working', detail: 'pensando', summary: 'pregunta respondida' };
+    return { ...base, state: 'working', detail: { key: 'hub.detail.thinking' }, summary: { key: 'hub.act.questionAnswered' } };
   }
 
-  return { ...base, summary: `ok: ${tool}` };
+  return { ...base, summary: { key: 'hub.act.ok', params: { what: tool } } };
 }
 
 function failedTool(base: Classified, e: HookEvent, input: Record<string, unknown>, m: Matchers): Classified {
@@ -304,17 +344,30 @@ function failedTool(base: Classified, e: HookEvent, input: Record<string, unknow
     const command = text(input.command) ?? '';
     if (m.test.test(command)) {
       if (e.is_interrupt === true) {
-        return { ...base, state: 'working', command, detail: 'tests interrumpidos', summary: `tests interrumpidos: ${short(command, 60)}` };
+        return {
+          ...base,
+          state: 'working',
+          command,
+          detail: { key: 'hub.detail.testsInterrupted' },
+          summary: { key: 'hub.act.testsInterrupted', params: { command: short(command, 60) } },
+        };
       }
-      return { ...base, state: 'working', command, test: 'fail', detail: 'tests en rojo', summary: `tests en rojo: ${short(command, 60)}` };
+      return {
+        ...base,
+        state: 'working',
+        command,
+        test: 'fail',
+        detail: { key: 'hub.detail.testsRed' },
+        summary: { key: 'hub.act.testsRed', params: { command: short(command, 60) } },
+      };
     }
   }
 
   if (tool === 'AskUserQuestion') {
-    return { ...base, state: 'working', detail: 'pregunta cancelada', summary: 'pregunta cancelada' };
+    return { ...base, state: 'working', detail: { key: 'hub.detail.questionCancelled' }, summary: { key: 'hub.detail.questionCancelled' } };
   }
 
-  return { ...base, summary: `falla ${tool}: ${short(text(e.error) ?? '', 60)}` };
+  return { ...base, summary: { key: 'hub.act.toolFailed', params: { tool, error: short(text(e.error) ?? '', 60) } } };
 }
 
 function notification(base: Classified, e: HookEvent): Classified {
@@ -322,10 +375,15 @@ function notification(base: Classified, e: HookEvent): Classified {
   switch (e.notification_type) {
     case 'permission_prompt':
     case 'elicitation_dialog':
-      return { ...base, state: 'asking', detail: short(message || 'espera respuesta'), summary: `espera: ${short(message, 60)}` };
+      return {
+        ...base,
+        state: 'asking',
+        detail: message ? short(message) : { key: 'hub.detail.awaitingAnswer' },
+        summary: { key: 'hub.act.awaits', params: { message: short(message, 60) } },
+      };
     case 'idle_prompt':
-      return { ...base, state: 'idle', detail: 'esperando', summary: 'esperando al usuario' };
+      return { ...base, state: 'idle', detail: { key: 'hub.detail.waiting' }, summary: { key: 'hub.act.awaitingUser' } };
     default:
-      return { ...base, summary: `aviso: ${short(message, 60)}` };
+      return { ...base, summary: { key: 'hub.act.notice', params: { message: short(message, 60) } } };
   }
 }

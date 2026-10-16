@@ -7,7 +7,12 @@ import { openDb } from '../src/db';
 import { memoryRegistry } from '../src/floors';
 import { Office, type OfficeOptions } from '../src/office';
 import { loadProfiles } from '../src/profiles';
-import type { HookEvent, OfficeConfig, ServerMessage } from '../src/types';
+import type { HookEvent, HubText, OfficeConfig, ServerMessage } from '../src/types';
+
+// The key of a hub text, or the raw text itself: HubText includes string, so .key alone does not compile.
+export function keyOf(value: HubText): string {
+  return typeof value === 'string' ? value : value.key;
+}
 
 export function tempDir(prefix = 'agent-office-test-'): { dir: string; cleanup: () => void } {
   const dir = mkdtempSync(join(tmpdir(), prefix));
