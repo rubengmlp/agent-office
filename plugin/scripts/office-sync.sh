@@ -39,15 +39,16 @@ else
   body="{\"slug\":\"$slug\",\"floors\":[$floors]}"
 fi
 dir="${AGENT_OFFICE_HOME:-$HOME/.config/agent-office}"
-if [ ! -r "$dir/key" ]; then
+if [ ! -r "$dir/headers" ]; then
   echo "No hay key de Agent Office en $dir: el hub no está configurado." >&2
   exit 69
 fi
-port=$(cat "$dir/port" 2>/dev/null)
+port=
+read -r port 2>/dev/null < "$dir/port"
 [ -n "$port" ] || port=4747
 curl -sS -m 600 -X POST "http://127.0.0.1:$port/api/redaccion/sync?format=text" \
   -H "Content-Type: application/json" \
-  -H "X-Office-Key: $(cat "$dir/key")" \
+  -H @"$dir/headers" \
   --data-binary "$body"
 status=$?
 if [ $status -ne 0 ]; then

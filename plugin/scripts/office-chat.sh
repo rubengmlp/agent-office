@@ -41,21 +41,34 @@ order="$1"
 shift
 
 dir="${AGENT_OFFICE_HOME:-$HOME/.config/agent-office}"
-if [ ! -r "$dir/key" ]; then
+if [ ! -r "$dir/headers" ]; then
   echo "No hay key de Agent Office en $dir: el hub no está configurado." >&2
   exit 69
 fi
-port=$(cat "$dir/port" 2>/dev/null)
+port=
+read -r port 2>/dev/null < "$dir/port"
 [ -n "$port" ] || port=4747
 nl='
 '
+session=/dev/null
+if [ -n "${CLAUDE_CODE_MESSAGING_TOKEN:-}" ]; then
+  umask 077
+  set -C
+  if printf 'X-Office-Token: %s\n' "$CLAUDE_CODE_MESSAGING_TOKEN" 2>/dev/null > "$dir/chat.$$"; then
+    session="$dir/chat.$$"
+    trap 'rm -f "$session"' EXIT
+    trap 'exit 130' HUP INT TERM
+  fi
+  set +C
+fi
 
 # Runs curl with the given arguments and prints the hub answer; any answer other than 2xx exits with 1.
 call() {
   max="$1"
   shift
   out=$(curl -sS -m "$max" -w "$nl%{http_code}" \
-    -H "X-Office-Key: $(cat "$dir/key")" \
+    -H @"$dir/headers" \
+    -H @"$session" \
     -H "X-Office-Role: ${AGENT_OFFICE_ROLE:-}" \
     -H "X-Office-Name: ${AGENT_OFFICE_NAME:-}" \
     "$@")

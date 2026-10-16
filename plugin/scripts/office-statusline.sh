@@ -1,14 +1,15 @@
 #!/bin/sh
 dir="${AGENT_OFFICE_HOME:-$HOME/.config/agent-office}"
-if [ ! -r "$dir/key" ]; then
+if [ ! -r "$dir/headers" ]; then
   cat >/dev/null
   exit 0
 fi
-port=$(cat "$dir/port" 2>/dev/null)
+port=
+read -r port 2>/dev/null < "$dir/port"
 [ -n "$port" ] || port=4747
 out=$(curl -sf --max-time 1 -X POST "http://127.0.0.1:$port/usage" \
   -H "Content-Type: application/json" \
-  -H "X-Office-Key: $(cat "$dir/key")" \
+  -H @"$dir/headers" \
   --data-binary @- 2>/dev/null)
 if [ -n "$out" ]; then
   printf '%s\n' "$out"

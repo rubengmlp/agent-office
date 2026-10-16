@@ -128,6 +128,7 @@ describe('usage', () => {
     test('posts the stdin JSON to the hub and prints its line', async () => {
       mkdirSync(home, { recursive: true });
       writeFileSync(join(home, 'key'), KEY);
+      writeFileSync(join(home, 'headers'), `X-Office-Key: ${KEY}\n`);
       writeFileSync(join(home, 'port'), String(port));
       const result = await run({}, JSON.stringify(limits(7800, 3 * 86400)));
       expect(result.code).toBe(0);
