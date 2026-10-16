@@ -105,6 +105,7 @@ describe('floor CLI', () => {
       expect(text).toContain('.claude/worktrees/office-<slug>');
       expect(text).not.toContain('{{');
     }
+    expect(readFileSync(agentFile(p, 'tester', 'mobile'), 'utf8')).toContain('tools: Read, Grep, Glob, Bash, SendMessage, EnterWorktree');
     expect(readFileSync(agentFile(p, 'dev', 'mobile'), 'utf8')).toContain('`listo`');
     expect(readFileSync(agentFile(p, 'dev', 'mobile'), 'utf8')).toContain('No hagas commits');
     const director = readFileSync(agentPath(p, 'office-director'), 'utf8');

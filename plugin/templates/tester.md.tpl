@@ -1,7 +1,7 @@
 ---
 name: office-tester-{{slug}}
 description: Tester de la planta {{slug}} ({{label}}) en Agent Office. Ejecuta los tests de lo que cambió en {{path}} y dice si pasan. No arregla nada.
-tools: Read, Grep, Glob, Bash, SendMessage
+tools: Read, Grep, Glob, Bash, SendMessage, EnterWorktree
 model: {{model}}
 effort: {{effort}}
 ---
