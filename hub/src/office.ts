@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'no
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { CHAT_SCRIPT, managedFloors } from './agents';
 import { ChatDesk, GLOBAL_CHANNEL, READ_LIMIT, SNAPSHOT_LIMIT, USER_NAME, isChatKind, normalizeChatPath, type ChatAuthor, type ChatError, type ChatUnread } from './chat';
-import { CHAT_PREFIX, chatInboxText, deliver, encodeInbox, ORDER_LEAD, ORDER_PREFIX, orderText } from './courier';
+import { chatInboxText, deliver, encodeInbox, orderText } from './courier';
 import { writeAtomic } from './config';
 import { commitDocument } from './docs-repo';
 import { DocumentDesk, docTypeOf, headBytes } from './documents';
@@ -12,8 +12,6 @@ import { FloorInUseError, purgeFloorData } from './floor-data';
 import {
   DIRECCION,
   FloorResolver,
-  MANTENIMIENTO,
-  REDACCION,
   isInside,
   memoryRegistry,
   realPath,
@@ -23,7 +21,7 @@ import {
 } from './floors';
 import { decideDocumentGate, decideGate, decideReadCap, decideReviewGate, kilobytes, planByteLimit, type GateDecision, type ReviewGateFacts } from './gate';
 import { GitQueue, runGit, type GitRunner } from './git';
-import { GUARDED_TOOLS, GuardWatch, fingerprint, gitIgnored, guardDecision, shellWrites, tokenize, zonesFor, type GuardContext, type GuardFinding } from './guard';
+import { GUARDED_TOOLS, GuardWatch, fingerprint, gitIgnored, guardDecision, shellWrites, zonesFor, type GuardContext, type GuardFinding } from './guard';
 import type { Log } from './log';
 import { keyMatches } from './security';
 import { captureLesson, cleanLesson, deleteLesson, isRoleId, listLessons, memoryContext } from './memory';
@@ -53,7 +51,6 @@ import {
   RULES_MAX_CHARS,
   SAFE_ID,
   SAFE_NAME,
-  TASK_MAX,
   TEAM_CACHE_MS,
   TURN_OVER,
   UNDO_MS,
@@ -73,6 +70,25 @@ import {
   type SessionRuntime,
   type TmuxFn,
 } from './office-state';
+import { chatFreeCommand, withoutChatCalls } from './chat-commands';
+import {
+  RULES_NOTE,
+  STATUS_REQUEST,
+  VERDICT_DETAILS,
+  DISCARDED_MARK,
+  ROLE_LABELS,
+  analysisOrderText,
+  executeOrderText,
+  floorLabel,
+  historyPath,
+  isUserPrompt,
+  isoDate,
+  permissionDetail,
+  permissionMatch,
+  permissionPrompt,
+  taskLine,
+  withoutDiscardMark,
+} from './office-texts';
 import { ownerEdits, prepare, type AlertRow, type Sql } from './office-sql';
 import { isPrivate, publicDetail, publicSummary, publicText, storedPayload, visibleKind } from './privacy';
 import { detectStack, profileFor, type Profiles } from './profiles';
@@ -170,6 +186,23 @@ export {
   type TmuxFn,
 } from './office-state';
 
+export {
+  DISCARDED_MARK,
+  ROLE_LABELS,
+  STATUS_REQUEST,
+  analysisOrderText,
+  executeOrderText,
+  floorLabel,
+  historyPath,
+  isUserPrompt,
+  permissionDetail,
+  permissionMatch,
+  permissionPrompt,
+  taskLine,
+  withoutDiscardMark,
+} from './office-texts';
+export { chatFreeCommand, isChatCommand } from './chat-commands';
+
 export type OfficeOptions = {
   db: Database;
   config: OfficeConfig;
@@ -194,48 +227,11 @@ export type OfficeOptions = {
   undoMs?: number;
 };
 
-const RULES_NOTE = 'Las reglas de tu puesto cambiaron. Estas son las nuevas y mandan sobre las que recibiste al arrancar:';
-export const STATUS_REQUEST = '¿En qué estado está el encargo? Si esperas algo, escribe ESPERO: <a quién> — <qué>.';
-const STATUS_QUESTION = '¿En qué estado está el encargo?';
-const VERDICT_DETAILS: Record<Exclude<VerdictKind, 'tests'>, HubText> = {
-  approved: { key: 'hub.detail.verdictApproved' },
-  improve: { key: 'hub.detail.verdictImprove' },
-  'no-agreement': { key: 'hub.detail.verdictNoAgreement' },
-};
-export const DISCARDED_MARK = '> **Descartado**';
-
-// The paragraph markDiscardedFile prepends, gone; a file that does not start with it comes back as it was.
-export function withoutDiscardMark(content: string): string {
-  if (!content.startsWith(DISCARDED_MARK)) return content;
-  const end = content.indexOf('\n\n');
-  return end < 0 ? '' : content.slice(end + 2);
-}
-
-
-export const ROLE_LABELS: Record<RoleId, string> = {
-  director: 'director',
-  lead: 'jefe',
-  dev: 'desarrollador',
-  tester: 'tester',
-  reviewer: 'revisor de código',
-  redactor: 'redactor',
-  'revisor-planes': 'revisor de planes',
-  artesano: 'artesano de skills',
-  'revisor-skills': 'revisor de skills',
-};
 
 
 
-export function floorLabel(slug: string): string {
-  if (slug === DIRECCION) return 'Dirección';
-  if (slug === REDACCION) return 'Redacción';
-  if (slug === MANTENIMIENTO) return 'Mantenimiento';
-  return `la planta ${slug}`;
-}
 
-function isoDate(ts: number): string {
-  return new Date(ts).toISOString().slice(0, 10);
-}
+
 
 export class Office {
   readonly desk: QuestionDesk;
@@ -2791,126 +2787,12 @@ export class Office {
   }
 }
 
-export function executeOrderText(doc: Pick<DocumentView, 'path' | 'title' | 'round' | 'base'>, docsRepo: string): string {
-  const floors = [...new Set(doc.base.map((b) => b.floor))];
-  const rounds = `${doc.round} ${doc.round === 1 ? 'ronda' : 'rondas'}`;
-  const floorList = floors.length > 0 ? floors.join(', ') : 'las que indique el plan';
-  const leads = floors.length > 0 ? ` (${floors.map((f) => `\`lead-${f}\``).join(', ')})` : '';
-  return [
-    `Ejecuta el plan ${doc.path} («${doc.title}»), aprobado por Redacción en ${rounds}.`,
-    `Plantas: ${floorList}.`,
-    `Léelo en \`${docsRepo}/${doc.path}\`, divídelo por planta según sus Pasos y manda a cada jefe${leads} su parte con la ruta del plan; ya lo conocen por el aviso PLAN de Redacción.`,
-    'Avísame cuando terminen todas.',
-  ].join(' ');
-}
-
-export function analysisOrderText(doc: Pick<DocumentView, 'path' | 'title'>, docsRepo: string): string {
-  return [
-    `Analiza el documento \`${doc.path}\` («${doc.title}») que te ha entregado Redacción.`,
-    `Léelo en \`${docsRepo}/${doc.path}\` y, antes de encargar nada, pregúntame con AskUserQuestion qué planes de implementación quieres que encargue a Redacción y en qué orden (opciones: las acciones que propone el documento).`,
-    'Encarga solo los que elija, en ese orden, y avísame.',
-  ].join(' ');
-}
 
 function assigns(from: AgentRuntime, to: AgentRuntime): boolean {
   return from.parentKey !== to.key && roleKind(to.role) !== 'director';
 }
 
-const SEPARATORS: ReadonlySet<string> = new Set(['\n', ';', '|', '&', '(', ')']);
 
-// The raw text of each command of a shell line, split where tokenize splits (; | & newlines and parentheses)
-// outside quotes; the &> and >& redirections do not split.
-function shellSegments(command: string): string[] {
-  const segments: string[] = [];
-  let current = '';
-  let quote: '"' | "'" | null = null;
-  const end = () => {
-    if (current.trim()) segments.push(current.trim());
-    current = '';
-  };
-  for (let i = 0; i < command.length; i++) {
-    const ch = command[i] ?? '';
-    if (ch === '\\' && quote !== "'" && i + 1 < command.length) {
-      current += ch + (command[++i] ?? '');
-      continue;
-    }
-    if (quote) {
-      if (ch === quote) quote = null;
-      current += ch;
-      continue;
-    }
-    if (ch === "'" || ch === '"') quote = ch;
-    const redirect = ch === '&' && (command[i + 1] === '>' || current.endsWith('>') || current.endsWith('<'));
-    if (!redirect && SEPARATORS.has(ch)) end();
-    else current += ch;
-  }
-  end();
-  return segments;
-}
-
-const SHELLS: ReadonlySet<string> = new Set(['sh', 'bash', 'zsh', 'dash']);
-
-function isChatCall(segment: string): boolean {
-  const words = [...(tokenize(segment)[0] ?? [])];
-  while (words.length > 0 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0] ?? '')) words.shift();
-  if (SHELLS.has(basename(words[0] ?? ''))) {
-    words.shift();
-    while ((words[0] ?? '').startsWith('-')) words.shift();
-  }
-  const first = words[0];
-  return !!first && (first === CHAT_SCRIPT || basename(first) === 'office-chat.sh');
-}
-
-// A shell line without its calls to the chat script, or null when it has none. Nothing is taken out of a line
-// with $( or backticks: whatever they run, even inside a chat message, really runs.
-export function chatFreeCommand(command: string): string | null {
-  if (command.includes('$(') || command.includes('`')) return null;
-  const segments = shellSegments(command);
-  const rest = segments.filter((segment) => !isChatCall(segment));
-  return rest.length === segments.length ? null : rest.join('; ');
-}
-
-export function isChatCommand(command: string): boolean {
-  return chatFreeCommand(command) === '';
-}
-
-const CHAT_COMMAND_EVENTS: ReadonlySet<string> = new Set(['PreToolUse', 'PostToolUse', 'PostToolUseFailure']);
-
-// A call to the chat script is talking, not testing: whatever its text says, it must not count as a test run.
-// The rest of the line is classified on its own, so a real test next to it still counts.
-function withoutChatCalls(c: Classified, e: HookEvent, matchers: Matchers): Classified {
-  if (c.tool !== 'Bash' || !CHAT_COMMAND_EVENTS.has(c.event)) return c;
-  const input = record(e.tool_input);
-  const command = text(input.command);
-  const rest = command === null ? null : chatFreeCommand(command);
-  if (rest === null) return c;
-  if (rest !== '') return classify({ ...e, tool_input: { ...input, command: rest } }, matchers);
-  c.test = null;
-  c.command = null;
-  c.state = 'working';
-  c.summary = { key: 'hub.act.chatCommand' };
-  c.detail = { key: 'hub.act.chatCommand' };
-  return c;
-}
-
-export function taskLine(body: string | null): string | null {
-  if (!body) return null;
-  let rest = body.trim();
-  if (rest.startsWith(ORDER_LEAD)) rest = rest.slice(ORDER_LEAD.length).trim();
-  else if (rest.startsWith(ORDER_PREFIX) || rest.startsWith(CHAT_PREFIX) || rest.startsWith('<') || rest.startsWith('/')) return null;
-  rest = rest.replace(BRIEF_PREFIX, '').trim();
-  if (rest.startsWith(STATUS_QUESTION) || parseProtocol(rest) !== null) return null;
-  const line = rest
-    .split('\n')
-    .map((part) => part.trim())
-    .find((part) => part.length > 0);
-  return line ? short(line, TASK_MAX) : null;
-}
-
-export function isUserPrompt(prompt: string | null): boolean {
-  const body = (prompt ?? '').trim();
-  return body !== '' && !body.startsWith('<') && !body.startsWith(CHAT_PREFIX) && !body.includes(STATUS_QUESTION);
-}
 
 function idleSince(agent: AgentRuntime): number {
   return Math.max(agent.stateSince, agent.taskOpenSince ?? 0);
@@ -2955,32 +2837,6 @@ async function runTmux(args: string[]): Promise<{ code: number; stdout: string }
   return { code, stdout };
 }
 
-export function historyPath(slug: string): string {
-  return `redaccion/historial/${slug}.md`;
-}
-
-export function permissionMatch(tool: string, input: Record<string, unknown>): string {
-  return `${tool}|${JSON.stringify(input)}`;
-}
-
-export function permissionPrompt(tool: string, who: string): HubText {
-  if (tool === 'Bash') return { key: 'hub.permission.bash', params: { who } };
-  if (tool === 'Edit' || tool === 'Write' || tool === 'MultiEdit' || tool === 'NotebookEdit') return { key: 'hub.permission.edit', params: { who } };
-  if (tool === 'Read' || tool === 'Grep' || tool === 'Glob') return { key: 'hub.permission.read', params: { who } };
-  if (tool === 'WebFetch' || tool === 'WebSearch') return { key: 'hub.permission.web', params: { who } };
-  return { key: 'hub.permission.other', params: { who, tool } };
-}
-
-export function permissionDetail(tool: string, input: Record<string, unknown>): string {
-  const value =
-    text(input.command) ??
-    text(input.file_path) ??
-    text(input.notebook_path) ??
-    text(input.url) ??
-    text(input.query) ??
-    (text(input.pattern) ? `${input.pattern as string}${text(input.path) ? ` (${input.path as string})` : ''}` : null);
-  return short(value ?? `${tool} ${JSON.stringify(input)}`, 600);
-}
 
 function fingerprintKey(floor: string, ts: number, path: string): string {
   return `${floor}\0${ts}\0${path}`;
