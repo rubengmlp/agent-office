@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { appendFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   PROFILES_DIR,
@@ -22,6 +22,12 @@ import { createSettings } from './settings';
 
 const DAY_MS = 86_400_000;
 const TICK_MS = 5000;
+
+function logLine(p: Paths, text: string): void {
+  try {
+    appendFileSync(join(p.home, 'hub.log'), `${new Date().toISOString()} ${text}\n`, { mode: 0o600 });
+  } catch {}
+}
 
 export function main(argv: string[]): void {
   const p = paths();
@@ -49,7 +55,9 @@ export function main(argv: string[]): void {
       office.reload(config, loadProfiles(PROFILES_DIR));
       console.log('Configuración recargada');
     } catch (error) {
-      console.error(`No se pudo recargar la configuración: ${(error as Error).message}`);
+      const message = `No se pudo recargar la configuración: ${(error as Error).message}`;
+      console.error(message);
+      logLine(p, message);
     }
   };
   const settings = createSettings(p, () => loadProfiles(PROFILES_DIR), reload);
@@ -73,19 +81,25 @@ export function main(argv: string[]): void {
 
   const url = `http://127.0.0.1:${config.port}`;
   console.log(`Agent Office escuchando en ${url}`);
+  logLine(p, `hub arrancado en ${url} (pid ${process.pid})`);
   if (!existsSync(join(PUBLIC_DIR, 'index.html'))) console.log('La interfaz no está compilada: bun run build');
   if (process.env.AGENT_OFFICE_RECORD) console.log(`Grabando en ${process.env.AGENT_OFFICE_RECORD}`);
   if (argv.includes('--open')) openSessions(p, url);
 
   process.on('uncaughtException', (error) => {
-    console.error(`Agent Office: error no capturado: ${error.stack ?? String(error)}`);
+    const message = `error no capturado: ${error.stack ?? String(error)}`;
+    console.error(`Agent Office: ${message}`);
+    logLine(p, message);
   });
   process.on('unhandledRejection', (reason) => {
-    console.error(`Agent Office: promesa rechazada sin capturar: ${reason instanceof Error ? (reason.stack ?? reason.message) : String(reason)}`);
+    const message = `promesa rechazada sin capturar: ${reason instanceof Error ? (reason.stack ?? reason.message) : String(reason)}`;
+    console.error(`Agent Office: ${message}`);
+    logLine(p, message);
   });
 
   const shutdown = (signal: string) => {
     console.log(`Agent Office: ${signal} recibido, cerrando el hub`);
+    logLine(p, `${signal} recibido, hub cerrado`);
     clearInterval(pruneTimer);
     clearInterval(tickTimer);
     stopWatching();
