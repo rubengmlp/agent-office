@@ -1,27 +1,30 @@
 import type { OfficeApi } from '../api';
 import { button, el } from '../dom';
+import { currentLang, plural, t, type MessageKey } from '../i18n';
 import { scoreText } from '../labels';
 import { canDiscard, discardDocument, documentBadge, downloadDocument, openDocument } from '../panel/deliverables';
 import type { Store } from '../store';
 import type { DocumentStatus, DocumentView, PlanDecision } from '../types';
 
-type Group = { title: string; statuses: readonly DocumentStatus[]; empty: string };
+type Group = { titleKey: MessageKey; statuses: readonly DocumentStatus[]; emptyKey: MessageKey };
 
 const GROUPS: readonly Group[] = [
-  { title: 'Pendientes de decisión', statuses: ['entregado'], empty: 'Ningún plan espera tu decisión.' },
-  { title: 'Aparcados', statuses: ['aparcado'], empty: 'Ningún plan aparcado.' },
-  { title: 'En ejecución', statuses: ['ejecutando'], empty: 'Ningún plan en ejecución.' },
-  { title: 'En redacción', statuses: ['borrador', 'revision', 'aprobado', 'sin-acuerdo'], empty: 'Redacción no está escribiendo ningún plan.' },
-  { title: 'Cerrados y descartados', statuses: ['cerrado', 'descartado'], empty: 'Todavía no hay planes cerrados ni descartados.' },
+  { titleKey: 'plans.group.pending', statuses: ['entregado'], emptyKey: 'plans.group.pendingEmpty' },
+  { titleKey: 'plans.group.parked', statuses: ['aparcado'], emptyKey: 'plans.group.parkedEmpty' },
+  { titleKey: 'plans.group.running', statuses: ['ejecutando'], emptyKey: 'plans.group.runningEmpty' },
+  { titleKey: 'plans.group.drafting', statuses: ['borrador', 'revision', 'aprobado', 'sin-acuerdo'], emptyKey: 'plans.group.draftingEmpty' },
+  { titleKey: 'plans.group.closed', statuses: ['cerrado', 'descartado'], emptyKey: 'plans.group.closedEmpty' },
 ];
 
-const DATE_FORMAT = new Intl.DateTimeFormat('es', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-
-const DONE_TEXT: Record<PlanDecision, string> = {
-  ejecutar: 'Plan enviado al director',
-  aparcar: 'Plan aparcado',
-  cerrar: 'Plan cerrado',
+const DONE_KEYS: Record<PlanDecision, MessageKey> = {
+  ejecutar: 'plans.done.ejecutar',
+  aparcar: 'plans.done.aparcar',
+  cerrar: 'plans.done.cerrar',
 };
+
+function dateFormat(): Intl.DateTimeFormat {
+  return new Intl.DateTimeFormat(currentLang(), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
 
 function recency(doc: DocumentView): number {
   return Math.max(doc.updatedAt, doc.deliveredAt ?? 0, doc.decidedAt ?? 0);
@@ -29,18 +32,18 @@ function recency(doc: DocumentView): number {
 
 function floorsText(doc: DocumentView): string {
   const floors = [...new Set(doc.base.map((base) => base.floor))];
-  return floors.length > 0 ? `Plantas: ${floors.join(', ')}` : 'Plantas: las que indique el plan';
+  return floors.length > 0 ? t('plans.floors', { floors: floors.join(', ') }) : t('plans.floorsUnknown');
 }
 
 function roundText(doc: DocumentView): string | null {
   if (doc.round === 0) return null;
-  const round = `${doc.round} ${doc.round === 1 ? 'ronda' : 'rondas'}`;
+  const round = plural('plans.rounds', doc.round);
   return doc.score === null ? round : `${round} · ${scoreText(doc.score)}`;
 }
 
 function confirmText(doc: DocumentView, decision: PlanDecision): string | null {
-  if (decision === 'ejecutar') return `¿Enviar el plan «${doc.title}» al director para que lo reparta entre las plantas?`;
-  if (decision === 'cerrar') return `¿Cerrar el plan «${doc.title}»? Hazlo cuando el director confirme que todas las plantas terminaron.`;
+  if (decision === 'ejecutar') return t('plans.confirm.ejecutar', { title: doc.title });
+  if (decision === 'cerrar') return t('plans.confirm.cerrar', { title: doc.title });
   return null;
 }
 
@@ -54,11 +57,11 @@ async function decide(api: OfficeApi, store: Store, doc: DocumentView, decision:
     store.toast(result.message, 'error');
     return;
   }
-  store.toast(`${DONE_TEXT[decision]}: ${doc.title}`, 'ok');
+  store.toast(t(DONE_KEYS[decision], { title: doc.title }), 'ok');
 }
 
 function actions(api: OfficeApi | null, store: Store, doc: DocumentView): HTMLElement {
-  const view = button('Ver', 'plans-action');
+  const view = button(t('plans.view'), 'plans-action');
   view.addEventListener('click', () => openDocument(store, doc));
   const row = el('div', 'plans-actions', view);
   if (api === null) return row;
@@ -67,22 +70,22 @@ function actions(api: OfficeApi | null, store: Store, doc: DocumentView): HTMLEl
     control.addEventListener('click', () => void decide(api, store, doc, value, control));
     row.append(control);
   };
-  if (doc.status === 'entregado' || doc.status === 'aparcado') decision('Ejecutar', 'ejecutar', 'plans-action primary');
-  if (doc.status === 'entregado' || doc.status === 'ejecutando') decision('Aparcar', 'aparcar');
-  if (doc.status === 'ejecutando') decision('Cerrar', 'cerrar');
+  if (doc.status === 'entregado' || doc.status === 'aparcado') decision(t('plans.execute'), 'ejecutar', 'plans-action primary');
+  if (doc.status === 'entregado' || doc.status === 'ejecutando') decision(t('plans.park'), 'aparcar');
+  if (doc.status === 'ejecutando') decision(t('plans.close'), 'cerrar');
   if (canDiscard(doc)) {
-    const discard = button('Descartar', 'plans-action doc-discard');
+    const discard = button(t('deliverables.discard'), 'plans-action doc-discard');
     discard.addEventListener('click', () => void discardDocument(api, store, doc, discard));
     row.append(discard);
   }
-  const download = button('Descargar', 'plans-action', `Descargar ${doc.slug}.md`);
+  const download = button(t('deliverables.download'), 'plans-action', t('deliverables.downloadTitle', { file: `${doc.slug}.md` }));
   download.addEventListener('click', () => void downloadDocument(api, store, doc, download));
   row.append(download);
   return row;
 }
 
 function planRow(api: OfficeApi | null, store: Store, doc: DocumentView): HTMLElement {
-  const meta = [floorsText(doc), roundText(doc), DATE_FORMAT.format(new Date(recency(doc)))].filter((part): part is string => part !== null);
+  const meta = [floorsText(doc), roundText(doc), dateFormat().format(new Date(recency(doc)))].filter((part): part is string => part !== null);
   return el(
     'article',
     `plans-row plans-${doc.status}`,
@@ -98,8 +101,8 @@ function group(api: OfficeApi | null, store: Store, spec: Group, docs: readonly 
   return el(
     'section',
     'plans-group',
-    el('div', 'plans-group-head', el('h2', 'plans-group-title', spec.title), el('span', 'chip', String(items.length))),
-    items.length > 0 ? el('div', 'plans-list', ...items.map((doc) => planRow(api, store, doc))) : el('p', 'muted hint', spec.empty),
+    el('div', 'plans-group-head', el('h2', 'plans-group-title', t(spec.titleKey)), el('span', 'chip', String(items.length))),
+    items.length > 0 ? el('div', 'plans-list', ...items.map((doc) => planRow(api, store, doc))) : el('p', 'muted hint', t(spec.emptyKey)),
   );
 }
 
@@ -108,23 +111,19 @@ export function mountPlans(host: HTMLElement, store: Store, api: OfficeApi | nul
   host.replaceChildren(root);
   let signature = '';
 
-  store.watch(['documents'], () => {
+  store.watch(['documents', 'lang'], () => {
     const docs = store.documents.filter((doc) => doc.kind === 'plan');
-    const next = JSON.stringify(docs);
+    const next = JSON.stringify([store.lang, docs]);
     if (next === signature) return;
     signature = next;
     root.replaceChildren(
       el(
         'header',
         'plans-head',
-        el('h1', 'plans-heading', 'Planes'),
-        el(
-          'p',
-          'muted hint',
-          'Redacción deja aquí cada plan aprobado. Ejecutar lo manda al director, que lo reparte entre las plantas; Cerrar, cuando te confirme que terminaron.',
-        ),
+        el('h1', 'plans-heading', t('plans.title')),
+        el('p', 'muted hint', t('plans.intro')),
       ),
-      ...(docs.length === 0 ? [el('p', 'muted hint', 'Sin planes todavía.')] : GROUPS.map((spec) => group(api, store, spec, docs))),
+      ...(docs.length === 0 ? [el('p', 'muted hint', t('table.docs.noPlans'))] : GROUPS.map((spec) => group(api, store, spec, docs))),
     );
   });
 }

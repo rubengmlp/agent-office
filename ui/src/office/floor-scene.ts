@@ -1,5 +1,6 @@
 import { Container, Graphics } from 'pixi.js';
-import { STACK_LABELS } from '../labels';
+import { currentLang, t } from '../i18n';
+import { floorLabel, stackLabel } from '../labels';
 import type { FloorView } from '../types';
 import { DESK_BASE_Y, LEAD_SLOT_W, MARGIN, WALL_H } from './constants';
 import {
@@ -21,16 +22,15 @@ import { makeText, px } from './pixel';
 const TABLE_BASE = 15;
 
 function plateTitle(view: FloorView): string {
-  if (view.kind !== 'mantenimiento' || /anexo/i.test(view.label)) return view.label;
-  return `${view.label} (anexo)`;
+  return view.kind === 'mantenimiento' ? t('scene.plate.annex', { name: floorLabel(view) }) : floorLabel(view);
 }
 
 function plateSubtitle(view: FloorView): string {
-  if (view.kind === 'direccion') return 'Despacho del director';
-  if (view.kind === 'redaccion') return 'Planes y documentos';
-  if (view.kind === 'mantenimiento') return 'Taller de skills';
-  const stack = STACK_LABELS[view.stack];
-  return view.kind === 'observed' ? `${stack} · observada` : stack;
+  if (view.kind === 'direccion') return t('scene.sub.direccion');
+  if (view.kind === 'redaccion') return t('scene.sub.redaccion');
+  if (view.kind === 'mantenimiento') return t('scene.sub.mantenimiento');
+  const stack = stackLabel(view.stack);
+  return view.kind === 'observed' ? t('scene.sub.observed', { stack }) : stack;
 }
 
 export class FloorScene {
@@ -80,7 +80,7 @@ export class FloorScene {
     this.background.position.set(0, top);
     this.foreground.position.set(0, top);
 
-    const signature = [view.kind, view.stack, view.label, layout.width, layout.height].join('|');
+    const signature = [view.kind, view.stack, view.label, currentLang(), layout.width, layout.height].join('|');
     if (signature !== this.signature) {
       this.signature = signature;
       this.draw();

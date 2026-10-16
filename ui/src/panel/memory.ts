@@ -1,33 +1,33 @@
 import type { OfficeApi } from '../api';
 import { button, el } from '../dom';
-import { agentName, ROLE_LABELS } from '../labels';
+import { currentLang, t } from '../i18n';
+import { hubText } from '../i18n/hub';
+import { agentName, floorLabel, roleLabel } from '../labels';
 import { memoryKey, type Store } from '../store';
 import { relativeTime } from '../time';
-import type { FloorKind, LessonView, MemoryView, ReportView, RoleId } from '../types';
+import type { FloorKind, FloorView, LessonView, MemoryView, ReportView, RoleId, RoleKind } from '../types';
 
 const MEMORY_KINDS: ReadonlySet<FloorKind> = new Set<FloorKind>(['managed', 'direccion', 'redaccion', 'mantenimiento']);
 const REPORT_LIMIT = 50;
 const LESSON_MAX_CHARS = 500;
-const DATE_FORMAT = new Intl.DateTimeFormat('es', {
-  day: 'numeric',
-  month: 'short',
-  hour: '2-digit',
-  minute: '2-digit',
-});
+
+function dateFormat(): Intl.DateTimeFormat {
+  return new Intl.DateTimeFormat(currentLang(), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
 
 type Target = { floor: string; role: RoleId };
 
-function reportItem(report: ReportView): HTMLElement {
+function reportItem(report: ReportView, format: Intl.DateTimeFormat): HTMLElement {
   return el(
     'li',
     'history-item',
     el(
       'div',
       'history-head',
-      el('span', 'history-date muted', DATE_FORMAT.format(report.endedAt ?? report.startedAt)),
+      el('span', 'history-date muted', format.format(report.endedAt ?? report.startedAt)),
       el('span', 'history-name', report.name || report.role || report.agentKey.slice(0, 8)),
     ),
-    el('p', 'history-summary', report.summary || 'Sin resumen'),
+    el('p', 'history-summary', (report.summaryText ? hubText(report.summaryText) : report.summary) || t('memory.noSummary')),
   );
 }
 
@@ -44,17 +44,17 @@ export function mountMemory(host: HTMLElement, store: Store, api: OfficeApi | nu
   const text = el('textarea', 'memory-text');
   text.rows = 2;
   text.maxLength = LESSON_MAX_CHARS;
-  text.placeholder = `Escribe una lección para este rol (máximo ${LESSON_MAX_CHARS} caracteres)…`;
-  text.setAttribute('aria-label', 'Nueva lección');
-  const add = button('Añadir lección', 'primary');
+  const add = button('', 'primary');
   const status = el('p', 'memory-status');
   const reportsHost = el('div', 'memory-reports');
   const form = el('div', 'memory-add', text, el('div', 'memory-add-actions', add, status));
   const body = el('div', 'panel-card-body', scope, lessonsHost, form, reportsHost);
-  const summary = el('summary', 'panel-summary', el('span', 'section-title', 'Memoria'), count);
+  const title = el('span', 'section-title');
+  const summary = el('summary', 'panel-summary', title, count);
   host.append(el('details', 'panel-card', summary, body));
 
   let target: Target | null = null;
+  let scopeText: { role: RoleKind; floor: FloorView } | null = null;
   let data: MemoryView | null = null;
   let failure: string | null = null;
   let seenVersion = 0;
@@ -66,16 +66,16 @@ export function mountMemory(host: HTMLElement, store: Store, api: OfficeApi | nu
   const refreshForm = (): void => {
     text.disabled = busy;
     add.disabled = busy || target === null || text.value.trim() === '';
-    add.textContent = busy ? 'Añadiendo…' : 'Añadir lección';
+    add.textContent = busy ? t('memory.adding') : t('memory.add');
   };
 
   const lessonItem = (lesson: LessonView, now: number): HTMLElement => {
-    const remove = button('✕', 'lesson-delete', 'Borrar lección');
+    const remove = button('✕', 'lesson-delete', t('memory.delete'));
     remove.addEventListener('click', () => void removeLesson(lesson, remove));
-    const originText = lesson.origin === 'user' ? 'tú' : 'agente';
+    const originText = lesson.origin === 'user' ? t('memory.origin.user') : t('memory.origin.agent');
     const origin = el('span', `chip lesson-origin lesson-origin-${lesson.origin}`, originText);
     const author = lesson.agentKey === null ? undefined : store.agents.get(lesson.agentKey);
-    if (author) origin.title = `Enviada por ${agentName(author)}`;
+    if (author) origin.title = t('memory.sentBy', { name: agentName(author) });
     return el(
       'li',
       'lesson',
@@ -89,7 +89,7 @@ export function mountMemory(host: HTMLElement, store: Store, api: OfficeApi | nu
     if (current === null) {
       count.hidden = true;
       lessonsHost.replaceChildren(
-        failure === null ? el('p', 'muted hint', 'Cargando memoria…') : el('p', 'memory-error hint', failure),
+        failure === null ? el('p', 'muted hint', t('memory.loading')) : el('p', 'memory-error hint', failure),
       );
       reportsHost.replaceChildren();
       return;
@@ -99,27 +99,33 @@ export function mountMemory(host: HTMLElement, store: Store, api: OfficeApi | nu
     const lessons = [...current.lessons].sort((a, b) => b.createdAt - a.createdAt || b.id - a.id);
     count.hidden = false;
     count.textContent = String(lessons.length);
-    const stale = failure === null ? [] : [el('p', 'memory-error hint', `No se pudo actualizar: ${failure}`)];
+    const stale = failure === null ? [] : [el('p', 'memory-error hint', t('panel.updateFailed', { error: failure }))];
     lessonsHost.replaceChildren(
       lessons.length > 0
         ? el('ul', 'lesson-list', ...lessons.map((lesson) => lessonItem(lesson, now)))
-        : el('p', 'muted hint', 'Sin lecciones todavía.'),
+        : el('p', 'muted hint', t('memory.noLessons')),
       ...stale,
     );
 
     const reports = [...current.reports].sort((a, b) => (b.endedAt ?? b.startedAt) - (a.endedAt ?? a.startedAt));
     const shown = reports.slice(0, REPORT_LIMIT);
     const hidden = reports.length - shown.length;
+    const format = dateFormat();
     reportsHost.replaceChildren(
-      el('h4', 'report-title', 'Informes anteriores del rol'),
+      el('h4', 'report-title', t('memory.reports')),
       shown.length > 0
-        ? el('ul', 'history-list', ...shown.map(reportItem), hidden > 0 ? el('li', 'muted', `y ${hidden} más`) : null)
-        : el('p', 'muted hint', 'Sin informes guardados.'),
+        ? el(
+            'ul',
+            'history-list',
+            ...shown.map((report) => reportItem(report, format)),
+            hidden > 0 ? el('li', 'muted', t('panel.more', { n: hidden })) : null,
+          )
+        : el('p', 'muted hint', t('memory.noReports')),
     );
   };
 
   const removeLesson = async (lesson: LessonView, control: HTMLButtonElement): Promise<void> => {
-    if (busy || !window.confirm(`¿Borrar esta lección?\n\n${lesson.text}`)) return;
+    if (busy || !window.confirm(t('memory.confirmDelete', { text: lesson.text }))) return;
     busy = true;
     control.disabled = true;
     status.textContent = '';
@@ -187,8 +193,8 @@ export function mountMemory(host: HTMLElement, store: Store, api: OfficeApi | nu
       return;
     }
 
-    const label = `Rol: ${ROLE_LABELS[agent.roleKind]} · Planta: ${floor.label}`;
-    if (scope.textContent !== label) scope.textContent = label;
+    scopeText = { role: agent.roleKind, floor };
+    relabelScope();
     host.hidden = false;
     if (target !== null && target.floor === agent.floor && target.role === agent.roleId) return;
 
@@ -202,6 +208,21 @@ export function mountMemory(host: HTMLElement, store: Store, api: OfficeApi | nu
     void load();
   };
 
+  const relabelScope = (): void => {
+    if (scopeText === null) return;
+    const label = t('memory.scope', { role: roleLabel(scopeText.role), floor: floorLabel(scopeText.floor) });
+    if (scope.textContent !== label) scope.textContent = label;
+  };
+
+  const relabel = (): void => {
+    title.textContent = t('memory.title');
+    text.placeholder = t('memory.placeholder', { max: LESSON_MAX_CHARS });
+    text.setAttribute('aria-label', t('memory.newLesson'));
+    relabelScope();
+    refreshForm();
+    renderLists();
+  };
+
   text.addEventListener('input', refreshForm);
   text.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
@@ -211,6 +232,7 @@ export function mountMemory(host: HTMLElement, store: Store, api: OfficeApi | nu
   });
   add.addEventListener('click', () => void submit());
 
+  store.watch(['lang'], relabel);
   store.watch(['selection', 'agents', 'floors'], sync);
 
   store.watch(['memory'], () => {

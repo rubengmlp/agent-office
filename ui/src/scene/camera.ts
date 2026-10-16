@@ -1,5 +1,6 @@
 import { Box3, PerspectiveCamera, Plane, Raycaster, Vector2, Vector3 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { currentLang, t } from '../i18n';
 
 export type FloorButton = { slug: string; label: string; accent: string; annex: boolean };
 
@@ -44,6 +45,8 @@ export class CameraRig {
   private readonly nav: HTMLElement;
   private readonly followBox: HTMLElement;
   private readonly followName: HTMLElement;
+  private readonly followPrefix = document.createTextNode('');
+  private readonly followStop: HTMLButtonElement;
   private readonly buttons = new Map<string, HTMLButtonElement>();
   private floorsSignature = '';
   private activeSlug: string | null = null;
@@ -83,23 +86,29 @@ export class CameraRig {
 
     this.nav = document.createElement('nav');
     this.nav.className = 'scene-floors';
-    this.nav.setAttribute('aria-label', 'Plantas');
 
     this.followBox = document.createElement('div');
     this.followBox.className = 'scene-follow';
     this.followBox.hidden = true;
     const followText = document.createElement('span');
-    followText.append('Siguiendo a ');
+    followText.append(this.followPrefix);
     this.followName = document.createElement('strong');
     followText.append(this.followName);
     const stop = document.createElement('button');
     stop.type = 'button';
     stop.className = 'scene-follow-stop';
-    stop.title = 'Dejar de seguir (Esc)';
     stop.textContent = '×';
+    this.followStop = stop;
     stop.addEventListener('click', () => this.callbacks.onStopFollow());
     this.followBox.append(followText, stop);
     overlay.append(this.nav, this.followBox);
+    this.relabel();
+  }
+
+  relabel(): void {
+    this.nav.setAttribute('aria-label', t('scene.floors'));
+    this.followPrefix.textContent = t('scene.following');
+    this.followStop.title = t('scene.stopFollow');
   }
 
   get following(): string | null {
@@ -129,14 +138,14 @@ export class CameraRig {
   }
 
   setFloors(items: readonly FloorButton[]): void {
-    const signature = items.map((item) => `${item.slug}|${item.label}|${item.accent}|${item.annex ? 1 : 0}`).join('\u0000');
+    const signature = [currentLang(), ...items.map((item) => `${item.slug}|${item.label}|${item.accent}|${item.annex ? 1 : 0}`)].join('\u0000');
     if (signature === this.floorsSignature) return;
     this.floorsSignature = signature;
     this.buttons.clear();
     const overview = document.createElement('button');
     overview.type = 'button';
     overview.className = 'scene-floor-btn is-overview';
-    overview.textContent = 'Edificio';
+    overview.textContent = t('scene.building');
     overview.addEventListener('click', () => this.callbacks.onOverview());
     const list: HTMLElement[] = [overview, this.card];
     let annexStarted = false;
@@ -145,7 +154,7 @@ export class CameraRig {
         annexStarted = true;
         const divider = document.createElement('span');
         divider.className = 'scene-floor-divider';
-        divider.textContent = 'Anexo';
+        divider.textContent = t('scene.annex');
         list.push(divider);
       }
       const button = document.createElement('button');
@@ -165,7 +174,7 @@ export class CameraRig {
     }
     const hint = document.createElement('p');
     hint.className = 'scene-hint';
-    hint.textContent = 'Desliza con dos dedos para subir, bajar o ir a los lados. Pellizca para acercar. Arrastra para girar.';
+    hint.textContent = t('scene.gestures');
     list.push(hint);
     this.nav.replaceChildren(...list);
     this.activeSlug = null;

@@ -11,6 +11,7 @@ import {
   type Matrix4,
   type MeshStandardMaterial,
 } from 'three';
+import { t } from '../i18n';
 import { Batcher, transform } from './batch';
 import {
   DESK_D,
@@ -34,7 +35,7 @@ export function glowTexture(): CanvasTexture {
   element.width = 128;
   element.height = 128;
   const ctx = element.getContext('2d');
-  if (!ctx) throw new Error('Canvas 2D no disponible');
+  if (!ctx) throw new Error(t('scene.noCanvas'));
   const gradient = ctx.createRadialGradient(64, 64, 4, 64, 64, 64);
   gradient.addColorStop(0, 'rgba(255,255,255,1)');
   gradient.addColorStop(0.45, 'rgba(255,255,255,0.45)');

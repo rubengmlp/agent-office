@@ -19,7 +19,8 @@ import {
 } from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
-import { agentName } from '../labels';
+import { t } from '../i18n';
+import { agentName, floorLabel } from '../labels';
 import type { OfficeHandle } from '../office/office';
 import type { Store } from '../store';
 import type { AgentView, FloorView } from '../types';
@@ -191,9 +192,10 @@ class OfficeScene {
 
     this.unsubscribers.push(
       usageCard.destroy,
-      store.watch(['agents', 'floors', 'tick'], () => {
+      store.watch(['agents', 'floors', 'tick', 'lang'], () => {
         this.dirty = true;
       }),
+      store.watch(['lang'], () => this.cameraRig.relabel()),
       store.watch(['messages'], () => {
         this.meetingTimer = MEETING_REFRESH_S;
       }),
@@ -314,7 +316,7 @@ class OfficeScene {
     this.cameraRig.setFloors(
       this.site.floors.map((room) => ({
         slug: room.slug,
-        label: room.view.label,
+        label: floorLabel(room.view),
         accent: room.style.accentCss,
         annex: room.building === 'annex',
       })),
@@ -507,7 +509,7 @@ class OfficeScene {
     this.site.tick(this.elapsed, testing);
     pulseRings(this.elapsed);
     this.drawTalkLines();
-    this.setStatus(loading ? 'Cargando personajes…' : this.site.floors.length === 0 ? 'Esperando a que llegue alguien a la oficina…' : '');
+    this.setStatus(loading ? t('scene.loadingCharacters') : this.site.floors.length === 0 ? t('scene.waiting') : '');
   }
 
   private drawTalkLines(): void {

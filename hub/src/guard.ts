@@ -213,11 +213,13 @@ export function shellPaths(command: string): ShellPath[] {
   return out.filter((p) => p.path.length > 0);
 }
 
-function block(reason: string): GateDecision {
-  return { pass: false, reason: `Guardia de Agent Office: ${reason}` };
+export type GuardDecision = GateDecision & { target?: string };
+
+function block(reason: string, target: string): GuardDecision {
+  return { pass: false, reason: `Guardia de Agent Office: ${reason}`, target };
 }
 
-export function guardDecision(g: GuardInput, ctx: GuardContext): GateDecision {
+export function guardDecision(g: GuardInput, ctx: GuardContext): GuardDecision {
   if (!GUARDED_TOOLS.has(g.tool)) return PASS;
   const zones = zonesFor(g.role, ctx);
   if (!zones) return PASS;
@@ -229,28 +231,29 @@ export function guardDecision(g: GuardInput, ctx: GuardContext): GateDecision {
     if (!raw) return PASS;
     const target = resolvePath(raw, g.cwd, home);
     if (inZone(target, zones)) return PASS;
-    return block(`${zones.label} solo escribe dentro de ${where}${fuentesNote}. ${target} queda fuera; escribe en tu carpeta.`);
+    return block(`${zones.label} solo escribe dentro de ${where}${fuentesNote}. ${target} queda fuera; escribe en tu carpeta.`, target);
   }
   const command = text(g.input.command) ?? '';
   for (const ref of shellPaths(command)) {
     const target = resolvePath(ref.path, g.cwd, home);
     if (inZone(target, zones)) continue;
     if (zones.forbidden.some((f) => isInside(target, f))) {
-      if (ref.write) return block(`${target} es una foto de solo lectura de una planta; no se escribe en ella.`);
+      if (ref.write) return block(`${target} es una foto de solo lectura de una planta; no se escribe en ella.`, target);
       continue;
     }
     const floor = ctx.floors.find((f) => isInside(target, f.path));
     if (floor) {
       return block(
         `${zones.label} no usa rutas de la planta ${floor.slug} desde Bash (${target}). Lee el código en la foto de redaccion/.fuentes o con las herramientas de lectura.`,
+        target,
       );
     }
     if (isInside(target, ctx.claudeHome)) {
       const readable = [join(ctx.claudeHome, 'skills'), join(ctx.claudeHome, 'plugins')].some((d) => isInside(target, d));
-      if (ref.write || !readable) return block(`${zones.label} no toca ${target} desde Bash. Solo el jefe de Mantenimiento instala skills aprobadas.`);
+      if (ref.write || !readable) return block(`${zones.label} no toca ${target} desde Bash. Solo el jefe de Mantenimiento instala skills aprobadas.`, target);
       continue;
     }
-    if (ref.write && isInside(target, ctx.docsRoot)) return block(`${zones.label} solo escribe dentro de ${where}. ${target} queda fuera.`);
+    if (ref.write && isInside(target, ctx.docsRoot)) return block(`${zones.label} solo escribe dentro de ${where}. ${target} queda fuera.`, target);
   }
   return PASS;
 }

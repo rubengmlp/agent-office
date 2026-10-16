@@ -103,6 +103,32 @@ describe('reports', () => {
     expect(report).toMatchObject({ questions: 1, blocked: 1, live: true, lessons: ['Pide el contrato antes de empezar'], summary: 'HECHO: pantalla de viajes lista' });
   });
 
+  test('a report saved before summaryText is rendered from its data', () => {
+    const db = openDb(':memory:');
+    db.query('INSERT INTO edits (ts, agent_key, floor, path) VALUES (?, ?, ?, ?)').run(at(1), 'old-1', 'mobile', '/m/a');
+    db.query('INSERT INTO verdicts (ts, agent_key, floor, kind, ok, command) VALUES (?, ?, ?, ?, ?, ?)').run(at(2), 'old-1', 'mobile', 'tests', 1, 'x');
+    const subject = (key: string) => ({ key, name: key, role: 'office-dev-mobile', roleId: 'dev' as const, floor: 'mobile', startedAt: at(0), endedAt: at(9), closing: null });
+    const counts = buildReport(db, subject('old-1'), (k) => k);
+    expect(counts.summary).toBe('1 fichero cambiado · 1 ejecución de tests');
+    saveReport(db, counts, at(10));
+    db.query("UPDATE reports SET data = json_remove(data, '$.summaryText') WHERE agent_key = ?").run('old-1');
+    expect(savedReport(db, 'old-1')?.summaryText).toEqual({
+      key: 'hub.report.counts',
+      params: { files: { key: 'hub.report.files.one', params: { n: 1 } }, tests: { key: 'hub.report.tests.one', params: { n: 1 } } },
+    });
+
+    db.query('INSERT INTO messages (ts, from_key, to_name, to_key, text, floor) VALUES (?, ?, ?, ?, ?, ?)').run(at(3), 'old-2', 'lead', 'lead-1', 'HECHO: x', 'mobile');
+    const done = buildReport(db, subject('old-2'), (k) => k);
+    expect(done.summary).toBe('HECHO: x');
+    saveReport(db, done, at(11));
+    db.query("UPDATE reports SET data = json_remove(data, '$.summaryText') WHERE agent_key = ?").run('old-2');
+    expect(savedReport(db, 'old-2')?.summaryText).toBeNull();
+
+    db.query("UPDATE reports SET data = json_set(data, '$.summary', 'otro resumen') WHERE agent_key = ?").run('old-1');
+    db.query("UPDATE reports SET data = json_remove(data, '$.summaryText') WHERE agent_key = ?").run('old-1');
+    expect(savedReport(db, 'old-1')?.summaryText).toBeNull();
+  });
+
   test('saved reports keep the newest per floor and role and come back without the live flag', () => {
     const db = openDb(':memory:');
     const make = (key: string, n: number) =>

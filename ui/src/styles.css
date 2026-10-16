@@ -266,6 +266,12 @@ textarea {
   margin-left: auto;
 }
 
+.lang-select {
+  width: auto;
+  flex: none;
+  margin-left: 4px;
+}
+
 .tab {
   border-color: transparent;
   background: transparent;
@@ -959,6 +965,38 @@ textarea {
   line-height: 1.4;
 }
 
+.table-help {
+  margin: 0 0 16px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.table-help summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.table-help h4 {
+  margin: 12px 0 4px;
+}
+
+.table-help p {
+  margin: 4px 0;
+}
+
+.table-help ul {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+
+.table-help li {
+  margin: 3px 0;
+}
+
+.table-help .badge {
+  font-size: 11px;
+}
+
 .role-grid {
   display: grid;
   grid-template-columns: minmax(150px, 1fr) minmax(190px, 1.4fr) minmax(110px, 0.6fr);
@@ -975,6 +1013,21 @@ textarea {
   font-weight: 600;
 }
 
+.role-name-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 7px;
+}
+
+.role-name-cell .role-name {
+  padding-top: 0;
+}
+
+.role-name-cell .setting-hint {
+  font-weight: normal;
+}
+
 .role-model-cell {
   display: flex;
   flex-direction: column;
@@ -987,6 +1040,14 @@ textarea {
   justify-content: space-between;
   gap: 16px;
   padding: 8px 0;
+}
+
+.notify-events {
+  padding-left: 48px;
+}
+
+.notify-actions {
+  padding-top: 8px;
 }
 
 .setting-row + .setting-row {
@@ -2129,4 +2190,29 @@ details[open] > .floors-summary::before {
   background: color-mix(in srgb, var(--surface) 88%, transparent);
   box-shadow: var(--shadow);
   backdrop-filter: blur(8px);
+}
+
+.project-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.project-form .project-path {
+  flex: 2 1 260px;
+  min-width: 0;
+}
+
+.project-form .project-slug {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.project-form button {
+  flex: none;
+}
+
+.project-delete {
+  flex: none;
 }

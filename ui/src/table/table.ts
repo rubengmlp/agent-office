@@ -1,28 +1,127 @@
 import { orderRows, type Row } from '../agents-order';
 import { stateBadge } from '../badge';
-import { button, el } from '../dom';
+import { button, el, setStateColor } from '../dom';
+import { plural, t, type MessageKey } from '../i18n';
+import { hubText } from '../i18n/hub';
 import {
   agentName,
-  ALERT_LEVEL_LABELS,
-  DOCUMENT_STATUS_LABELS,
+  alertLevelHint,
+  alertLevelLabel,
+  DOCUMENT_STATUS_COLORS,
   documentKindFor,
-  FLOOR_KIND_LABELS,
-  ROLE_LABELS,
+  documentStatusHint,
+  documentStatusLabel,
+  floorKindHint,
+  floorKindLabel,
+  floorLabel,
+  roleLabel,
   scoreText,
-  STACK_LABELS,
+  stackLabel,
+  STATE_COLORS,
+  stateHint,
 } from '../labels';
 import { documentBadge, openDocument } from '../panel/deliverables';
 import type { Store } from '../store';
 import { relativeTime } from '../time';
-import type { AgentView, DocumentKind, DocumentView, FloorView, GuardAlert } from '../types';
+import type { AgentState, AgentView, DocumentKind, DocumentStatus, DocumentView, FloorKind, FloorView, GuardAlert, GuardAlertLevel } from '../types';
 
-const COLUMNS = ['Agente', 'Rol', 'Estado', 'Detalle', 'Último test', 'Desde'] as const;
+const COLUMNS: readonly { col: MessageKey; hint: MessageKey }[] = [
+  { col: 'table.col.agent', hint: 'table.col.hint.agent' },
+  { col: 'table.col.role', hint: 'table.col.hint.role' },
+  { col: 'table.col.state', hint: 'table.col.hint.state' },
+  { col: 'table.col.detail', hint: 'table.col.hint.detail' },
+  { col: 'table.col.lastTest', hint: 'table.col.hint.lastTest' },
+  { col: 'table.col.since', hint: 'table.col.hint.since' },
+];
 const ALERT_COUNT = 5;
+const HELP_KEY = 'agent-office.help.table';
 
-const ALERT_HINTS: Record<GuardAlert['level'], string> = {
-  alerta: 'Cambio en la planta sin que trabajara ningún agente de ella',
-  posible: 'Puede venir de un comando Bash de un agente de la planta',
-};
+const FLOOR_KINDS: readonly FloorKind[] = ['direccion', 'managed', 'observed', 'redaccion', 'mantenimiento'];
+const DOCUMENT_STATUSES: readonly DocumentStatus[] = [
+  'borrador',
+  'revision',
+  'aprobado',
+  'sin-acuerdo',
+  'entregado',
+  'aparcado',
+  'ejecutando',
+  'cerrado',
+  'descartado',
+];
+const ALERT_LEVELS: readonly GuardAlertLevel[] = ['alerta', 'posible'];
+
+function askFlag(): HTMLElement {
+  const flag = el('span', 'ask-flag', t('table.askFlag'));
+  flag.title = t('table.askFlag.hint');
+  return flag;
+}
+
+function kindChip(kind: FloorKind): HTMLElement {
+  const chip = el('span', 'chip chip-kind', floorKindLabel(kind));
+  chip.title = floorKindHint(kind);
+  return chip;
+}
+
+function alertLevel(level: GuardAlertLevel): HTMLElement {
+  const badge = el('span', `alert-level alert-level-${level}`, alertLevelLabel(level));
+  badge.title = alertLevelHint(level);
+  return badge;
+}
+
+function statusBadge(status: DocumentStatus): HTMLElement {
+  const badge = el('span', 'badge', el('span', 'badge-dot'), documentStatusLabel(status));
+  setStateColor(badge, DOCUMENT_STATUS_COLORS[status]);
+  badge.title = documentStatusHint(status);
+  return badge;
+}
+
+function helpItem(term: Node | string, hint: string): HTMLElement {
+  return el('li', '', term, ' ', el('span', 'muted', hint));
+}
+
+function helpContent(): Node[] {
+  const states = Object.keys(STATE_COLORS) as AgentState[];
+  return [
+    el('summary', '', t('table.help.summary')),
+    el('p', '', t('table.help.intro')),
+    el('h4', '', t('table.help.floor.title')),
+    el('p', '', t('table.help.floor')),
+    el('ul', '', ...FLOOR_KINDS.map((kind) => helpItem(kindChip(kind), floorKindHint(kind)))),
+    el('h4', '', t('table.help.columns.title')),
+    el('ul', '', ...COLUMNS.map(({ col, hint }) => helpItem(el('b', '', t(col)), t(hint)))),
+    el('ul', '', helpItem(askFlag(), t('table.askFlag.hint'))),
+    el('h4', '', t('table.help.states.title')),
+    el('ul', '', ...states.map((state) => helpItem(stateBadge(state), stateHint(state)))),
+    el('h4', '', t('table.help.docs.title')),
+    el('p', '', t('table.help.docs')),
+    el(
+      'ul',
+      '',
+      ...DOCUMENT_STATUSES.map((status) => helpItem(statusBadge(status), documentStatusHint(status))),
+      helpItem(el('b', '', t('table.round', { n: 'N' })), t('table.round.hint')),
+      helpItem(el('b', '', t('docStatus.score', { score: 'N' })), t('table.score.hint')),
+    ),
+    el('h4', '', t('table.help.alerts.title')),
+    el('p', '', t('table.help.alerts')),
+    el('ul', '', ...ALERT_LEVELS.map((level) => helpItem(alertLevel(level), alertLevelHint(level)))),
+  ];
+}
+
+function readHelpOpen(): boolean {
+  try {
+    return localStorage.getItem(HELP_KEY) !== '0';
+  } catch {
+    return true;
+  }
+}
+
+function storeHelpOpen(open: boolean): void {
+  try {
+    localStorage.setItem(HELP_KEY, open ? '1' : '0');
+  } catch {
+    // Blocked storage: the legend just opens again next time.
+  }
+}
 
 function testCell(agent: AgentView, now: number): HTMLTableCellElement {
   const cell = el('td', 'col-test');
@@ -49,14 +148,15 @@ function agentRow(store: Store, row: Row, now: number): HTMLTableRowElement {
   nameCell.style.paddingLeft = `${12 + depth * 20}px`;
 
   const stateCell = el('td', 'col-state', stateBadge(state));
-  if (store.questionFor(agent.key)) stateCell.append(el('span', 'ask-flag', '? pregunta pendiente'));
+  if (store.questionFor(agent.key)) stateCell.append(askFlag());
 
-  const detailCell = el('td', 'col-detail', agent.tool ? el('code', 'tool-tag', agent.tool) : null, agent.detail);
-  detailCell.title = agent.detail;
+  const detail = hubText(agent.detail);
+  const detailCell = el('td', 'col-detail', agent.tool ? el('code', 'tool-tag', agent.tool) : null, detail);
+  detailCell.title = detail;
 
   tr.append(
     nameCell,
-    el('td', 'col-role', ROLE_LABELS[agent.roleKind]),
+    el('td', 'col-role', roleLabel(agent.roleKind)),
     stateCell,
     detailCell,
     testCell(agent, now),
@@ -69,19 +169,20 @@ function documentRow(doc: DocumentView): HTMLElement {
   const open = button('', 'doc-row');
   open.dataset.doc = doc.path;
   open.title = doc.path;
-  open.append(
-    el('span', 'doc-row-title', doc.title),
-    documentBadge(doc, DOCUMENT_STATUS_LABELS[doc.status]),
-    el('span', 'doc-row-round muted', doc.round > 0 ? `ronda ${doc.round}` : '—'),
-    el('span', 'doc-row-score muted', doc.score !== null ? scoreText(doc.score) : '—'),
-  );
+  const badge = documentBadge(doc, documentStatusLabel(doc.status));
+  badge.title = documentStatusHint(doc.status);
+  const round = el('span', 'doc-row-round muted', doc.round > 0 ? t('table.round', { n: doc.round }) : '—');
+  round.title = t('table.round.hint');
+  const score = el('span', 'doc-row-score muted', doc.score !== null ? scoreText(doc.score) : '—');
+  score.title = t('table.score.hint');
+  open.append(el('span', 'doc-row-title', doc.title), badge, round, score);
   return el('li', 'doc-row-item', open);
 }
 
 function documentList(store: Store, kind: DocumentKind): HTMLElement {
   const documents = store.documents.filter((doc) => doc.kind === kind).sort((a, b) => b.updatedAt - a.updatedAt);
-  const title = kind === 'plan' ? 'Planes' : 'Skills';
-  const empty = kind === 'plan' ? 'Sin planes todavía.' : 'Sin skills todavía.';
+  const title = t(kind === 'plan' ? 'table.docs.plans' : 'table.docs.skills');
+  const empty = t(kind === 'plan' ? 'table.docs.noPlans' : 'table.docs.noSkills');
   return el(
     'div',
     'floor-docs',
@@ -94,20 +195,37 @@ function documentList(store: Store, kind: DocumentKind): HTMLElement {
 
 function floorSection(store: Store, floor: FloorView, agents: readonly AgentView[], now: number): HTMLElement {
   const documentKind = documentKindFor(floor.kind);
+  let stackChip: HTMLElement | null = null;
+  if (documentKind === null) {
+    stackChip = el('span', 'chip', stackLabel(floor.stack));
+    stackChip.title = t('table.chip.stack');
+  }
   const header = el(
     'header',
     'floor-header',
-    el('h2', 'floor-title', floor.label),
-    documentKind === null ? el('span', 'chip', STACK_LABELS[floor.stack]) : null,
-    el('span', 'chip chip-kind', FLOOR_KIND_LABELS[floor.kind]),
+    el('h2', 'floor-title', floorLabel(floor)),
+    stackChip,
+    kindChip(floor.kind),
     el('code', 'floor-path', floor.path ?? '—'),
   );
 
-  const head = el('thead', '', el('tr', '', ...COLUMNS.map((title) => el('th', '', title))));
+  const head = el(
+    'thead',
+    '',
+    el(
+      'tr',
+      '',
+      ...COLUMNS.map(({ col, hint }) => {
+        const th = el('th', '', t(col));
+        th.title = t(hint);
+        return th;
+      }),
+    ),
+  );
   const body = el('tbody');
   const rows = orderRows(agents);
   if (rows.length === 0) {
-    const empty = el('td', 'empty muted', 'Sin agentes');
+    const empty = el('td', 'empty muted', t('table.noAgents'));
     empty.colSpan = COLUMNS.length;
     body.append(el('tr', 'empty-row', empty));
   }
@@ -123,17 +241,17 @@ function floorSection(store: Store, floor: FloorView, agents: readonly AgentView
 }
 
 function alertItem(store: Store, alert: GuardAlert, now: number, open: boolean): HTMLElement {
-  const floor = store.floorBySlug(alert.floor)?.label ?? alert.floor;
+  const known = store.floorBySlug(alert.floor);
+  const floor = known ? floorLabel(known) : alert.floor;
   const agent = store.agents.get(alert.agentKey);
   const count = alert.files.length;
 
-  const level = el('span', `alert-level alert-level-${alert.level}`, ALERT_LEVEL_LABELS[alert.level]);
-  level.title = ALERT_HINTS[alert.level];
+  const level = alertLevel(alert.level);
 
   const files = el(
     'details',
     'alert-files',
-    el('summary', '', `${count} ${count === 1 ? 'fichero' : 'ficheros'}`),
+    el('summary', '', plural('table.files', count)),
     el('ul', 'alert-file-list', ...alert.files.map((file) => el('li', '', el('code', '', file)))),
   );
   files.dataset.alert = String(alert.id);
@@ -145,7 +263,7 @@ function alertItem(store: Store, alert: GuardAlert, now: number, open: boolean):
     level,
     el('span', 'alert-floor', floor),
     files,
-    agent ? el('span', 'alert-agent muted', `tras ${agentName(agent)}`) : null,
+    agent ? el('span', 'alert-agent muted', t('table.after', { name: agentName(agent) })) : null,
     el('time', 'alert-time muted', relativeTime(alert.ts, now)),
   );
 }
@@ -156,7 +274,7 @@ function alertsSection(store: Store, openAlerts: ReadonlySet<number>, now: numbe
   return el(
     'section',
     'alerts',
-    el('h2', 'alerts-title', 'Alertas de la guardia'),
+    el('h2', 'alerts-title', t('table.alerts')),
     el('ul', 'alert-list', ...latest.map((alert) => alertItem(store, alert, now, openAlerts.has(alert.id)))),
   );
 }
@@ -165,6 +283,10 @@ export function mountTable(host: HTMLElement, store: Store): void {
   let scheduled = false;
   let scrolledTo: string | null = null;
   const openAlerts = new Set<number>();
+  const help = el('details', 'table-help');
+  help.open = readHelpOpen();
+  const content = el('div', 'table-content');
+  host.replaceChildren(help, content);
 
   const render = (): void => {
     const now = store.now();
@@ -179,16 +301,16 @@ export function mountTable(host: HTMLElement, store: Store): void {
     const alerts = alertsSection(store, openAlerts, now);
     if (alerts) fragment.append(alerts);
     if (floors.length === 0) {
-      fragment.append(el('p', 'placeholder', 'Esperando agentes…'));
-      host.replaceChildren(fragment);
+      fragment.append(el('p', 'placeholder', t('table.waiting')));
+      content.replaceChildren(fragment);
       return;
     }
     for (const floor of floors) fragment.append(floorSection(store, floor, byFloor.get(floor.slug) ?? [], now));
-    host.replaceChildren(fragment);
+    content.replaceChildren(fragment);
 
     if (store.selectedKey !== scrolledTo) {
       scrolledTo = store.selectedKey;
-      host.querySelector('tr.selected')?.scrollIntoView({ block: 'nearest' });
+      content.querySelector('tr.selected')?.scrollIntoView({ block: 'nearest' });
     }
   };
 
@@ -218,6 +340,10 @@ export function mountTable(host: HTMLElement, store: Store): void {
     'toggle',
     (event) => {
       const target = event.target;
+      if (target === help) {
+        storeHelpOpen(help.open);
+        return;
+      }
       if (!(target instanceof HTMLDetailsElement) || target.dataset.alert === undefined) return;
       const id = Number(target.dataset.alert);
       if (target.open) openAlerts.add(id);
@@ -226,5 +352,6 @@ export function mountTable(host: HTMLElement, store: Store): void {
     true,
   );
 
-  store.watch(['agents', 'floors', 'questions', 'selection', 'tick', 'alerts', 'documents'], schedule);
+  store.watch(['lang'], () => help.replaceChildren(...helpContent()));
+  store.watch(['agents', 'floors', 'questions', 'selection', 'tick', 'alerts', 'documents', 'lang'], schedule);
 }

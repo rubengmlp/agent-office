@@ -22,7 +22,7 @@ function setup() {
   let changes = 0;
   const desk = new SyncDesk({ db, git: runGit, root: () => docs, floors: () => floors, now: () => Date.now(), onChange: () => changes++ });
   const fuentes = (slug: string, name: string) => join(docs, 'redaccion', '.fuentes', slug, name);
-  return { ...t, root, docs, mobile, backend, desk, fuentes, changes: () => changes };
+  return { ...t, root, docs, mobile, backend, db, desk, fuentes, changes: () => changes };
 }
 
 function ok(result: SyncResult) {
@@ -113,6 +113,26 @@ describe('Redacción sources', () => {
     expect(existsSync(s.fuentes('abierto', 'mobile'))).toBe(true);
     expect(await s.desk.cleanup(new Set(['abierto']))).toContain('abierto');
     expect(existsSync(s.fuentes('abierto', 'mobile'))).toBe(false);
+    s.cleanup();
+  });
+
+  test('removing a floor retires its snapshots in every plan and keeps the other floors', async () => {
+    const s = setup();
+    ok(await s.desk.sync({ slug: 'login', floors: ['mobile', 'backend'] }));
+    ok(await s.desk.sync({ slug: 'viajes', floors: ['mobile'] }));
+    const count = (sql: string) => s.db.query<{ n: number }, []>(sql).get()?.n;
+
+    expect(await s.desk.removeFloor('mobile')).toBe(2);
+    expect(existsSync(s.fuentes('login', 'mobile'))).toBe(false);
+    expect(existsSync(s.fuentes('viajes', 'mobile'))).toBe(false);
+    expect(existsSync(join(s.docs, 'redaccion', '.fuentes', 'viajes'))).toBe(false);
+    expect(existsSync(s.fuentes('login', 'backend'))).toBe(true);
+    expect(count("SELECT COUNT(*) AS n FROM sync_worktrees WHERE floor = 'mobile'")).toBe(0);
+    expect(count("SELECT COUNT(*) AS n FROM floor_sync WHERE floor = 'mobile'")).toBe(0);
+    expect(count("SELECT COUNT(*) AS n FROM sync_worktrees WHERE floor = 'backend'")).toBe(1);
+    expect(worktrees(s.mobile.repo)).not.toContain('.fuentes');
+    expect(worktrees(s.backend.repo)).toContain(s.fuentes('login', 'backend'));
+    expect(s.desk.base('login')).toEqual([expect.objectContaining({ floor: 'backend' })]);
     s.cleanup();
   });
 

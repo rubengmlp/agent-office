@@ -127,6 +127,24 @@ describe('hub server', () => {
     ws.close();
   });
 
+  test('a hidden panel keeps the desk watching until its socket closes', async () => {
+    const nobodyWatching = (): boolean => {
+      h.clock.advance(31_000);
+      return !h.office.desk.someoneWatching();
+    };
+    await until(nobodyWatching);
+    const ws = openSocket(base);
+    await new Promise<void>((resolve) => {
+      ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', key: KEY }));
+      ws.onmessage = () => resolve();
+    });
+    ws.send(JSON.stringify({ type: 'heartbeat', visible: false }));
+    h.clock.advance(31_000);
+    expect(h.office.desk.someoneWatching()).toBe(true);
+    ws.close();
+    await until(nobodyWatching);
+  });
+
   test('/ask holds the hook until the panel answers, and a late answer gets 409', async () => {
     await post(
       '/events',

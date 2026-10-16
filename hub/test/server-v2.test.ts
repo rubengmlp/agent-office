@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ensureDocsRepo } from '../src/docs-repo';
+import type { FloorAdmin } from '../src/floor-admin';
 import { startServer } from '../src/server';
 import type { SettingsService } from '../src/settings';
 import { settingsView } from '../src/settings';
@@ -30,7 +31,22 @@ describe('hub server v2 routes', () => {
     view: () => settingsView(h.config),
     update: (raw) => {
       updates.push(raw);
-      return raw && typeof raw === 'object' && 'roles' in raw ? { ok: true, regenerated: 11, note: 'Guardado.' } : { ok: false, error: 'Nada que guardar' };
+      return raw && typeof raw === 'object' && 'roles' in raw
+        ? { ok: true, regenerated: 11, note: [{ key: 'hub.settings.saved' }] }
+        : { ok: false, error: [{ key: 'hub.settings.noChanges' }] };
+    },
+  };
+  const floorCalls: unknown[] = [];
+  const floors: FloorAdmin = {
+    add: (raw) => {
+      floorCalls.push(raw);
+      return raw && typeof raw === 'object' && 'path' in raw
+        ? { ok: true, slug: 'web', path: '/tmp/web', stack: 'node', startCommand: 'claude', note: { key: 'hub.floors.added', params: { slug: 'web', startCommand: 'claude' } } }
+        : { ok: false, status: 400, error: { key: 'hub.floors.pathRequired' } };
+    },
+    remove: async (slug) => {
+      floorCalls.push(slug);
+      return { ok: false, status: 404, error: { key: 'hub.floors.notFound', params: { slug } } };
     },
   };
   let base = '';
@@ -47,7 +63,7 @@ describe('hub server v2 routes', () => {
     mkdirSync(publicDir, { recursive: true });
     const port = await freePort();
     base = `http://127.0.0.1:${port}`;
-    ({ stop } = startServer({ office: h.office, port, key: () => KEY, publicDir, settings }));
+    ({ stop } = startServer({ office: h.office, port, key: () => KEY, publicDir, settings, floors }));
   });
 
   afterAll(() => {
@@ -100,10 +116,24 @@ describe('hub server v2 routes', () => {
     expect(view.departments.redaccion).toBe(true);
     const saved = await call('POST', '/api/settings', { roles: { dev: { model: 'haiku' } } });
     expect(saved.status).toBe(200);
-    expect(await saved.json()).toEqual({ ok: true, regenerated: 11, note: 'Guardado.' });
+    expect(await saved.json()).toEqual({ ok: true, regenerated: 11, note: [{ key: 'hub.settings.saved' }] });
     const refused = await call('POST', '/api/settings', { nada: true });
     expect(refused.status).toBe(400);
     expect(updates).toHaveLength(2);
+  });
+
+  test('floors are added and deleted through the floor admin', async () => {
+    const created = await call('POST', '/api/floors', { path: '/tmp/web' });
+    expect(created.status).toBe(200);
+    expect(await created.json()).toMatchObject({ ok: true, slug: 'web' });
+    const refused = await call('POST', '/api/floors', {});
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toMatchObject({ ok: false, error: { key: 'hub.floors.pathRequired' } });
+    const missing = await call('DELETE', '/api/floors/x');
+    expect(missing.status).toBe(404);
+    expect(floorCalls).toEqual([{ path: '/tmp/web' }, {}, 'x']);
+    expect((await fetch(`${base}/api/floors`, { method: 'POST', body: '{}' })).status).toBe(401);
+    expect((await fetch(`${base}/api/floors/x`, { method: 'DELETE' })).status).toBe(401);
   });
 
   test('memory: list, add, refuse duplicates and delete', async () => {
@@ -121,7 +151,9 @@ describe('hub server v2 routes', () => {
   });
 
   test('reports, documents and sources answer with clear errors', async () => {
-    expect((await call('GET', '/api/reports/nadie')).status).toBe(404);
+    const missing = await call('GET', '/api/reports/nadie');
+    expect(missing.status).toBe(404);
+    expect(((await missing.json()) as { error: unknown }).error).toEqual({ key: 'hub.api.noReport' });
     const live = await call('GET', '/api/reports/lead-1');
     expect(((await live.json()) as { agentKey: string }).agentKey).toBe('lead-1');
     expect(await (await call('GET', '/api/documents')).json()).toEqual([]);
@@ -146,10 +178,10 @@ describe('hub server v2 routes', () => {
     expect((await decide({ path: 'redaccion/planes/nada.md', decision: 'aparcar' })).status).toBe(404);
     const invalid = await decide({ path, decision: 'cerrar' });
     expect(invalid.status).toBe(409);
-    expect(await invalid.json()).toEqual({ error: 'El plan no admite esa decisión en su estado actual' });
+    expect(await invalid.json()).toEqual({ error: { key: 'hub.api.planBadState' } });
     const noDirector = await decide({ path, decision: 'ejecutar' });
     expect(noDirector.status).toBe(409);
-    expect(await noDirector.json()).toEqual({ error: 'El director no está abierto' });
+    expect(await noDirector.json()).toEqual({ error: { key: 'hub.api.directorClosed' } });
     const parked = await decide({ path, decision: 'aparcar' });
     expect(parked.status).toBe(200);
     expect(await parked.json()).toEqual({ ok: true });
@@ -158,6 +190,6 @@ describe('hub server v2 routes', () => {
     h.office.refreshDocuments();
     const discard = await call('POST', '/api/documents/discard', { path });
     expect(discard.status).toBe(409);
-    expect(await discard.json()).toEqual({ error: 'El plan se está ejecutando, está cerrado o descartado' });
+    expect(await discard.json()).toEqual({ error: { key: 'hub.api.planClosed' } });
   });
 });

@@ -13,6 +13,7 @@ import {
 } from './config';
 import { configTargets, watchTargets } from './config-watch';
 import { dbRegistry, openDb } from './db';
+import { createFloorAdmin } from './floor-admin';
 import { Office } from './office';
 import { loadProfiles } from './profiles';
 import { prune } from './prune';
@@ -61,6 +62,7 @@ export function main(argv: string[]): void {
     }
   };
   const settings = createSettings(p, () => loadProfiles(PROFILES_DIR), reload);
+  const floors = createFloorAdmin(p, () => loadProfiles(PROFILES_DIR), office, reload);
   const { stop } = startServer({
     office,
     port: config.port,
@@ -68,6 +70,7 @@ export function main(argv: string[]): void {
     publicDir: PUBLIC_DIR,
     dev: process.env.AGENT_OFFICE_DEV === '1',
     settings,
+    floors,
   });
   const stopWatching = watchTargets(configTargets(p.home, PROFILES_DIR), reload);
   office.start();

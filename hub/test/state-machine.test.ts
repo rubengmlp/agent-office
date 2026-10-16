@@ -17,6 +17,15 @@ describe('real captured payloads', () => {
     expect(c.state).toBe('idle');
   });
 
+  test('summaries and details are keys and raw text stays raw', () => {
+    const start = classify(find('SessionStart'), flutter);
+    expect(start.summary).toEqual({ key: 'hub.act.sessionStart', params: { source: 'startup' } });
+    expect(start.detail).toEqual({ key: 'hub.detail.waiting' });
+    const run = classify(bash(find('PreToolUse', 'Bash'), 'ls -la'), flutter);
+    expect(run.detail).toBe('ls -la');
+    expect(run.summary).toEqual({ key: 'hub.act.run', params: { command: 'ls -la' } });
+  });
+
   test('a plain bash command is work', () => {
     const c = classify(find('PreToolUse', 'Bash'), flutter);
     expect(c.state).toBe('working');
@@ -59,7 +68,7 @@ describe('real captured payloads', () => {
     const pre = classify(find('PreToolUse', 'Agent'), flutter);
     const post = classify(find('PostToolUse', 'Agent'), flutter);
     expect(pre.spawnCall?.subagentType).toBe('echoer');
-    expect(pre.detail).toStartWith('delega en echoer');
+    expect(pre.detail).toEqual({ key: 'hub.detail.delegatesTo', params: { who: 'echoer', what: 'Run echoer agent' } });
     expect(post.spawned).toEqual({ toolUseId: pre.spawnCall!.toolUseId, agentId: 'a0f92699da9c839ef', teammate: false });
   });
 
@@ -139,8 +148,7 @@ describe('synthetic events from the docs', () => {
     );
     expect(c.state).toBe('asking');
     expect(c.question).toBe('¿El login con Apple va antes que el de Google?');
-    expect(c.detail).toBe('pregunta: ¿El login con Apple va antes que el de Google?');
-    expect(c.detail).not.toContain('opciones');
+    expect(c.detail).toEqual({ key: 'hub.detail.asks', params: { question: '¿El login con Apple va antes que el de Google?' } });
     expect(c.message).toEqual({ to: 'team-lead', text: expect.stringContaining('PREGUNTA:') });
     const prose = classify({ ...base, hook_event_name: 'PreToolUse', tool_name: 'SendMessage', tool_input: { to: 'team-lead', message: 'Pregunta: ¿sigo?' } }, flutter);
     expect(prose.state).toBe('talking');

@@ -9,7 +9,7 @@ import { Office, type OfficeOptions } from '../src/office';
 import { PROFILES_DIR } from '../src/config';
 import { loadProfiles } from '../src/profiles';
 import type { AgentView, HookMeta } from '../src/types';
-import { ev, floor, git, harness, originAndClone, pushCommit, useGitIdentity, type Harness } from './helpers';
+import { ev, floor, git, harness, keyOf, originAndClone, pushCommit, useGitIdentity, type Harness } from './helpers';
 
 useGitIdentity();
 
@@ -26,6 +26,12 @@ afterEach(() => h?.cleanup());
 
 const agent = (key: string): AgentView | undefined => h.office.snapshot().agents.find((a) => a.key === key);
 const doc = (path: string) => h.office.documents().find((d) => d.path === path);
+
+// The last list of documents the panel received, which is what its desktop notifications compare.
+function emittedDoc(path: string) {
+  const lists = h.messages.flatMap((msg) => (msg.type === 'documents' ? [msg.data] : []));
+  return lists.at(-1)?.find((d) => d.path === path);
+}
 
 function office(git?: GitRunner, extra: Partial<OfficeOptions> = {}): void {
   h = harness({
@@ -142,6 +148,7 @@ describe('Redacción review loop', () => {
     h.clock.advance(1000);
     say(LEAD, cwd, 'arev-2', 'revisor-planes-login-r2', 'redactor-login', `APROBADO: ${PLAN} ronda 2 — nota 9/10 — sin bloqueantes`);
     expect(doc(PLAN)).toMatchObject({ status: 'aprobado', round: 2, score: 9 });
+    expect(emittedDoc(PLAN)).toMatchObject({ status: 'aprobado', round: 2 });
 
     expect(gate(LEAD, cwd, 'ared-1', 'redactor-login', 'HECHO: plan listo').reason).toContain('Falta la ruta');
     expect(gate(LEAD, cwd, 'ared-1', 'redactor-login', `HECHO: ${PLAN} aprobado en 2 rondas — listo`).pass).toBe(true);
@@ -170,6 +177,7 @@ describe('Redacción review loop', () => {
     say(LEAD, cwd, 'ared-1', 'redactor-login', 'team-lead', `REVISAR: ${PLAN} ronda 3`);
     say(LEAD, cwd, 'arev-1', 'revisor-planes-login-r1', 'redactor-login', `SIN ACUERDO: ${PLAN} ronda 3 — falta la migración`);
     expect(doc(PLAN)).toMatchObject({ status: 'sin-acuerdo', round: 3 });
+    expect(emittedDoc(PLAN)).toMatchObject({ status: 'sin-acuerdo', round: 3 });
     expect(gate(LEAD, cwd, null, null, `HECHO: ${PLAN} aprobado en 3 rondas — x`).pass).toBe(false);
   });
 
@@ -206,20 +214,20 @@ describe('plan reviewers', () => {
 
     say(LEAD, cwd, 'arev-1', 'revisor-planes-login-r1', 'redactor-login', `MEJORAR: ${PLAN} ronda 1 — nota 6/10\n1. bloqueante: falta la migración`);
     expect(verdictRows()).toEqual([{ kind: 'improve', score: 6, agent_key: 'arev-1' }]);
-    expect(agent('arev-1')).toMatchObject({ state: 'done', detail: 'veredicto: mejorar', endedAt: h.clock.now });
+    expect(agent('arev-1')).toMatchObject({ state: 'done', detail: { key: 'hub.detail.verdictImprove' }, endedAt: h.clock.now });
 
     say(LEAD, cwd, 'arev-1', 'revisor-planes-login-r1', 'team-lead', `MEJORAR: ${PLAN} ronda 1 — nota 6/10`);
     h.office.ingest(ev(LEAD, cwd, 'SubagentStop', { agent_id: 'arev-1', agent_type: 'revisor-planes-login-r1' }));
     expect(verdictRows()).toHaveLength(1);
-    expect(summaries().filter((s) => s.startsWith('veredicto ignorado'))).toEqual([]);
+    expect(summaries().filter((s) => keyOf(s) === 'hub.act.verdictIgnored')).toEqual([]);
 
     h.clock.advance(1000);
     say(LEAD, cwd, 'arev-1', 'revisor-planes-login-r1', 'redactor-login', `APROBADO: ${PLAN} ronda 1 — nota 9/10 — al final sí`);
     expect(verdictRows()).toHaveLength(1);
     expect(doc(PLAN)).toMatchObject({ status: 'revision', score: 6 });
-    expect(summaries()).toContain(`veredicto ignorado: revisor-planes-login-r1 ya dio su veredicto sobre ${PLAN}`);
-    expect(summaries().filter((s) => s === 'revisor-planes-login-r1 ya entregó su veredicto: se ignora')).toHaveLength(1);
-    expect(agent('arev-1')).toMatchObject({ state: 'done', detail: 'veredicto: mejorar' });
+    expect(summaries()).toContainEqual({ key: 'hub.act.verdictIgnored', params: { who: 'revisor-planes-login-r1', path: PLAN } });
+    expect(summaries().filter((s) => keyOf(s) === 'hub.act.retiredIgnored')).toEqual([{ key: 'hub.act.retiredIgnored', params: { who: 'revisor-planes-login-r1' } }]);
+    expect(agent('arev-1')).toMatchObject({ state: 'done', detail: { key: 'hub.detail.verdictImprove' } });
 
     h.clock.advance(11 * 60_000);
     h.office.tick();
@@ -246,7 +254,7 @@ describe('plan reviewers', () => {
     expect(agent('arev-9')).toMatchObject({ roleKind: 'planReviewer', endedAt: null, state: 'working' });
     h.office.ingest(ev(LEAD, cwd, 'TeammateIdle', { teammate_name: 'revisor-planes-login-r1', team_name: team }));
     expect(agent('arev-9')).toMatchObject({ state: 'idle', endedAt: null });
-    expect(agent('arev-1')).toMatchObject({ state: 'done', detail: 'veredicto: mejorar' });
+    expect(agent('arev-1')).toMatchObject({ state: 'done', detail: { key: 'hub.detail.verdictImprove' } });
     expect(h.office.snapshot().agents.some((a) => a.key.includes('@'))).toBe(false);
   });
 
@@ -262,8 +270,8 @@ describe('plan reviewers', () => {
     expect(start(LEAD, cwd, 'ared-1', 'redactor-login')).toContain('Cita la regla de layering');
     say(LEAD, cwd, 'arev-1', 'revisor-planes-login-r1', 'team-lead', 'LECCIÓN: los planes de mobile olvidan el backfill');
     expect(h.office.memoryView('redaccion', 'revisor-planes').lessons.map((l) => l.text)).toEqual(['Mira siempre las migraciones']);
-    expect(h.office.snapshot().activity.map((a) => a.summary)).toContain('lección ignorada: el revisor de planes no guarda memoria');
-    expect(h.office.snapshot().activity.some((a) => a.agentKey === 'arev-1' && a.summary.startsWith('memoria entregada'))).toBe(false);
+    expect(h.office.snapshot().activity.map((a) => a.summary)).toContainEqual({ key: 'hub.act.lessonIgnoredReviewer' });
+    expect(h.office.snapshot().activity.some((a) => a.agentKey === 'arev-1' && keyOf(a.summary) === 'hub.act.memoryDelivered')).toBe(false);
     h.office.ingest(ev(LEAD, cwd, 'SubagentStop', { agent_id: 'arev-1', agent_type: 'revisor-planes-login-r1' }));
     h.office.ingest(ev(LEAD, cwd, 'SessionEnd', { reason: 'exit' }));
     expect(h.db.query<{ n: number }, [string]>('SELECT COUNT(*) AS n FROM reports WHERE agent_key = ?').get('arev-1')?.n).toBe(0);
@@ -406,7 +414,7 @@ describe('delivered plans', () => {
 
   test('the lead HECHO delivers, keeps the floors and the panel parks, executes through the director and closes', async () => {
     await deliveredPlan();
-    expect(h.office.snapshot().activity.map((a) => a.summary)).toContain(`avisa a lead-mobile del plan ${PLAN}`);
+    expect(h.office.snapshot().activity.map((a) => a.summary)).toContainEqual({ key: 'hub.act.planNotice', params: { to: 'lead-mobile', path: PLAN } });
     expect(doc(PLAN)).toMatchObject({ status: 'entregado', base: [{ floor: 'mobile', ref: 'develop' }] });
     expect(existsSync(join(docs, 'redaccion', '.fuentes', 'login'))).toBe(false);
 
@@ -433,7 +441,7 @@ describe('delivered plans', () => {
     expect(sent[0]?.payload).toContain('lead-mobile');
     expect(sent[0]?.payload).toContain(`${docs}/${PLAN}`);
     expect(doc(PLAN)?.status).toBe('ejecutando');
-    expect(h.office.snapshot().activity.map((a) => a.summary)).toContain(`plan enviado a ejecutar: ${PLAN}`);
+    expect(h.office.snapshot().activity.map((a) => a.summary)).toContainEqual({ key: 'hub.act.planExecuting', params: { path: PLAN } });
 
     expect(await h.office.discardDocument(PLAN)).toBe('closed');
     expect(await h.office.decidePlan(PLAN, 'aparcar')).toBe('ok');
@@ -490,19 +498,19 @@ describe('questions through the lead', () => {
   test('PREGUNTA keeps the writer asking until the lead answers, and turns into blocked when nobody does', () => {
     const cwd = writerTeam();
     say(LEAD, cwd, 'ared-1', 'redactor-login', 'team-lead', 'PREGUNTA: ¿Apple antes que Google? — opciones: Apple | Google');
-    expect(agent('ared-1')).toMatchObject({ state: 'asking', detail: 'pregunta: ¿Apple antes que Google?' });
+    expect(agent('ared-1')).toMatchObject({ state: 'asking', detail: { key: 'hub.detail.asks', params: { question: '¿Apple antes que Google?' } } });
     h.office.ingest(ev(LEAD, cwd, 'PostToolUse', { agent_id: 'ared-1', agent_type: 'redactor-login', tool_name: 'SendMessage', tool_input: { to: 'team-lead', message: 'PREGUNTA: x' } }));
     h.office.ingest(ev(LEAD, cwd, 'SubagentStop', { agent_id: 'ared-1', agent_type: 'redactor-login', last_assistant_message: 'Espero respuesta' }));
     h.office.ingest(ev(LEAD, cwd, 'TeammateIdle', { agent_id: 'ared-1', teammate_name: 'redactor-login' }));
-    expect(agent('ared-1')).toMatchObject({ state: 'asking', detail: 'pregunta: ¿Apple antes que Google?', endedAt: null });
+    expect(agent('ared-1')).toMatchObject({ state: 'asking', detail: { key: 'hub.detail.asks', params: { question: '¿Apple antes que Google?' } }, endedAt: null });
 
     h.clock.advance(h.config.blockedAfterMinutes * 60_000 + 1000);
-    expect(agent('ared-1')).toMatchObject({ state: 'blocked', detail: 'sin respuesta: pregunta: ¿Apple antes que Google?' });
+    expect(agent('ared-1')).toMatchObject({ state: 'blocked', detail: { key: 'hub.detail.noAnswer', params: { detail: { key: 'hub.detail.asks', params: { question: '¿Apple antes que Google?' } } } } });
 
     say(LEAD, cwd, null, null, 'redactor-login', 'El usuario dice: Apple primero');
-    expect(agent('ared-1')).toMatchObject({ state: 'working', detail: 'respuesta recibida' });
+    expect(agent('ared-1')).toMatchObject({ state: 'working', detail: { key: 'hub.detail.answerReceived' } });
     h.office.ingest(ev(LEAD, cwd, 'SubagentStop', { agent_id: 'ared-1', agent_type: 'redactor-login' }));
-    expect(agent('ared-1')).toMatchObject({ state: 'idle', detail: 'esperando' });
+    expect(agent('ared-1')).toMatchObject({ state: 'idle', detail: { key: 'hub.detail.waiting' } });
   });
 
   test('the next tool call of the writer also ends the wait', () => {
@@ -615,6 +623,10 @@ describe('guard alerts', () => {
     h.office.ingest(ev(LEAD, cwd, 'SubagentStop', { agent_id: 'ared-1', agent_type: 'redactor-login' }));
     await h.office.idle();
     expect(h.office.snapshot().alerts.map((a) => [a.level, a.floor, a.files])).toEqual([['alerta', 'sandbox', [join(repo, 'a.ts')]]]);
+    expect(h.messages).toContainEqual({
+      type: 'alert',
+      data: expect.objectContaining({ level: 'alerta', floor: 'sandbox', agentKey: 'ared-1', files: [join(repo, 'a.ts')] }),
+    });
   });
 });
 
@@ -627,6 +639,14 @@ describe('department floors have no tests', () => {
     expect(agent(LEAD)?.state).not.toBe('testing');
     expect(h.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM verdicts WHERE kind = 'tests'").get()?.n).toBe(0);
     expect(h.office.report('ared-1')?.summary).toBe('Todavía sin ficheros, tests ni mensajes');
+    expect(h.office.report('ared-1')?.summaryText).toEqual({ key: 'hub.report.empty' });
+  });
+
+  test('a document over MAX_CONTENT_BYTES answers with a notice', () => {
+    redaccionTeam();
+    writeFileSync(join(docs, PLAN), 'x'.repeat(1_000_001));
+    h.office.refreshDocuments();
+    expect(h.office.documentContent(PLAN)).toEqual({ path: PLAN, kind: 'plan', markdown: '', notice: { key: 'hub.doc.tooLarge' } });
   });
 });
 
@@ -648,7 +668,7 @@ describe('guard through the hub', () => {
     expect(write(LEAD, cwd, 'ared-1', 'redactor-login', join(docs, 'redaccion', '.fuentes', 'login', 'mobile', 'a.dart')).pass).toBe(false);
     const blocked = write(LEAD, cwd, null, null, join(repo, 'lib', 'main.dart'));
     expect(blocked.pass).toBe(false);
-    expect(h.office.snapshot().activity.at(-1)?.summary).toContain('guardia: bloquea');
+    expect(h.office.snapshot().activity.at(-1)?.summary).toMatchObject({ key: 'hub.act.guardBlocked' });
     h.office.ingest(ev(DEV_LEAD, repo, 'SessionStart', {}), { socket: null, token: null, role: 'office-lead-mobile', name: 'lead-mobile' });
     expect(write(DEV_LEAD, repo, null, null, join(docs, PLAN)).pass).toBe(true);
     const mantCwd = join(docs, 'taller');

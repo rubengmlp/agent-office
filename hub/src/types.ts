@@ -2,6 +2,206 @@ export type Stack = 'flutter' | 'laravel' | 'node' | 'generic';
 
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
+// Text the hub shows in the panel. A string is raw text shown as is (commands, paths, names, what agents wrote,
+// old recordings); an object is a key of the panel dictionary (ui/src/i18n) with its parameters, which may be
+// HubText themselves. The panel translates it, so the same payload serves every language.
+export type HubTextParams = {
+  'hub.detail.waiting': undefined;
+  'hub.detail.thinking': undefined;
+  'hub.detail.permission': { tool: string };
+  'hub.detail.starting': undefined;
+  'hub.detail.finished': undefined;
+  'hub.detail.end': undefined;
+  'hub.detail.testsGreen': undefined;
+  'hub.detail.testsRed': undefined;
+  'hub.detail.testsInterrupted': undefined;
+  'hub.detail.questionCancelled': undefined;
+  'hub.detail.awaitingAnswer': undefined;
+  'hub.detail.delegates': { what: HubText };
+  'hub.detail.createsTask': { subject: string };
+  'hub.detail.updatesTask': { id: string };
+  'hub.detail.noAnswer': { detail: HubText };
+  'hub.detail.blocked': undefined;
+  'hub.detail.checking': undefined;
+  'hub.detail.tests': undefined;
+  'hub.detail.question': undefined;
+  'hub.detail.delegatesTo': { who: HubText; what: string };
+  'hub.detail.asks': { question: HubText };
+  'hub.detail.answerReceived': undefined;
+  'hub.detail.verdictApproved': undefined;
+  'hub.detail.verdictImprove': undefined;
+  'hub.detail.verdictNoAgreement': undefined;
+
+  'hub.act.sessionStart': { source: string };
+  'hub.act.newTurn': undefined;
+  'hub.act.permission': { tool: string };
+  'hub.act.subagentStart': { who: HubText };
+  'hub.act.done': undefined;
+  'hub.act.turnEnd': undefined;
+  'hub.act.sessionEnd': { reason: string };
+  'hub.act.teammateIdle': { who: HubText };
+  'hub.act.taskCreated': { subject: string };
+  'hub.act.tests': { command: string };
+  'hub.act.check': { command: string };
+  'hub.act.run': { command: string };
+  'hub.act.edit': { name: string };
+  'hub.act.read': { what: string };
+  'hub.act.question': { text: HubText };
+  'hub.act.message': { to: string; text: string };
+  'hub.act.blockedMessage': { to: string; text: string };
+  'hub.act.delegate': { who: HubText };
+  'hub.act.taskCreate': { subject: string };
+  'hub.act.taskUpdate': { id: string };
+  'hub.act.ok': { what: string };
+  'hub.act.testsGreen': { command: string };
+  'hub.act.edited': { name: string };
+  'hub.act.subagentRunning': undefined;
+  'hub.act.taskCreatedId': { id: string };
+  'hub.act.taskCreatedPlain': undefined;
+  'hub.act.questionAnswered': undefined;
+  'hub.act.testsInterrupted': { command: string };
+  'hub.act.testsRed': { command: string };
+  'hub.act.toolFailed': { tool: string; error: string };
+  'hub.act.awaits': { message: string };
+  'hub.act.awaitingUser': undefined;
+  'hub.act.notice': { message: string };
+  'hub.act.taskClosed': { subject: string };
+  'hub.act.taskBlocked': { subject: string };
+  'hub.act.doneAccepted': { text: string };
+  'hub.act.doneBlocked': undefined;
+  'hub.act.guardBlocked': { who: string; target: string };
+  'hub.act.order': { text: string };
+  'hub.act.planDiscarded': { path: string };
+  'hub.act.sourcesReady': { slug: string; floors: string };
+  'hub.act.guardAlert.one': { level: HubText; n: number; floor: string; who: string };
+  'hub.act.guardAlert.other': { level: HubText; n: number; floor: string; who: string };
+  'hub.act.memoryDelivered': { lessons: number; reports: number };
+  'hub.act.deliveryAccepted': { path: string };
+  'hub.act.deliveryBlockedStale': { path: string };
+  'hub.act.deliveryBlockedNoPath': undefined;
+  'hub.act.reviewRequested': { path: string; round: HubText };
+  'hub.act.verdictApproved': { path: string; round: HubText; score: HubText };
+  'hub.act.verdictImprove': { path: string; round: HubText; score: HubText };
+  'hub.act.verdictNoAgreement': { path: string; round: HubText; score: HubText };
+  'hub.act.commitFailed': { path: string; root: string };
+  'hub.act.lessonSaved': { role: HubText; floor: HubText };
+  'hub.act.lessonDuplicate': undefined;
+  'hub.act.lessonCap': { max: number };
+  'hub.act.lessonEmpty': undefined;
+  'hub.act.permissionWaiting': { detail: string };
+  'hub.act.questionWaiting': undefined;
+  'hub.act.floorRemoved': { slug: string };
+  'hub.act.asks': { to: string; question: HubText };
+  'hub.act.planExecuting': { path: string };
+  'hub.act.planParked': { path: string };
+  'hub.act.planClosed': { path: string };
+  'hub.act.planNotice': { to: string; path: string };
+  'hub.act.verdictIgnored': { who: string; path: string };
+  'hub.act.retiredIgnored': { who: string };
+  'hub.act.lessonIgnoredReviewer': undefined;
+  'hub.round': { n: number };
+  'hub.score': { n: number };
+
+  'hub.who.subagent': undefined;
+  'hub.who.teammate': undefined;
+  'hub.role.director': undefined;
+  'hub.role.lead': undefined;
+  'hub.role.dev': undefined;
+  'hub.role.tester': undefined;
+  'hub.role.reviewer': undefined;
+  'hub.role.redactor': undefined;
+  'hub.role.revisor-planes': undefined;
+  'hub.role.artesano': undefined;
+  'hub.role.revisor-skills': undefined;
+  'hub.floor.direccion': undefined;
+  'hub.floor.redaccion': undefined;
+  'hub.floor.mantenimiento': undefined;
+  'hub.floor.other': { slug: string };
+  'hub.alertLevel.alerta': undefined;
+  'hub.alertLevel.posible': undefined;
+
+  'hub.permission.bash': { who: string };
+  'hub.permission.edit': { who: string };
+  'hub.permission.read': { who: string };
+  'hub.permission.web': { who: string };
+  'hub.permission.other': { who: string; tool: string };
+
+  'hub.report.counts': { files: HubText; tests: HubText };
+  'hub.report.files.one': { n: number };
+  'hub.report.files.other': { n: number };
+  'hub.report.tests.one': { n: number };
+  'hub.report.tests.other': { n: number };
+  'hub.report.lastMessage': { to: string; text: string };
+  'hub.report.empty': undefined;
+
+  'hub.settings.saved': undefined;
+  'hub.settings.noChanges': undefined;
+  'hub.settings.regenerateFailed': { slug: string; error: HubText };
+  'hub.settings.unknownRole': { id: string };
+  'hub.settings.badModel': { id: string };
+  'hub.settings.badEffort': { id: string };
+  'hub.settings.badDepartment': { key: string };
+  'hub.settings.badRange': { key: string; min: number; max: number };
+  'hub.settings.noFloor': { slug: string };
+  'hub.settings.badBranch': { branch: string; slug: string };
+  'hub.settings.noTarget': { slug: string };
+  'hub.settings.badPermissionMode': { slug: string };
+  'hub.settings.roleNotOnFloor': { id: string; slug: string };
+  'hub.settings.badFloorRole': { id: string; slug: string };
+  'hub.settings.badFloorModel': { id: string; slug: string };
+  'hub.settings.badFloorEffort': { id: string; slug: string };
+
+  'hub.api.questionClosed': undefined;
+  'hub.api.answerMissing': undefined;
+  'hub.api.orderFields': undefined;
+  'hub.api.orderTooLong': undefined;
+  'hub.api.sessionNotFound': undefined;
+  'hub.api.orderFailed': undefined;
+  'hub.api.settingsUnavailable': undefined;
+  'hub.api.floorsUnavailable': undefined;
+  'hub.api.badMemoryTarget': undefined;
+  'hub.api.badId': undefined;
+  'hub.api.lessonNotFound': undefined;
+  'hub.api.noReport': undefined;
+  'hub.api.documentNotFound': undefined;
+  'hub.api.pathRequired': undefined;
+  'hub.api.planClosed': undefined;
+  'hub.api.planNotFound': undefined;
+  'hub.api.decisionFields': undefined;
+  'hub.api.planBadState': undefined;
+  'hub.api.directorClosed': undefined;
+  'hub.api.directorUnreachable': undefined;
+  'hub.api.floorRequired': undefined;
+  'hub.api.roleInvalid': undefined;
+  'hub.api.lessonEmpty': undefined;
+  'hub.api.lessonDuplicate': undefined;
+  'hub.api.lessonSaveFailed': undefined;
+
+  'hub.doc.tooLarge': undefined;
+
+  'hub.floors.pathRequired': undefined;
+  'hub.floors.notFound': { slug: string };
+  'hub.floors.conflictManaged': { path: string; slug: string };
+  'hub.floors.inUse': { slug: string; sessions: string };
+  'hub.floors.removing': { slug: string };
+  'hub.floors.added': { slug: string; startCommand: string };
+  'hub.floors.notGitRepo': { path: string };
+  'hub.floors.insideRepo': { path: string; top: string };
+  'hub.floors.slugInvalid': { slug: string };
+  'hub.floors.slugReserved': { slug: string };
+  'hub.floors.missing': { path: string };
+  'hub.floors.notDir': { path: string };
+  'hub.floors.liveCopy': { path: string };
+  'hub.floors.slugTaken': { slug: string; path: string };
+  'hub.floors.pathTaken': { path: string; other: string };
+};
+
+export type HubTextKey = keyof HubTextParams;
+
+type HubTextOf<K extends HubTextKey> = HubTextParams[K] extends undefined ? { key: K; params?: undefined } : { key: K; params: HubTextParams[K] };
+
+export type HubText = string | { [K in HubTextKey]: HubTextOf<K> }[HubTextKey];
+
 export type RoleId =
   | 'director'
   | 'lead'
@@ -129,7 +329,7 @@ export type AgentView = {
   floor: string;
   touchedFloor: string | null;
   state: AgentState;
-  detail: string;
+  detail: HubText;
   tool: string | null;
   lastTest: TestResult | null;
   stateSince: number;
@@ -164,6 +364,9 @@ export type QuestionView = {
   id: string;
   kind?: QuestionKind;
   detail?: string;
+  tool?: string;
+  // What the panel shows above the options (permissions); questions[0].question stays the answer key.
+  prompt?: HubText;
   agentKey: string;
   sessionId: string;
   floor: string;
@@ -200,7 +403,7 @@ export type ActivityView = {
   event: string;
   tool: string | null;
   state: AgentState | null;
-  summary: string;
+  summary: HubText;
 };
 
 export type VerdictKind = 'tests' | 'approved' | 'improve' | 'no-agreement';
@@ -226,7 +429,9 @@ export type ReportView = {
   startedAt: number;
   endedAt: number | null;
   live: boolean;
+  // summary is what agents read (Spanish); summaryText is the same in panel form, or null when it is agent text.
   summary: string;
+  summaryText?: HubText | null;
   files: string[];
   tests: { ok: boolean; ts: number; command: string }[];
   verdicts: { kind: VerdictKind; ts: number; path: string | null; round: number | null; score: number | null }[];
@@ -311,13 +516,23 @@ export type SettingsUpdate = {
   leaveAfterMinutes?: number;
 };
 
-export type SettingsResult = { ok: true; regenerated: number; note: string } | { ok: false; error: string };
+export type SettingsResult = { ok: true; regenerated: number; note: HubText[] } | { ok: false; error: HubText[] };
+
+export type FloorAddRequest = { path: string; slug?: string };
+
+export type FloorErrorStatus = 400 | 404 | 409 | 500;
+
+export type FloorFailure = { ok: false; status: FloorErrorStatus; error: HubText };
+
+export type FloorAddResult = { ok: true; slug: string; path: string; stack: Stack; startCommand: string; note: HubText } | FloorFailure;
+
+export type FloorRemoveResult = { ok: true; slug: string; removed: { files: number; rows: number; worktrees: number } } | FloorFailure;
 
 export type MemoryView = { floor: string; role: RoleId; lessons: LessonView[]; reports: ReportView[] };
 
 export type LessonCreate = { floor: string; role: RoleId; text: string };
 
-export type DocumentContent = { path: string; kind: DocumentKind; markdown: string };
+export type DocumentContent = { path: string; kind: DocumentKind; markdown: string; notice?: HubText };
 
 export type UsageWindow = { usedPct: number; resetsAt: number };
 

@@ -7,7 +7,7 @@ import { BASE_SETTINGS, STATUSLINE_SCRIPT, STATUS_LINE, clonePermissions, isOffi
 import { loadProfiles } from '../src/profiles';
 import { applySettings, settingsView } from '../src/settings';
 import type { HookMeta } from '../src/types';
-import { ev, fakePaths, floor, harness, makeRepo, tempDir, testConfig, type Harness } from './helpers';
+import { ev, fakePaths, floor, harness, keyOf, makeRepo, tempDir, testConfig, type Harness } from './helpers';
 
 const LEAD = '33333333-cccc-4ddd-8eee-000000000003';
 const leadMeta: HookMeta = { socket: null, token: null, role: 'office-lead-mobile', name: 'lead-mobile' };
@@ -33,12 +33,12 @@ describe('permission requests in the panel', () => {
     const repo = watched();
     const pending = h.office.permission(request(repo, 'bun run hub'), leadMeta);
     const question = h.office.snapshot().questions[0];
-    expect(question).toMatchObject({ kind: 'permission', detail: 'bun run hub', agentKey: LEAD, floor: 'mobile' });
-    expect(question?.questions[0]?.question).toBe('¿Permites a lead-mobile ejecutar este comando?');
+    expect(question).toMatchObject({ kind: 'permission', detail: 'bun run hub', tool: 'Bash', agentKey: LEAD, floor: 'mobile' });
+    expect(question?.prompt).toEqual({ key: 'hub.permission.bash', params: { who: 'lead-mobile' } });
     expect(h.office.answer(question!.id, { [question!.questions[0]!.question]: 'Quizá' })).toBe('invalid');
     expect(h.office.answer(question!.id, { [question!.questions[0]!.question]: 'Permitir' })).toBe('ok');
     expect(JSON.parse((await pending) ?? '{}')).toEqual({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'allow' } } });
-    expect(h.office.snapshot().activity.some((a) => a.summary.startsWith('permiso esperando en el panel'))).toBe(true);
+    expect(h.office.snapshot().activity.some((a) => keyOf(a.summary) === 'hub.act.permissionWaiting')).toBe(true);
   });
 
   test('Denegar answers deny with a message for Claude', async () => {
@@ -71,6 +71,20 @@ describe('permission requests in the panel', () => {
     const plan = ev(LEAD, repo, 'PermissionRequest', { tool_name: 'ExitPlanMode', tool_input: { plan: '1. hacer x' } });
     expect(await h.office.permission(plan, leadMeta)).toBeNull();
     expect(h.office.snapshot().questions).toEqual([]);
+  });
+
+  test('a permission is held and emitted for a hidden panel that is still connected', async () => {
+    const repo = watched();
+    h.clock.advance(31_000);
+    expect(await h.office.permission(request(repo, 'ls'), leadMeta)).toBeNull();
+    expect(h.office.snapshot().questions).toEqual([]);
+
+    h.office.panelConnected();
+    const pending = h.office.permission(request(repo, 'bun run hub'), leadMeta);
+    expect(h.messages).toContainEqual({ type: 'question', data: expect.objectContaining({ kind: 'permission', detail: 'bun run hub', agentKey: LEAD }) });
+    const question = h.office.snapshot().questions[0]!;
+    expect(h.office.answer(question.id, { [question.questions[0]!.question]: 'Permitir' })).toBe('ok');
+    expect(JSON.parse((await pending) ?? '{}').hookSpecificOutput.decision).toEqual({ behavior: 'allow' });
   });
 
   test('nothing is held when nobody watches the panel or the session is not part of the office', async () => {
@@ -222,11 +236,13 @@ describe('permission modes and clone floors in the launchers', () => {
     const config = testConfig({ floors: { mobile: floor('/m'), old: floor('/o', false) }, departments: { redaccion: true, mantenimiento: false } });
     expect(settingsView(config).permissionModes).toEqual({ direccion: 'auto', redaccion: 'auto', mobile: 'auto' });
     const ok = applySettings(config, { permissionModes: { mobile: 'plan', direccion: 'manual' } });
-    if ('error' in ok) throw new Error(ok.error);
+    if ('error' in ok) throw new Error(JSON.stringify(ok.error));
     expect(ok.config.permissionModes).toEqual({ mobile: 'plan', direccion: 'manual' });
     const bad = applySettings(config, { permissionModes: { mobile: 'bypassPermissions', nada: 'auto' } });
-    expect('error' in bad && bad.error).toContain('Modo de permisos no válido para mobile');
-    expect('error' in bad && bad.error).toContain('"nada"');
+    expect('error' in bad && bad.error).toEqual([
+      { key: 'hub.settings.badPermissionMode', params: { slug: 'mobile' } },
+      { key: 'hub.settings.noTarget', params: { slug: 'nada' } },
+    ]);
     expect(normalizeConfig({ permissionModes: { mobile: 'plan', otra: 'turbo', 'Mal Slug': 'auto' } }).permissionModes).toEqual({ mobile: 'plan' });
   });
 });

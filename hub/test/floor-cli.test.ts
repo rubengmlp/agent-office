@@ -3,7 +3,19 @@ import { cpSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { TemplateError, agentPath } from '../src/agents';
 import { DEFAULT_ROLES, PROFILES_DIR, TEMPLATES_DIR, loadConfig, saveConfig, type Paths } from '../src/config';
-import { FloorError, agentFile, listFloors, planFloor, regenerateAgents, regenerateAll, removeFloor, render, writeFloor } from '../src/floor-cli';
+import {
+  FloorConflictError,
+  FloorError,
+  agentFile,
+  listFloors,
+  planFloor,
+  purgeFloor,
+  regenerateAgents,
+  regenerateAll,
+  removeFloor,
+  render,
+  writeFloor,
+} from '../src/floor-cli';
 import { detectStack, loadProfiles } from '../src/profiles';
 import { fakePaths, floor, makeRepo, tempDir, testConfig } from './helpers';
 
@@ -110,6 +122,32 @@ describe('floor CLI', () => {
     expect(loadConfig(p).floors.mobile?.managed).toBe(false);
     expect(readFileSync(p.officeSh, 'utf8')).toContain("NAMES='director lead-redaccion lead-mantenimiento'");
     expect(() => removeFloor(p, profiles, 'nope')).toThrow(FloorError);
+  });
+
+  test('purging a floor removes its config, agents and launcher and leaves the fixed agents without it', () => {
+    const repo = makeRepo(ctx.dir, 'mobile', { 'pubspec.yaml': '' });
+    writeFloor(p, profiles, planFloor(p, profiles, repo));
+    const config = loadConfig(p);
+    config.permissionModes.mobile = 'plan';
+    saveConfig(p, config);
+
+    expect(purgeFloor(p, profiles, 'mobile')).toHaveLength(3);
+    const after = loadConfig(p);
+    expect(after.floors.mobile).toBeUndefined();
+    expect(after.permissionModes.mobile).toBeUndefined();
+    for (const role of ['lead', 'dev', 'tester'] as const) expect(existsSync(agentFile(p, role, 'mobile'))).toBe(false);
+    expect(existsSync(join(p.sessionsDir, 'lead-mobile.sh'))).toBe(false);
+    expect(readFileSync(p.officeSh, 'utf8')).not.toContain('mobile');
+    expect(readFileSync(p.directorFloors, 'utf8')).not.toContain('mobile');
+    expect(() => purgeFloor(p, profiles, 'mobile')).toThrow(FloorError);
+    expect(() => purgeFloor(p, profiles, 'redaccion')).toThrow(FloorError);
+  });
+
+  test('a repository that is already a floor is a conflict', () => {
+    const repo = makeRepo(ctx.dir, 'mobile');
+    writeFloor(p, profiles, planFloor(p, profiles, repo));
+    expect(() => planFloor(p, profiles, repo, 'otra')).toThrow(FloorConflictError);
+    expect(() => planFloor(p, profiles, makeRepo(join(ctx.dir, 'b'), 'mobile'))).toThrow(FloorConflictError);
   });
 
   test('regenerating all floors applies a changed template without asking', () => {

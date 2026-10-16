@@ -1,4 +1,5 @@
-import type { DepartmentsConfig, Effort, PermissionMode, RoleId } from '../types';
+import { t, type MessageKey } from '../i18n';
+import type { DepartmentsConfig, Effort, PermissionMode, RoleId, RoleKind } from '../types';
 
 export const OTHER_MODEL = '__other__';
 
@@ -12,93 +13,89 @@ export type NumberKey = 'maxRounds' | 'maxLessons' | 'maxLessonsPerSession' | 'm
 
 export type NumberField = {
   key: NumberKey;
-  label: string;
-  hint: string;
+  labelKey: MessageKey;
+  hintKey: MessageKey;
   min: number;
   max: number;
 };
 
-export const ROLE_ROWS: readonly { id: RoleId; label: string }[] = [
-  { id: 'director', label: 'Director' },
-  { id: 'lead', label: 'Jefes de planta' },
-  { id: 'dev', label: 'Desarrolladores' },
-  { id: 'tester', label: 'Testers' },
-  { id: 'reviewer', label: 'Revisores de código' },
-  { id: 'redactor', label: 'Redactores' },
-  { id: 'revisor-planes', label: 'Revisores de planes' },
-  { id: 'artesano', label: 'Artesanos de skills' },
-  { id: 'revisor-skills', label: 'Revisores de skills' },
+export const ROLE_ROWS: readonly { id: RoleId; kind: RoleKind; labelKey: MessageKey }[] = [
+  { id: 'director', kind: 'director', labelKey: 'settings.role.director' },
+  { id: 'lead', kind: 'lead', labelKey: 'settings.role.lead' },
+  { id: 'dev', kind: 'dev', labelKey: 'settings.role.dev' },
+  { id: 'tester', kind: 'tester', labelKey: 'settings.role.tester' },
+  { id: 'reviewer', kind: 'reviewer', labelKey: 'settings.role.reviewer' },
+  { id: 'redactor', kind: 'writer', labelKey: 'settings.role.redactor' },
+  { id: 'revisor-planes', kind: 'planReviewer', labelKey: 'settings.role.revisor-planes' },
+  { id: 'artesano', kind: 'skillwright', labelKey: 'settings.role.artesano' },
+  { id: 'revisor-skills', kind: 'skillReviewer', labelKey: 'settings.role.revisor-skills' },
 ];
 
 export function targetRoleLabel(target: string, id: RoleId): string {
   if (id === 'lead') {
-    if (target === 'redaccion') return 'Jefe de Redacción';
-    if (target === 'mantenimiento') return 'Jefe de Mantenimiento';
-    return 'Jefe de la planta';
+    if (target === 'redaccion') return t('settings.floorRoles.lead.redaccion');
+    if (target === 'mantenimiento') return t('settings.floorRoles.lead.mantenimiento');
+    return t('settings.floorRoles.lead.floor');
   }
-  return ROLE_ROWS.find((row) => row.id === id)?.label ?? id;
+  const row = ROLE_ROWS.find((item) => item.id === id);
+  return row ? t(row.labelKey) : id;
 }
 
-export const MODEL_OPTIONS: readonly { value: string; label: string }[] = [
+// Model aliases are names and stay as they are; the other two options are translated.
+export const MODEL_OPTIONS: readonly ({ value: string; label: string } | { value: string; labelKey: MessageKey })[] = [
   { value: 'opus', label: 'Opus' },
   { value: 'sonnet', label: 'Sonnet' },
   { value: 'haiku', label: 'Haiku' },
   { value: 'fable', label: 'Fable' },
-  { value: 'inherit', label: 'Heredar (inherit)' },
-  { value: OTHER_MODEL, label: 'Otro…' },
+  { value: 'inherit', labelKey: 'settings.model.inherit' },
+  { value: OTHER_MODEL, labelKey: 'settings.model.other' },
 ];
 
 export const EFFORTS: readonly Effort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 
-export const PERMISSION_MODE_OPTIONS: readonly { value: PermissionMode; label: string }[] = [
-  { value: 'auto', label: 'Automático: decide qué es seguro y pregunta el resto' },
-  { value: 'manual', label: 'Manual: pregunta antes de cada acción no permitida' },
-  { value: 'acceptEdits', label: 'Aceptar ediciones: edita sin preguntar' },
-  { value: 'plan', label: 'Plan: solo lee y propone, no edita ni ejecuta' },
-  { value: 'dontAsk', label: 'No preguntar: deniega lo no permitido' },
+export const PERMISSION_MODE_OPTIONS: readonly { value: PermissionMode; labelKey: MessageKey }[] = [
+  { value: 'auto', labelKey: 'settings.permissionMode.auto' },
+  { value: 'manual', labelKey: 'settings.permissionMode.manual' },
+  { value: 'acceptEdits', labelKey: 'settings.permissionMode.acceptEdits' },
+  { value: 'plan', labelKey: 'settings.permissionMode.plan' },
+  { value: 'dontAsk', labelKey: 'settings.permissionMode.dontAsk' },
 ];
 
 export function permissionTargetLabel(slug: string): string {
-  if (slug === 'direccion') return 'Dirección (director)';
-  if (slug === 'redaccion') return 'Redacción';
-  if (slug === 'mantenimiento') return 'Mantenimiento';
+  if (slug === 'direccion') return t('settings.permissionTarget.direccion');
+  if (slug === 'redaccion') return t('floor.redaccion');
+  if (slug === 'mantenimiento') return t('floor.mantenimiento');
   return slug;
 }
 
-export const DEPARTMENT_ROWS: readonly { key: keyof DepartmentsConfig; label: string; hint: string }[] = [
-  { key: 'redaccion', label: 'Redacción', hint: 'Redactores y revisores que escriben y revisan planes.' },
-  { key: 'mantenimiento', label: 'Mantenimiento', hint: 'Artesanos y revisores que crean skills.' },
+export function permissionTargetHint(slug: string): string {
+  if (slug === 'direccion') return t('settings.permissionTarget.hint.direccion');
+  if (slug === 'redaccion' || slug === 'mantenimiento') return t('settings.permissionTarget.hint.department');
+  return t('settings.permissionTarget.hint.floor');
+}
+
+export const DEPARTMENT_ROWS: readonly { key: keyof DepartmentsConfig; labelKey: MessageKey; hintKey: MessageKey }[] = [
+  { key: 'redaccion', labelKey: 'settings.department.redaccion', hintKey: 'settings.department.hint.redaccion' },
+  { key: 'mantenimiento', labelKey: 'settings.department.mantenimiento', hintKey: 'settings.department.hint.mantenimiento' },
 ];
 
 export const REVIEW_FIELDS: readonly NumberField[] = [
-  {
-    key: 'maxRounds',
-    label: 'Rondas máximas',
-    hint: 'Si en la última ronda quedan bloqueantes, el revisor contesta SIN ACUERDO.',
-    min: 1,
-    max: 10,
-  },
+  { key: 'maxRounds', labelKey: 'settings.field.maxRounds', hintKey: 'settings.field.hint.maxRounds', min: 1, max: 10 },
 ];
 
 export const MEMORY_FIELDS: readonly NumberField[] = [
-  {
-    key: 'maxLessons',
-    label: 'Lecciones por planta y rol',
-    hint: 'Al pasarse se podan las más antiguas de origen agente; las tuyas no.',
-    min: 1,
-    max: 200,
-  },
+  { key: 'maxLessons', labelKey: 'settings.field.maxLessons', hintKey: 'settings.field.hint.maxLessons', min: 1, max: 200 },
   {
     key: 'maxLessonsPerSession',
-    label: 'Lecciones por sesión',
-    hint: 'Cuántas LECCIÓN: acepta el hub de cada agente; con 0 no acepta ninguna.',
+    labelKey: 'settings.field.maxLessonsPerSession',
+    hintKey: 'settings.field.hint.maxLessonsPerSession',
     min: 0,
     max: 20,
   },
   {
     key: 'maxContextChars',
-    label: 'Caracteres de contexto',
-    hint: 'Tope del texto de memoria que recibe cada agente al empezar.',
+    labelKey: 'settings.field.maxContextChars',
+    hintKey: 'settings.field.hint.maxContextChars',
     min: 500,
     max: 20000,
   },
@@ -107,8 +104,8 @@ export const MEMORY_FIELDS: readonly NumberField[] = [
 export const OFFICE_FIELDS: readonly NumberField[] = [
   {
     key: 'leaveAfterMinutes',
-    label: 'Minutos hasta irse a casa',
-    hint: 'Un compañero libre durante este tiempo sale del edificio si su jefe no está trabajando; vuelve en cuanto recibe trabajo.',
+    labelKey: 'settings.field.leaveAfterMinutes',
+    hintKey: 'settings.field.hint.leaveAfterMinutes',
     min: 1,
     max: 60,
   },

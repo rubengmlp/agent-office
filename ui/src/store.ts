@@ -1,4 +1,5 @@
 import { StateDebouncer } from './debounce';
+import { applyLang, currentLang, plural, storeLang, t, type Lang, type MessageKey } from './i18n';
 import type {
   ActivityView,
   AgentState,
@@ -34,7 +35,8 @@ export type Topic =
   | 'alerts'
   | 'memory'
   | 'settings'
-  | 'usage';
+  | 'usage'
+  | 'lang';
 
 export type ConnectionStatus = 'nokey' | 'connecting' | 'online' | 'offline' | 'denied' | 'replay';
 export type ToastKind = 'ok' | 'info' | 'error';
@@ -48,10 +50,10 @@ const ALERT_LIMIT = 50;
 const TOAST_MS = 4000;
 export const ENDED_VISIBLE_MS = 60_000;
 
-const OUTCOME_TEXT: Record<QuestionOutcome, string> = {
-  answered: 'Respondida',
-  released: 'Devuelta al terminal',
-  expired: 'Caducada',
+const OUTCOME_KEYS: Record<QuestionOutcome, MessageKey> = {
+  answered: 'toast.question.answered',
+  released: 'toast.question.released',
+  expired: 'toast.question.expired',
 };
 
 const FLOOR_KIND_RANK: Record<FloorKind, number> = { direccion: 0, redaccion: 1, managed: 2, observed: 3, mantenimiento: 4 };
@@ -91,6 +93,17 @@ export class Store {
   setClock(clock: () => number): void {
     this.clock = clock;
     this.mark('tick');
+  }
+
+  get lang(): Lang {
+    return currentLang();
+  }
+
+  setLang(lang: Lang): void {
+    if (lang === currentLang()) return;
+    applyLang(lang);
+    storeLang(lang);
+    this.mark('lang');
   }
 
   setReplay(replay: boolean): void {
@@ -172,7 +185,10 @@ export class Store {
         this.alerts = [...this.alerts.filter((a) => a.id !== message.data.id), message.data].slice(-ALERT_LIMIT);
         this.mark('alerts');
         this.toast(
-          `${message.data.level === 'alerta' ? 'Alerta' : 'Posible cambio'} en ${message.data.floor}: ${message.data.files.length} fichero(s) fuera de su sitio`,
+          plural('toast.alert', message.data.files.length, {
+            level: t(`toast.alertLevel.${message.data.level}`),
+            floor: message.data.floor,
+          }),
           message.data.level === 'alerta' ? 'error' : 'info',
         );
         break;
@@ -256,7 +272,7 @@ export class Store {
     }
     return [...known.values()].sort((a, b) => {
       const byKind = FLOOR_KIND_RANK[a.kind] - FLOOR_KIND_RANK[b.kind];
-      return byKind !== 0 ? byKind : a.label.localeCompare(b.label, 'es');
+      return byKind !== 0 ? byKind : a.label.localeCompare(b.label, currentLang());
     });
   }
 
@@ -306,7 +322,7 @@ export class Store {
     if (!existed) return;
     this.questions = this.questions.filter((q) => q.id !== id);
     this.mark('questions');
-    this.toast(OUTCOME_TEXT[outcome], outcome === 'answered' ? 'ok' : 'info');
+    this.toast(t(OUTCOME_KEYS[outcome]),outcome === 'answered' ? 'ok' : 'info');
   }
 
   private markAll(): void {

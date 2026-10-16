@@ -1,3 +1,5 @@
+import { currentLang, t } from './i18n';
+import { hubText } from './i18n/hub';
 import type {
   AgentState,
   AgentView,
@@ -5,24 +7,13 @@ import type {
   DocumentStatus,
   DocumentView,
   FloorKind,
+  FloorView,
   GuardAlertLevel,
+  HubText,
   RoleKind,
   Stack,
   VerdictKind,
 } from './types';
-
-export const ROLE_LABELS: Record<RoleKind, string> = {
-  director: 'Director',
-  lead: 'Jefe de planta',
-  dev: 'Desarrollador',
-  tester: 'Tester',
-  reviewer: 'Revisor',
-  writer: 'Redactor',
-  planReviewer: 'Revisor de planes',
-  skillwright: 'Artesano',
-  skillReviewer: 'Revisor de skills',
-  intern: 'Becario',
-};
 
 export const ROLE_ORDER: readonly RoleKind[] = [
   'director',
@@ -37,19 +28,6 @@ export const ROLE_ORDER: readonly RoleKind[] = [
   'intern',
 ];
 
-export const STATE_LABELS: Record<AgentState, string> = {
-  idle: 'Libre',
-  working: 'Trabajando',
-  reading: 'Leyendo',
-  testing: 'En tests',
-  checking: 'Revisando',
-  asking: 'Pregunta',
-  talking: 'Hablando',
-  blocked: 'Bloqueado',
-  done: 'Terminado',
-  failed: 'Fallido',
-};
-
 export const STATE_COLORS: Record<AgentState, string> = {
   idle: '#94a3b8',
   working: '#4f7cff',
@@ -61,45 +39,6 @@ export const STATE_COLORS: Record<AgentState, string> = {
   blocked: '#ef4444',
   done: '#22c55e',
   failed: '#9f1239',
-};
-
-export const STACK_LABELS: Record<Stack, string> = {
-  flutter: 'Flutter',
-  laravel: 'Laravel',
-  node: 'Node',
-  generic: 'Genérico',
-};
-
-export const FLOOR_KIND_LABELS: Record<FloorKind, string> = {
-  direccion: 'Dirección',
-  managed: 'Gestionada',
-  observed: 'Observada',
-  redaccion: 'Redacción',
-  mantenimiento: 'Mantenimiento',
-};
-
-export const VERDICT_LABELS: Record<VerdictKind, string> = {
-  tests: 'Tests',
-  approved: 'Aprobado',
-  improve: 'Mejorar',
-  'no-agreement': 'Sin acuerdo',
-};
-
-export const ALERT_LEVEL_LABELS: Record<GuardAlertLevel, string> = {
-  alerta: 'Alerta',
-  posible: 'Posible',
-};
-
-export const DOCUMENT_STATUS_LABELS: Record<DocumentStatus, string> = {
-  borrador: 'Borrador',
-  revision: 'En revisión',
-  aprobado: 'Aprobado',
-  'sin-acuerdo': 'Sin acuerdo',
-  entregado: 'Pendiente de decisión',
-  aparcado: 'Aparcado',
-  ejecutando: 'En ejecución',
-  cerrado: 'Cerrado',
-  descartado: 'Descartado',
 };
 
 export const DOCUMENT_STATUS_COLORS: Record<DocumentStatus, string> = {
@@ -114,6 +53,69 @@ export const DOCUMENT_STATUS_COLORS: Record<DocumentStatus, string> = {
   descartado: '#64748b',
 };
 
+export function roleLabel(kind: RoleKind): string {
+  return t(`role.${kind}`);
+}
+
+export function roleHint(kind: RoleKind): string {
+  return t(`role.hint.${kind}`);
+}
+
+export function stateLabel(state: AgentState): string {
+  const key = `state.${state}` as const;
+  const text = t(key);
+  return text === key ? state : text;
+}
+
+export function stateHint(state: AgentState): string {
+  return t(`state.hint.${state}`);
+}
+
+export function stackLabel(stack: Stack): string {
+  const key = `stack.${stack}` as const;
+  const text = t(key);
+  return text === key ? stack : text;
+}
+
+export function floorKindLabel(kind: FloorKind): string {
+  return t(`floorKind.${kind}`);
+}
+
+export function floorKindHint(kind: FloorKind): string {
+  return t(`floorKind.hint.${kind}`);
+}
+
+export function floorLabel(floor: Pick<FloorView, 'kind' | 'label'>): string {
+  switch (floor.kind) {
+    case 'direccion':
+    case 'redaccion':
+    case 'mantenimiento':
+      return t(`floor.${floor.kind}`);
+    default:
+      return floor.label;
+  }
+}
+
+export function verdictLabel(kind: VerdictKind): string {
+  return t(`verdict.${kind}`);
+}
+
+export function alertLevelLabel(level: GuardAlertLevel): string {
+  return t(`alert.${level}`);
+}
+
+export function alertLevelHint(level: GuardAlertLevel): string {
+  return t(`alert.hint.${level}`);
+}
+
+export function documentStatusLabel(status: DocumentStatus): string {
+  return t(`docStatus.${status}`);
+}
+
+export function documentStatusHint(status: DocumentStatus): string {
+  return t(`docStatus.hint.${status}`);
+}
+
 export function agentName(agent: Pick<AgentView, 'key' | 'name' | 'role'>): string {
   return agent.name || agent.role || agent.key.slice(0, 8);
 }
@@ -125,21 +127,21 @@ export function roleRank(kind: RoleKind): number {
 export function compareAgents(a: AgentView, b: AgentView): number {
   const byRole = roleRank(a.roleKind) - roleRank(b.roleKind);
   if (byRole !== 0) return byRole;
-  return agentName(a).localeCompare(agentName(b), 'es');
+  return agentName(a).localeCompare(agentName(b), currentLang());
 }
 
 export function scoreText(score: number): string {
-  return `nota ${score}/10`;
+  return t('docStatus.score', { score });
 }
 
 export function documentStatusText(doc: Pick<DocumentView, 'status' | 'round' | 'score'>): string {
   switch (doc.status) {
     case 'revision':
-      return doc.round > 0 ? `En revisión · ronda ${doc.round}` : DOCUMENT_STATUS_LABELS.revision;
+      return doc.round > 0 ? t('docStatus.reviewRound', { n: doc.round }) : documentStatusLabel('revision');
     case 'aprobado':
-      return doc.score === null ? DOCUMENT_STATUS_LABELS.aprobado : `Aprobado · ${scoreText(doc.score)}`;
+      return doc.score === null ? documentStatusLabel('aprobado') : t('docStatus.approvedScore', { score: doc.score });
     default:
-      return DOCUMENT_STATUS_LABELS[doc.status];
+      return documentStatusLabel(doc.status);
   }
 }
 
@@ -168,7 +170,8 @@ const EDIT_TOOLS: ReadonlySet<string> = new Set(['Edit', 'Write', 'MultiEdit', '
 const SEARCH_TOOLS: ReadonlySet<string> = new Set(['Grep', 'Glob', 'LS', 'ToolSearch']);
 const WEB_TOOLS: ReadonlySet<string> = new Set(['WebFetch', 'WebSearch']);
 const SPAWN_TOOLS: ReadonlySet<string> = new Set(['Agent', 'Task']);
-const THINKING: ReadonlySet<string> = new Set(['', 'pensando', 'empieza', 'respuesta recibida', 'esperando']);
+const THINKING_KEYS: ReadonlySet<string> = new Set(['hub.detail.thinking', 'hub.detail.starting', 'hub.detail.answerReceived', 'hub.detail.waiting']);
+const RAW_THINKING: ReadonlySet<string> = new Set(['pensando', 'empieza', 'respuesta recibida', 'esperando']);
 const PHRASE_MAX = 90;
 
 function clip(value: string, max = PHRASE_MAX): string {
@@ -184,43 +187,56 @@ export function isAway(agent: Pick<AgentView, 'away' | 'endedAt'>): boolean {
   return agent.away || agent.endedAt !== null;
 }
 
+function thinking(detail: HubText, text: string): boolean {
+  if (typeof detail === 'string') return text === '' || RAW_THINKING.has(text);
+  return THINKING_KEYS.has(detail.key);
+}
+
+function delegate(detail: HubText): string {
+  if (typeof detail === 'string') return /^delega en ([^:]+)/.exec(detail)?.[1]?.trim() ?? '';
+  if (detail.key === 'hub.detail.delegatesTo') return hubText(detail.params.who);
+  if (detail.key === 'hub.detail.delegates') return hubText(detail.params.what);
+  return '';
+}
+
 export function doingPhrase(agent: AgentView, state: AgentState = agent.state): string {
-  if (agent.endedAt !== null || state === 'done') return 'Terminó';
-  if (agent.away) return 'Se fue a casa';
-  const detail = agent.detail.trim();
+  if (agent.endedAt !== null || state === 'done') return t('doing.done');
+  if (agent.away) return t('doing.away');
+  const detail = agent.detail;
+  const text = hubText(detail).trim();
   const tool = agent.tool ?? '';
-  const target = agent.file ? fileName(agent.file) : detail;
+  const target = agent.file ? fileName(agent.file) : text;
   switch (state) {
     case 'failed':
-      return 'Falló';
+      return t('doing.failed');
     case 'idle':
-      return 'Esperando encargo';
+      return t('doing.idle');
     case 'asking':
-      if (tool === 'SendMessage' && detail.startsWith('pregunta:')) return clip(`Pregunta a su jefe: ${detail.slice(9).trim()}`);
-      return 'Esperando tu respuesta';
+      if (typeof detail !== 'string' && detail.key === 'hub.detail.asks') return clip(t('doing.asksLead', { question: hubText(detail.params.question) }));
+      return t('doing.awaitingYou');
     case 'blocked':
-      return clip(`Bloqueado: ${detail.replace(/^\s*BLOQUEADO\s*:\s*/i, '') || 'sin motivo'}`);
+      return clip(t('doing.blocked', { reason: text.replace(/^\s*BLOQUEADO\s*:\s*/i, '') || t('doing.noReason') }));
     case 'testing':
-      return detail ? clip(`Pasando tests (${detail})`) : 'Pasando tests';
+      return text ? clip(t('doing.testsWith', { what: text })) : t('doing.tests');
     case 'checking':
-      return detail ? clip(`Revisando (${detail})`) : 'Revisando';
+      return text ? clip(t('doing.checkingWith', { what: text })) : t('doing.checking');
     case 'talking': {
-      const to = detail.replace(/^→\s*/, '');
-      return to && to !== detail ? clip(`Hablando con ${to}`) : 'Hablando';
+      const to = text.replace(/^→\s*/, '');
+      return to && to !== text ? clip(t('doing.talkingTo', { to })) : t('doing.talking');
     }
     case 'reading':
-      if (WEB_TOOLS.has(tool)) return 'Consultando la web';
-      if (SEARCH_TOOLS.has(tool)) return detail ? clip(`Buscando ${detail}`) : 'Buscando';
-      return target ? clip(`Leyendo ${target}`) : 'Leyendo';
+      if (WEB_TOOLS.has(tool)) return t('doing.web');
+      if (SEARCH_TOOLS.has(tool)) return text ? clip(t('doing.searchingFor', { what: text })) : t('doing.searching');
+      return target ? clip(t('doing.readingFile', { what: target })) : t('doing.reading');
     case 'working': {
-      if (THINKING.has(detail)) return 'Pensando';
-      if (EDIT_TOOLS.has(tool)) return clip(`Editando ${target || tool}`);
+      if (thinking(detail, text)) return t('doing.thinking');
+      if (EDIT_TOOLS.has(tool)) return clip(t('doing.editing', { what: target || tool }));
       if (SPAWN_TOOLS.has(tool)) {
-        const who = /^delega en ([^:]+)/.exec(detail)?.[1]?.trim();
-        return who ? clip(`Delegando en ${who}`) : 'Delegando';
+        const who = delegate(detail);
+        return who ? clip(t('doing.delegatingTo', { who })) : t('doing.delegating');
       }
-      if (tool === 'Bash') return detail ? clip(`Ejecutando ${detail}`) : 'Ejecutando un comando';
-      return clip(detail || 'Trabajando');
+      if (tool === 'Bash') return text ? clip(t('doing.runningCommand', { what: text })) : t('doing.running');
+      return clip(text || t('doing.working'));
     }
   }
 }

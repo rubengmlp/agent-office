@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import type {
   DepartmentsConfig,
   Effort,
@@ -17,6 +18,7 @@ import {
   NUMBER_FIELDS,
   OTHER_MODEL,
   ROLE_ROWS,
+  targetRoleLabel,
   type NumberKey,
 } from './options';
 
@@ -148,33 +150,35 @@ export function sameDraft(a: SettingsDraft, b: SettingsDraft): boolean {
 export function validateDraft(draft: SettingsDraft): Problems {
   const problems: Problems = new Map();
 
-  for (const { id, label } of ROLE_ROWS) {
+  for (const { id, labelKey } of ROLE_ROWS) {
     const model = modelOf(draft.roles[id]);
-    if (model === '') problems.set(roleProblemKey(id), `${label}: indica el id del modelo`);
-    else if (!MODEL_PATTERN.test(model)) problems.set(roleProblemKey(id), `${label}: el id del modelo no es válido`);
+    const role = t(labelKey);
+    if (model === '') problems.set(roleProblemKey(id), t('settings.problem.modelMissing', { role }));
+    else if (!MODEL_PATTERN.test(model)) problems.set(roleProblemKey(id), t('settings.problem.modelInvalid', { role }));
   }
 
   for (const [target, rows] of Object.entries(draft.floorRoles)) {
-    for (const { id, label } of ROLE_ROWS) {
+    for (const { id } of ROLE_ROWS) {
       const role = rows[id];
       if (!role) continue;
       const model = modelOf(role);
       const key = floorRoleProblemKey(target, id);
-      if (model === '') problems.set(key, `${label} en ${target}: indica el id del modelo`);
-      else if (!MODEL_PATTERN.test(model)) problems.set(key, `${label} en ${target}: el id del modelo no es válido`);
+      const label = t('settings.floorRoles.roleOn', { role: targetRoleLabel(target, id), target });
+      if (model === '') problems.set(key, t('settings.problem.modelMissing', { role: label }));
+      else if (!MODEL_PATTERN.test(model)) problems.set(key, t('settings.problem.modelInvalid', { role: label }));
     }
   }
 
   for (const field of NUMBER_FIELDS) {
     const value = parseInteger(draft.numbers[field.key]);
     const valid = value !== null && value >= field.min && value <= field.max;
-    if (!valid) problems.set(field.key, `${field.label}: entre ${field.min} y ${field.max}`);
+    if (!valid) problems.set(field.key, t('settings.problem.range', { field: t(field.labelKey), min: field.min, max: field.max }));
   }
 
   for (const [slug, branch] of Object.entries(draft.branches)) {
     const value = branch.trim();
-    if (value === '') problems.set(branchProblemKey(slug), `Rama base de ${slug}: indica la rama`);
-    else if (!validBranch(value)) problems.set(branchProblemKey(slug), `Rama base de ${slug}: nombre de rama no válido`);
+    if (value === '') problems.set(branchProblemKey(slug), t('settings.problem.branchMissing', { slug }));
+    else if (!validBranch(value)) problems.set(branchProblemKey(slug), t('settings.problem.branchInvalid', { slug }));
   }
 
   return problems;

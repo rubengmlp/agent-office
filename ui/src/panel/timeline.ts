@@ -1,4 +1,6 @@
 import { el, setStateColor } from '../dom';
+import { t } from '../i18n';
+import { hubText } from '../i18n/hub';
 import { agentName, STATE_COLORS } from '../labels';
 import type { Store } from '../store';
 import { clockTime } from '../time';
@@ -32,7 +34,7 @@ function activityItem(entry: ActivityView): HTMLElement {
   const dot = el('span', 'act-dot');
   if (entry.state) setStateColor(dot, STATE_COLORS[entry.state]);
   else dot.classList.add('act-dot-empty');
-  return el('li', 'act', el('time', 'muted', clockTime(entry.ts)), dot, el('span', 'act-text', entry.summary));
+  return el('li', 'act', el('time', 'muted', clockTime(entry.ts)), dot, el('span', 'act-text', hubText(entry.summary)));
 }
 
 function section(title: string, items: readonly HTMLElement[], empty: string): HTMLElement {
@@ -47,11 +49,12 @@ function section(title: string, items: readonly HTMLElement[], empty: string): H
 export function mountTimeline(host: HTMLElement, store: Store): void {
   let signature = '';
   const body = el('div', 'panel-card-body');
-  const summary = el('summary', 'panel-summary', el('span', 'section-title', 'Línea de tiempo'));
+  const title = el('span', 'section-title');
+  const summary = el('summary', 'panel-summary', title);
   host.replaceChildren(el('details', 'panel-card', summary, body));
   host.hidden = true;
 
-  store.watch(['selection', 'activity', 'messages', 'agents'], () => {
+  store.watch(['selection', 'activity', 'messages', 'agents', 'lang'], () => {
     const key = store.selectedKey;
     if (key === null) {
       signature = '';
@@ -62,12 +65,13 @@ export function mountTimeline(host: HTMLElement, store: Store): void {
     host.hidden = false;
     const activity = newestFirst(store.activity, (entry) => entry.agentKey === key, ACTIVITY_LIMIT);
     const messages = newestFirst(store.messages, (m) => m.fromKey === key || m.toKey === key, MESSAGE_LIMIT);
-    const next = [key, activity.length, activity[0]?.ts ?? 0, messages.length, messages[0]?.id ?? 0].join(':');
+    const next = [store.lang, key, activity.length, activity[0]?.ts ?? 0, messages.length, messages[0]?.id ?? 0].join(':');
     if (next === signature) return;
     signature = next;
+    title.textContent = t('timeline.title');
     body.replaceChildren(
-      section('Mensajes', messages.map((message) => messageItem(store, key, message)), 'Sin mensajes.'),
-      section('Actividad', activity.map(activityItem), 'Sin actividad.'),
+      section(t('timeline.messages'), messages.map((message) => messageItem(store, key, message)), t('timeline.noMessages')),
+      section(t('timeline.activity'), activity.map(activityItem), t('timeline.noActivity')),
     );
   });
 }

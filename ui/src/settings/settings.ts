@@ -1,6 +1,9 @@
 import type { OfficeApi } from '../api';
 import { append, button, el, type Child } from '../dom';
-import { STACK_LABELS } from '../labels';
+import { plural, t } from '../i18n';
+import { hubTexts } from '../i18n/hub';
+import { roleHint, stackLabel } from '../labels';
+import type { Notifier } from '../notify';
 import type { Store } from '../store';
 import type { DepartmentsConfig, Effort, PermissionMode, RoleId, SettingsTarget, SettingsView } from '../types';
 import {
@@ -30,11 +33,14 @@ import {
   REVIEW_FIELDS,
   ROLE_ROWS,
   PERMISSION_MODE_OPTIONS,
+  permissionTargetHint,
   permissionTargetLabel,
   targetRoleLabel,
   type NumberField,
   type NumberKey,
 } from './options';
+import { mountNotifySection } from './notifications';
+import { mountProjects } from './projects';
 
 type Outcome = { text: string; kind: 'ok' | 'error' };
 
@@ -92,26 +98,32 @@ function section(title: Child | Child[], hint: string, ...body: Child[]): HTMLEl
 }
 
 function roleInputs(label: string, inheritable: boolean): RoleControls {
-  const inherited = inheritable ? option(DEFAULT_CHOICE, 'Por defecto') : null;
+  const inherited = inheritable ? option(DEFAULT_CHOICE, t('settings.floorRoles.default')) : null;
   const model = el('select', 'role-model');
-  model.setAttribute('aria-label', `Modelo de ${label}`);
-  append(model, [inherited, ...MODEL_OPTIONS.map((entry) => option(entry.value, entry.label))]);
-  const custom = textInput('role-custom', `Id del modelo de ${label}`, 'p. ej. claude-opus-5-5');
+  model.setAttribute('aria-label', t('settings.aria.model', { role: label }));
+  append(model, [inherited, ...MODEL_OPTIONS.map((entry) => option(entry.value, 'labelKey' in entry ? t(entry.labelKey) : entry.label))]);
+  const custom = textInput('role-custom', t('settings.aria.customModel', { role: label }), t('settings.customPlaceholder'));
   const effort = el('select', 'role-effort');
-  effort.setAttribute('aria-label', `Esfuerzo de ${label}`);
-  append(effort, [inheritable ? option(DEFAULT_CHOICE, 'Por defecto') : null, ...EFFORTS.map((value) => option(value, value))]);
+  effort.setAttribute('aria-label', t('settings.aria.effort', { role: label }));
+  append(effort, [inheritable ? option(DEFAULT_CHOICE, t('settings.floorRoles.default')) : null, ...EFFORTS.map((value) => option(value, value))]);
   return { model, custom, effort, inherited };
 }
 
 function roleHead(): HTMLElement[] {
-  return [
-    el('span', 'role-head muted', 'Rol'),
-    el('span', 'role-head muted', 'Modelo'),
-    el('span', 'role-head muted', 'Esfuerzo'),
-  ];
+  const help = t('settings.roles.help');
+  const modelHead = el('span', 'role-head muted', t('settings.col.model'));
+  modelHead.title = help;
+  const effortHead = el('span', 'role-head muted', t('settings.col.effort'));
+  effortHead.title = help;
+  return [el('span', 'role-head muted', t('settings.col.role')), modelHead, effortHead];
 }
 
-function toggleRow(label: string, hint: string): { root: HTMLElement; input: HTMLInputElement } {
+function targetTitle(target: SettingsTarget): string {
+  if (target.id === 'direccion' || target.id === 'redaccion' || target.id === 'mantenimiento') return t(`floor.${target.id}`);
+  return target.label;
+}
+
+export function toggleRow(label: string, hint: string): { root: HTMLElement; input: HTMLInputElement } {
   const input = el('input');
   input.type = 'checkbox';
   const root = el(
@@ -133,20 +145,25 @@ function numberRow(field: NumberField): { root: HTMLElement; input: HTMLInputEle
   const root = el(
     'label',
     'setting-row',
-    el('span', 'setting-text', el('span', 'setting-label', field.label), el('span', 'setting-hint muted', field.hint)),
+    el('span', 'setting-text', el('span', 'setting-label', t(field.labelKey)), el('span', 'setting-hint muted', t(field.hintKey))),
     input,
   );
   return { root, input };
 }
 
-function readonlyRow(label: string, value: string): HTMLElement {
-  return el('div', 'setting-row', el('span', 'setting-label', label), el('code', 'setting-value', value));
+function readonlyRow(label: string, hint: string, value: string): HTMLElement {
+  return el(
+    'div',
+    'setting-row',
+    el('span', 'setting-text', el('span', 'setting-label', label), el('span', 'setting-hint muted', hint)),
+    el('code', 'setting-value', value),
+  );
 }
 
 function outcomeText(note: string, regenerated: number): string {
-  const text = note.trim() || 'Ajustes guardados';
+  const text = note.trim() || t('settings.saved');
   if (regenerated <= 0) return text;
-  return `${text} (${regenerated} ${regenerated === 1 ? 'agente regenerado' : 'agentes regenerados'})`;
+  return `${text} (${plural('settings.regenerated', regenerated)})`;
 }
 
 class SettingsPage {
@@ -161,23 +178,31 @@ class SettingsPage {
 
   private readonly notice = el('p', 'settings-notice');
   private readonly content = el('div', 'settings-content');
-  private readonly saveButton = button('Guardar', 'primary');
+  private readonly saveButton = button('', 'primary');
   private readonly status = el('span', 'settings-status');
   private readonly actions = el('div', 'settings-actions', this.saveButton, this.status);
+  private readonly projectsHost = el('div', 'settings-projects');
 
   constructor(
     private readonly host: HTMLElement,
     private readonly store: Store,
     private readonly api: OfficeApi | null,
+    private readonly notifier: Notifier | null,
   ) {}
 
   start(): void {
     this.saveButton.addEventListener('click', () => void this.submit());
     this.host.replaceChildren(el('div', 'settings', this.notice, this.content, this.actions));
+    mountProjects(this.projectsHost, this.store, this.api);
     this.store.watch(['settings'], () => {
       if (this.store.settings) this.accept(this.store.settings);
     });
     this.store.watch(['mode'], () => this.render());
+    this.store.watch(['lang'], () => {
+      this.signature = '';
+      this.outcome = null;
+      this.render();
+    });
     this.store.watch(['connection'], () => {
       if (this.store.connection === 'online') void this.load();
     });
@@ -217,9 +242,7 @@ class SettingsPage {
   private render(): void {
     const view = this.baseline;
     if (this.api === null) {
-      this.notice.textContent = this.store.replay
-        ? 'Los ajustes están desactivados en el replay.'
-        : 'Sin conexión con el hub: abre la oficina desde el hub para editar los ajustes.';
+      this.notice.textContent = this.store.replay ? t('settings.replay') : t('settings.offline');
     }
     this.notice.hidden = this.api !== null;
 
@@ -245,12 +268,15 @@ class SettingsPage {
 
   private placeholder(): HTMLElement[] {
     if (this.api === null) return [];
-    if (!this.loadError) return [el('p', 'placeholder', 'Cargando ajustes…')];
-    const retry = button('Reintentar');
+    // Desktop notifications live in the browser: they can be turned off even when the hub settings do not load.
+    const notify = this.notifier ? [mountNotifySection(this.notifier)] : [];
+    if (!this.loadError) return [el('p', 'placeholder', t('settings.loading')), ...notify];
+    const retry = button(t('settings.retry'));
     retry.addEventListener('click', () => void this.load());
     return [
-      el('p', 'placeholder', `No se pudieron cargar los ajustes: ${this.loadError}`),
+      el('p', 'placeholder', t('settings.loadFailed', { error: this.loadError })),
       el('div', 'settings-retry', retry),
+      ...notify,
     ];
   }
 
@@ -262,8 +288,10 @@ class SettingsPage {
     const branches = new Map<string, HTMLInputElement>();
     const modes = new Map<string, HTMLSelectElement>();
 
+    const rolesHelp = t('settings.roles.help');
     const roleGrid = el('div', 'role-grid', ...roleHead());
-    for (const { id, label } of ROLE_ROWS) {
+    for (const { id, kind, labelKey } of ROLE_ROWS) {
+      const label = t(labelKey);
       const row = roleInputs(label, false);
       const { model, custom, effort } = row;
       model.addEventListener('change', () => {
@@ -283,14 +311,18 @@ class SettingsPage {
         });
       });
 
-      roleGrid.append(el('span', 'role-name', label), el('div', 'role-model-cell', model, custom), effort);
+      roleGrid.append(
+        el('div', 'role-name-cell', el('span', 'role-name', label), el('span', 'setting-hint muted', roleHint(kind))),
+        el('div', 'role-model-cell', model, custom),
+        effort,
+      );
       roles.set(id, row);
     }
 
     const targetSections = view.targets.map((target) => this.targetSection(target, floorRoles));
 
-    const departmentRows = DEPARTMENT_ROWS.map(({ key, label, hint }) => {
-      const row = toggleRow(label, hint);
+    const departmentRows = DEPARTMENT_ROWS.map(({ key, labelKey, hintKey }) => {
+      const row = toggleRow(t(labelKey), t(hintKey));
       row.input.addEventListener('change', () => {
         this.edit((draft) => {
           draft.departments[key] = row.input.checked;
@@ -313,7 +345,7 @@ class SettingsPage {
       });
 
     const floorRows = managedFloors(view).map((floor) => {
-      const input = textInput('setting-branch', `Rama base de ${floor.slug}`, 'develop');
+      const input = textInput('setting-branch', t('settings.aria.branch', { slug: floor.slug }), 'develop');
       input.addEventListener('input', () => {
         this.edit((draft) => {
           draft.branches[floor.slug] = input.value;
@@ -326,8 +358,9 @@ class SettingsPage {
         el(
           'span',
           'setting-text',
-          el('span', 'setting-label', floor.slug, el('span', 'chip', STACK_LABELS[floor.stack])),
+          el('span', 'setting-label', floor.slug, el('span', 'chip', stackLabel(floor.stack))),
           el('code', 'setting-path muted', floor.path),
+          el('span', 'setting-hint muted', t('settings.floor.hint')),
         ),
         input,
       );
@@ -336,61 +369,61 @@ class SettingsPage {
     const modeRows = Object.keys(view.permissionModes).map((slug) => {
       const label = permissionTargetLabel(slug);
       const select = el('select', 'setting-mode');
-      select.setAttribute('aria-label', `Modo de permisos de ${label}`);
-      select.append(...PERMISSION_MODE_OPTIONS.map((entry) => option(entry.value, entry.label)));
+      select.setAttribute('aria-label', t('settings.aria.mode', { target: label }));
+      select.append(...PERMISSION_MODE_OPTIONS.map((entry) => option(entry.value, t(entry.labelKey))));
       select.addEventListener('change', () => {
         this.edit((draft) => {
           draft.modes[slug] = select.value as PermissionMode;
         });
       });
       modes.set(slug, select);
-      return el('label', 'setting-row', el('span', 'setting-text', el('span', 'setting-label', label)), select);
+      return el(
+        'label',
+        'setting-row',
+        el('span', 'setting-text', el('span', 'setting-label', label), el('span', 'setting-hint muted', permissionTargetHint(slug))),
+        select,
+      );
     });
 
     const fieldset = el(
       'fieldset',
       'settings-fieldset',
       section(
-        'Modelos por defecto',
-        'Modelo y esfuerzo de cada rol. Se aplican a las sesiones y equipos nuevos, salvo donde una planta lo anule.',
+        t('settings.section.roles'),
+        t('settings.section.hint.roles'),
         roleGrid,
+        el('p', 'settings-hint muted', rolesHelp),
       ),
       ...targetSections,
-      section('Departamentos', 'Activa o desactiva las plantas de Redacción y Mantenimiento.', ...departmentRows),
+      section(t('settings.section.departments'), t('settings.section.hint.departments'), ...departmentRows),
+      section(t('settings.section.permissions'), t('settings.section.hint.permissions'), ...modeRows),
+      section(t('settings.section.review'), t('settings.section.hint.review'), ...numberRows(REVIEW_FIELDS)),
+      section(t('settings.section.memory'), t('settings.section.hint.memory'), ...numberRows(MEMORY_FIELDS)),
+      section(t('settings.section.office'), t('settings.section.hint.office'), ...numberRows(OFFICE_FIELDS)),
       section(
-        'Permisos',
-        'Modo de permisos con el que se abre cada sesión; su equipo lo hereda. Se aplica cuando la sesión se reinicia. En modo plan el equipo no puede escribir.',
-        ...modeRows,
-      ),
-      section(
-        'Revisión',
-        'Rondas de revisión de planes y skills antes de declarar sin acuerdo.',
-        ...numberRows(REVIEW_FIELDS),
-      ),
-      section(
-        'Memoria',
-        'Lecciones que guarda la oficina y se inyectan a cada agente al empezar.',
-        ...numberRows(MEMORY_FIELDS),
-      ),
-      section(
-        'Oficina',
-        'Cuándo se va a casa un compañero que se ha quedado sin trabajo.',
-        ...numberRows(OFFICE_FIELDS),
-      ),
-      section(
-        'Plantas',
-        'Rama base sobre la que Redacción toma las fuentes de cada planta gestionada.',
-        ...(floorRows.length > 0 ? floorRows : [el('p', 'muted', 'No hay plantas gestionadas.')]),
+        t('settings.section.floors'),
+        t('settings.section.hint.floors'),
+        ...(floorRows.length > 0 ? floorRows : [el('p', 'muted', t('settings.noFloors'))]),
       ),
     );
     const hub = section(
-      'Hub',
-      'Solo lectura: se cambian en config.json.',
-      readonlyRow('Repositorio de documentos', view.docsRepo),
-      readonlyRow('Puerto', String(view.port)),
+      t('settings.section.hub'),
+      t('settings.section.hint.hub'),
+      readonlyRow(t('settings.hub.docsRepo'), t('settings.hub.hint.docsRepo'), view.docsRepo),
+      readonlyRow(t('settings.hub.port'), t('settings.hub.hint.port'), String(view.port)),
     );
 
-    return { root: el('div', 'settings-form', fieldset, hub), fieldset, roles, floorRoles, departments, numbers, branches, modes };
+    const notify = this.notifier ? mountNotifySection(this.notifier) : null;
+    return {
+      root: el('div', 'settings-form', fieldset, this.projectsHost, hub, notify),
+      fieldset,
+      roles,
+      floorRoles,
+      departments,
+      numbers,
+      branches,
+      modes,
+    };
   }
 
   private targetSection(target: SettingsTarget, registry: Map<string, Map<RoleId, RoleControls>>): HTMLElement {
@@ -398,7 +431,7 @@ class SettingsPage {
     const grid = el('div', 'role-grid', ...roleHead());
     for (const id of target.roles) {
       const label = targetRoleLabel(target.id, id);
-      const row = roleInputs(`${label} en ${target.label}`, true);
+      const row = roleInputs(t('settings.floorRoles.roleOn', { role: label, target: targetTitle(target) }), true);
       const { model, custom, effort } = row;
       const ensure = (draft: SettingsDraft) => {
         const targetRows = (draft.floorRoles[target.id] ??= {});
@@ -429,13 +462,9 @@ class SettingsPage {
       rows.set(id, row);
     }
     registry.set(target.id, rows);
-    const title: Child[] = [target.label];
-    if (target.stack) title.push(el('span', 'chip', STACK_LABELS[target.stack]));
-    return section(
-      title,
-      '«Por defecto» hereda el rol de Modelos por defecto. Elegir un valor crea una anulación solo para este destino.',
-      grid,
-    );
+    const title: Child[] = [targetTitle(target)];
+    if (target.stack) title.push(el('span', 'chip', stackLabel(target.stack)));
+    return section(title, t('settings.floorRoles.hint'), grid);
   }
 
   private syncControls(): void {
@@ -451,7 +480,7 @@ class SettingsPage {
       for (const [id, row] of rows) {
         const inherited = draft.roles[id];
         const role = draft.floorRoles[target]?.[id] ?? null;
-        if (row.inherited) row.inherited.textContent = `Por defecto (${modelOf(inherited) || '…'} · ${inherited.effort})`;
+        if (row.inherited) row.inherited.textContent = t('settings.floorRoles.defaultOf', { model: modelOf(inherited) || '…', effort: inherited.effort });
         setValue(row.model, role ? role.choice : DEFAULT_CHOICE);
         setValue(row.custom, role ? role.custom : '');
         setValue(row.effort, role ? role.effort : DEFAULT_CHOICE);
@@ -493,7 +522,7 @@ class SettingsPage {
     for (const [slug, input] of controls.branches) markInvalid(input, problems.has(branchProblemKey(slug)));
 
     this.saveButton.disabled = !editable || this.saving || !changes || problems.size > 0;
-    this.saveButton.textContent = this.saving ? 'Guardando…' : 'Guardar';
+    this.saveButton.textContent = this.saving ? t('settings.saving') : t('settings.save');
     this.showStatus(problems, changes);
   }
 
@@ -501,14 +530,14 @@ class SettingsPage {
     let text = '';
     let kind = '';
     if (this.saving) {
-      text = 'Guardando…';
+      text = t('settings.saving');
     } else if (this.outcome) {
       ({ text, kind } = this.outcome);
     } else if (problems.size > 0) {
       text = problems.values().next().value ?? '';
       kind = 'error';
     } else if (changes) {
-      text = 'Cambios sin guardar';
+      text = t('settings.unsaved');
     }
     this.status.textContent = text;
     this.status.className = kind ? `settings-status ${kind}` : 'settings-status';
@@ -530,9 +559,9 @@ class SettingsPage {
     if (!response.ok) {
       this.outcome = { text: response.message, kind: 'error' };
     } else if (!response.data.ok) {
-      this.outcome = { text: response.data.error, kind: 'error' };
+      this.outcome = { text: hubTexts(response.data.error), kind: 'error' };
     } else {
-      this.outcome = { text: outcomeText(response.data.note, response.data.regenerated), kind: 'ok' };
+      this.outcome = { text: outcomeText(hubTexts(response.data.note), response.data.regenerated), kind: 'ok' };
       this.baseline = applyUpdate(this.baseline ?? baseline, update);
       this.draft = draftFrom(this.baseline);
       void this.load();
@@ -541,7 +570,7 @@ class SettingsPage {
   }
 }
 
-export function mountSettings(host: HTMLElement, store: Store, api: OfficeApi | null): void {
-  const page = new SettingsPage(host, store, api);
+export function mountSettings(host: HTMLElement, store: Store, api: OfficeApi | null, notifier: Notifier | null = null): void {
+  const page = new SettingsPage(host, store, api, notifier);
   page.start();
 }

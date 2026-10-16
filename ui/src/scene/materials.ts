@@ -9,6 +9,7 @@ import {
   type ColorRepresentation,
   type MeshStandardMaterialParameters,
 } from 'three';
+import { t } from '../i18n';
 import type { FloorKind, FloorView, Stack } from '../types';
 
 export function hashString(value: string): number {
@@ -45,7 +46,7 @@ function canvas(size: number): { canvas: HTMLCanvasElement; ctx: CanvasRendering
   element.width = size;
   element.height = size;
   const ctx = element.getContext('2d');
-  if (!ctx) throw new Error('Canvas 2D no disponible');
+  if (!ctx) throw new Error(t('scene.noCanvas'));
   return { canvas: element, ctx };
 }
 
@@ -127,7 +128,7 @@ export function codeTexture(): CanvasTexture {
   element.width = 256;
   element.height = 160;
   const ctx = element.getContext('2d');
-  if (!ctx) throw new Error('Canvas 2D no disponible');
+  if (!ctx) throw new Error(t('scene.noCanvas'));
   const random = prng(7);
   ctx.fillStyle = '#0d1524';
   ctx.fillRect(0, 0, 256, 160);

@@ -1,6 +1,7 @@
 import { orderRows, type Row } from '../agents-order';
 import { el, setStateColor } from '../dom';
-import { agentName, doingPhrase, isAway, ROLE_LABELS, STATE_COLORS } from '../labels';
+import { t } from '../i18n';
+import { agentName, doingPhrase, floorLabel, isAway, roleLabel, STATE_COLORS } from '../labels';
 import type { Store } from '../store';
 import { relativeTime } from '../time';
 import type { AgentView, FloorView } from '../types';
@@ -21,7 +22,7 @@ function agentRow(store: Store, row: Row, times: TimeNode[], now: number): HTMLE
     `floors-row${away ? ' floors-row-away' : ''}${store.selectedKey === agent.key ? ' selected' : ''}`,
     dot,
     el('span', 'floors-name', agentName(agent)),
-    el('span', 'chip floors-role', ROLE_LABELS[agent.roleKind]),
+    el('span', 'chip floors-role', roleLabel(agent.roleKind)),
     store.questionFor(agent.key) ? el('span', 'floors-ask', '?') : null,
     time,
     el('span', 'floors-doing', doingPhrase(agent, state)),
@@ -29,7 +30,7 @@ function agentRow(store: Store, row: Row, times: TimeNode[], now: number): HTMLE
   item.type = 'button';
   item.dataset.key = agent.key;
   item.style.paddingLeft = `${8 + depth * 14}px`;
-  item.title = agent.task ? `Encargo: ${agent.task}` : agentName(agent);
+  item.title = agent.task ? t('floors.task', { task: agent.task }) : agentName(agent);
   return el('li', '', item);
 }
 
@@ -38,10 +39,10 @@ function floorCard(store: Store, floor: FloorView, agents: readonly AgentView[],
   const outside = agents.filter((agent) => isAway(agent));
   const body: HTMLElement[] = [];
   if (inside.length > 0) body.push(el('ul', 'floors-list', ...orderRows(inside).map((row) => agentRow(store, row, times, now))));
-  else body.push(el('p', 'floors-empty muted', agents.length > 0 ? 'Nadie en la planta.' : 'Sin agentes.'));
+  else body.push(el('p', 'floors-empty muted', t(agents.length > 0 ? 'floors.nobody' : 'floors.noAgents')));
   if (outside.length > 0) {
     body.push(
-      el('p', 'floors-away-title section-title', 'Fuera de la oficina'),
+      el('p', 'floors-away-title section-title', t('floors.away')),
       el('ul', 'floors-list', ...orderRows(outside).map((row) => agentRow(store, row, times, now))),
     );
   }
@@ -51,8 +52,8 @@ function floorCard(store: Store, floor: FloorView, agents: readonly AgentView[],
     el(
       'summary',
       'floors-summary',
-      el('span', 'floors-floor', floor.label),
-      el('span', 'chip floors-count', outside.length > 0 ? `${inside.length} · ${outside.length} fuera` : String(inside.length)),
+      el('span', 'floors-floor', floorLabel(floor)),
+      el('span', 'chip floors-count', outside.length > 0 ? t('floors.countAway', { inside: inside.length, outside: outside.length }) : String(inside.length)),
     ),
     el('div', 'floors-body', ...body),
   );
@@ -87,7 +88,7 @@ export function mountFloors(host: HTMLElement, store: Store): void {
     const floors = store.floorList();
     times = [];
     if (floors.length === 0) {
-      host.replaceChildren(el('p', 'floors-empty muted', 'Esperando agentes…'));
+      host.replaceChildren(el('p', 'floors-empty muted', t('table.waiting')));
       return;
     }
     if (!touched && !selected) {
@@ -149,7 +150,7 @@ export function mountFloors(host: HTMLElement, store: Store): void {
     true,
   );
 
-  store.watch(['agents', 'floors', 'selection', 'questions'], schedule);
+  store.watch(['agents', 'floors', 'selection', 'questions', 'lang'], schedule);
   store.watch(['tick'], () => {
     const now = store.now();
     for (const { node, ts } of times) node.textContent = relativeTime(ts, now);

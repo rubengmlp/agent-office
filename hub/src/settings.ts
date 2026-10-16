@@ -18,10 +18,7 @@ import { ensureDocsRepo } from './docs-repo';
 import { regenerateAgents } from './floor-cli';
 import type { Profiles } from './profiles';
 import { record } from './state-machine';
-import type { OfficeConfig, RoleId, RoleSettings, SettingsResult, SettingsTarget, SettingsView } from './types';
-
-export const SETTINGS_NOTE =
-  'Guardado. Los agentes y los lanzadores se han regenerado: los cambios valen para las sesiones y los equipos nuevos. Las sesiones abiertas siguen con su configuración hasta que las reinicies (bun run office).';
+import type { HubText, OfficeConfig, RoleId, RoleSettings, SettingsResult, SettingsTarget, SettingsView } from './types';
 
 export function permissionTargets(config: OfficeConfig): string[] {
   const targets = ['direccion'];
@@ -66,40 +63,40 @@ export function settingsView(config: OfficeConfig): SettingsView {
   };
 }
 
-export function applySettings(config: OfficeConfig, raw: unknown): { config: OfficeConfig; changed: boolean } | { error: string } {
+export function applySettings(config: OfficeConfig, raw: unknown): { config: OfficeConfig; changed: boolean } | { error: HubText[] } {
   const update = record(raw);
   const next = structuredClone(config);
-  const errors: string[] = [];
+  const errors: HubText[] = [];
   const roles = record(update.roles);
   for (const [id, value] of Object.entries(roles)) {
     if (!(ROLE_IDS as readonly string[]).includes(id)) {
-      errors.push(`Rol desconocido: ${id}`);
+      errors.push({ key: 'hub.settings.unknownRole', params: { id } });
       continue;
     }
     const r = record(value);
     const role = next.roles[id as keyof OfficeConfig['roles']];
     if (r.model !== undefined) {
       if (validModel(r.model)) role.model = r.model;
-      else errors.push(`Modelo no válido para ${id}: usa un alias (opus, sonnet, haiku, fable, inherit) o un id completo.`);
+      else errors.push({ key: 'hub.settings.badModel', params: { id } });
     }
     if (r.effort !== undefined) {
       if (validEffort(r.effort)) role.effort = r.effort;
-      else errors.push(`Esfuerzo no válido para ${id}: low, medium, high, xhigh o max.`);
+      else errors.push({ key: 'hub.settings.badEffort', params: { id } });
     }
   }
   const allowedTargets = new Set(['direccion', 'redaccion', 'mantenimiento', ...Object.keys(next.floors)]);
   for (const [target, value] of Object.entries(record(update.floorRoles))) {
     if (target === 'direccion' || !allowedTargets.has(target)) {
-      errors.push(`No hay ninguna planta "${target}".`);
+      errors.push({ key: 'hub.settings.noFloor', params: { slug: target } });
       continue;
     }
     for (const [id, change] of Object.entries(record(value))) {
       if (!(ROLE_IDS as readonly string[]).includes(id)) {
-        errors.push(`Rol desconocido: ${id}`);
+        errors.push({ key: 'hub.settings.unknownRole', params: { id } });
         continue;
       }
       if (!targetRoles(target).includes(id as RoleId)) {
-        errors.push(`El rol ${id} no existe en la planta ${target}.`);
+        errors.push({ key: 'hub.settings.roleNotOnFloor', params: { id, slug: target } });
         continue;
       }
       const roleId = id as RoleId;
@@ -112,7 +109,7 @@ export function applySettings(config: OfficeConfig, raw: unknown): { config: Off
         continue;
       }
       if (typeof change !== 'object' || Array.isArray(change)) {
-        errors.push(`Los ajustes de ${id} en ${target} tienen que ser un objeto o null.`);
+        errors.push({ key: 'hub.settings.badFloorRole', params: { id, slug: target } });
         continue;
       }
       const r = record(change);
@@ -122,14 +119,14 @@ export function applySettings(config: OfficeConfig, raw: unknown): { config: Off
         if (validModel(r.model)) merged.model = r.model;
         else {
           valid = false;
-          errors.push(`Modelo no válido para ${id} en ${target}: usa un alias (opus, sonnet, haiku, fable, inherit) o un id completo.`);
+          errors.push({ key: 'hub.settings.badFloorModel', params: { id, slug: target } });
         }
       }
       if (r.effort !== undefined) {
         if (validEffort(r.effort)) merged.effort = r.effort;
         else {
           valid = false;
-          errors.push(`Esfuerzo no válido para ${id} en ${target}: low, medium, high, xhigh o max.`);
+          errors.push({ key: 'hub.settings.badFloorEffort', params: { id, slug: target } });
         }
       }
       if (valid && (r.model !== undefined || r.effort !== undefined)) {
@@ -142,46 +139,46 @@ export function applySettings(config: OfficeConfig, raw: unknown): { config: Off
     const value = departments[key];
     if (value === undefined) continue;
     if (typeof value === 'boolean') next.departments[key] = value;
-    else errors.push(`departments.${key} tiene que ser verdadero o falso.`);
+    else errors.push({ key: 'hub.settings.badDepartment', params: { key } });
   }
   const review = record(update.review);
   if (review.maxRounds !== undefined) {
     if (validInt(review.maxRounds, LIMITS.maxRounds)) next.review.maxRounds = review.maxRounds;
-    else errors.push(`maxRounds va de ${LIMITS.maxRounds.min} a ${LIMITS.maxRounds.max}.`);
+    else errors.push({ key: 'hub.settings.badRange', params: { key: 'maxRounds', min: LIMITS.maxRounds.min, max: LIMITS.maxRounds.max } });
   }
   const memory = record(update.memory);
   for (const key of ['maxLessons', 'maxLessonsPerSession', 'maxContextChars'] as const) {
     const value = memory[key];
     if (value === undefined) continue;
     if (validInt(value, LIMITS[key])) next.memory[key] = value;
-    else errors.push(`${key} va de ${LIMITS[key].min} a ${LIMITS[key].max}.`);
+    else errors.push({ key: 'hub.settings.badRange', params: { key, min: LIMITS[key].min, max: LIMITS[key].max } });
   }
   const floors = record(update.floors);
   for (const [slug, value] of Object.entries(floors)) {
     const floor = next.floors[slug];
     if (!floor) {
-      errors.push(`No hay ninguna planta "${slug}".`);
+      errors.push({ key: 'hub.settings.noFloor', params: { slug } });
       continue;
     }
     const branch = record(value).baseBranch;
     if (branch === undefined) continue;
     if (validBranch(branch)) floor.baseBranch = branch;
-    else errors.push(`"${String(branch)}" no vale como rama base de ${slug}.`);
+    else errors.push({ key: 'hub.settings.badBranch', params: { branch: String(branch), slug } });
   }
   const modes = record(update.permissionModes);
   for (const [slug, mode] of Object.entries(modes)) {
     if (!allowedTargets.has(slug)) {
-      errors.push(`No hay ninguna sesión de la oficina para "${slug}".`);
+      errors.push({ key: 'hub.settings.noTarget', params: { slug } });
       continue;
     }
     if (validPermissionMode(mode)) next.permissionModes[slug] = mode;
-    else errors.push(`Modo de permisos no válido para ${slug}: auto, manual, acceptEdits, plan o dontAsk.`);
+    else errors.push({ key: 'hub.settings.badPermissionMode', params: { slug } });
   }
   if (update.leaveAfterMinutes !== undefined) {
     if (validInt(update.leaveAfterMinutes, LIMITS.leaveAfterMinutes)) next.leaveAfterMinutes = update.leaveAfterMinutes;
-    else errors.push(`leaveAfterMinutes va de ${LIMITS.leaveAfterMinutes.min} a ${LIMITS.leaveAfterMinutes.max}.`);
+    else errors.push({ key: 'hub.settings.badRange', params: { key: 'leaveAfterMinutes', min: LIMITS.leaveAfterMinutes.min, max: LIMITS.leaveAfterMinutes.max } });
   }
-  if (errors.length > 0) return { error: errors.join(' ') };
+  if (errors.length > 0) return { error: errors };
   return { config: next, changed: JSON.stringify(next) !== JSON.stringify(config) };
 }
 
@@ -197,7 +194,7 @@ export function createSettings(p: Paths, profiles: () => Profiles, onSaved: (con
       const current = loadConfig(p);
       const applied = applySettings(current, raw);
       if ('error' in applied) return { ok: false, error: applied.error };
-      if (!applied.changed) return { ok: true, regenerated: 0, note: 'No había cambios que guardar.' };
+      if (!applied.changed) return { ok: true, regenerated: 0, note: [{ key: 'hub.settings.noChanges' }] };
       const config = applied.config;
       const wantsDocs = config.departments.redaccion || config.departments.mantenimiento;
       if (wantsDocs) ensureDocsRepo(docsRepoPath(config));
@@ -205,8 +202,11 @@ export function createSettings(p: Paths, profiles: () => Profiles, onSaved: (con
       const result = regenerateAgents(p, profiles());
       const failed = result.floors.filter((f) => f.error);
       onSaved(config);
-      const warning = failed.length > 0 ? ` No se pudieron regenerar: ${failed.map((f) => `${f.slug} (${f.error})`).join(', ')}.` : '';
-      return { ok: true, regenerated: result.files, note: `${SETTINGS_NOTE}${warning}` };
+      const note: HubText[] = [
+        { key: 'hub.settings.saved' },
+        ...failed.map((f): HubText => ({ key: 'hub.settings.regenerateFailed', params: { slug: f.slug, error: f.text ?? f.error ?? '' } })),
+      ];
+      return { ok: true, regenerated: result.files, note };
     },
   };
 }
