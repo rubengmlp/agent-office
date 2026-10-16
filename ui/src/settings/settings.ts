@@ -2,6 +2,7 @@ import type { OfficeApi } from '../api';
 import { button, el, type Child } from '../dom';
 import { plural, t } from '../i18n';
 import { roleHint, stackLabel } from '../labels';
+import type { Notifier } from '../notify';
 import type { Store } from '../store';
 import type { DepartmentsConfig, Effort, PermissionMode, RoleId, SettingsView } from '../types';
 import {
@@ -32,6 +33,7 @@ import {
   type NumberField,
   type NumberKey,
 } from './options';
+import { mountNotifySection } from './notifications';
 import { mountProjects } from './projects';
 
 type Outcome = { text: string; kind: 'ok' | 'error' };
@@ -83,7 +85,7 @@ function section(title: string, hint: string, ...body: Child[]): HTMLElement {
   );
 }
 
-function toggleRow(label: string, hint: string): { root: HTMLElement; input: HTMLInputElement } {
+export function toggleRow(label: string, hint: string): { root: HTMLElement; input: HTMLInputElement } {
   const input = el('input');
   input.type = 'checkbox';
   const root = el(
@@ -147,6 +149,7 @@ class SettingsPage {
     private readonly host: HTMLElement,
     private readonly store: Store,
     private readonly api: OfficeApi | null,
+    private readonly notifier: Notifier | null,
   ) {}
 
   start(): void {
@@ -227,12 +230,15 @@ class SettingsPage {
 
   private placeholder(): HTMLElement[] {
     if (this.api === null) return [];
-    if (!this.loadError) return [el('p', 'placeholder', t('settings.loading'))];
+    // Desktop notifications live in the browser: they can be turned off even when the hub settings do not load.
+    const notify = this.notifier ? [mountNotifySection(this.notifier)] : [];
+    if (!this.loadError) return [el('p', 'placeholder', t('settings.loading')), ...notify];
     const retry = button(t('settings.retry'));
     retry.addEventListener('click', () => void this.load());
     return [
       el('p', 'placeholder', t('settings.loadFailed', { error: this.loadError })),
       el('div', 'settings-retry', retry),
+      ...notify,
     ];
   }
 
@@ -374,7 +380,8 @@ class SettingsPage {
       readonlyRow(t('settings.hub.port'), t('settings.hub.hint.port'), String(view.port)),
     );
 
-    return { root: el('div', 'settings-form', fieldset, this.projectsHost, hub), fieldset, roles, departments, numbers, branches, modes };
+    const notify = this.notifier ? mountNotifySection(this.notifier) : null;
+    return { root: el('div', 'settings-form', fieldset, this.projectsHost, hub, notify), fieldset, roles, departments, numbers, branches, modes };
   }
 
   private syncControls(): void {
@@ -463,7 +470,7 @@ class SettingsPage {
   }
 }
 
-export function mountSettings(host: HTMLElement, store: Store, api: OfficeApi | null): void {
-  const page = new SettingsPage(host, store, api);
+export function mountSettings(host: HTMLElement, store: Store, api: OfficeApi | null, notifier: Notifier | null = null): void {
+  const page = new SettingsPage(host, store, api, notifier);
   page.start();
 }

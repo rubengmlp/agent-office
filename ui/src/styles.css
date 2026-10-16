@@ -1040,6 +1040,14 @@ textarea {
   padding: 8px 0;
 }
 
+.notify-events {
+  padding-left: 48px;
+}
+
+.notify-actions {
+  padding-top: 8px;
+}
+
 .setting-row + .setting-row {
   border-top: 1px dashed color-mix(in srgb, var(--border) 70%, transparent);
 }
