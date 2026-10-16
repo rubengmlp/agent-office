@@ -27,6 +27,7 @@ export const FIXED_AGENTS: readonly FixedAgent[] = [
 ];
 
 export const SYNC_SCRIPT = join(SCRIPTS_DIR, 'office-sync.sh');
+export const CHAT_SCRIPT = join(SCRIPTS_DIR, 'office-chat.sh');
 
 export function render(template: string, vars: Record<string, string>): string {
   return template.replace(/\{\{(\w+)\}\}/g, (_match, name: string) => {
@@ -83,6 +84,7 @@ export function commonVars(
     maxLessonsPerSession: String(config.memory.maxLessonsPerSession),
     skillsDir: p.skillsDir,
     syncScript: SYNC_SCRIPT,
+    chatScript: CHAT_SCRIPT,
     port: String(config.port),
     floorsList: floorsList(config, profiles),
   };
