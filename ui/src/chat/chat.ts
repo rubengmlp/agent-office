@@ -43,7 +43,14 @@ export function mountChat(host: HTMLElement, store: Store, api: OfficeApi | null
   let signature = '';
   let busy = false;
   let loadingOlder = false;
-  const exhausted = new Set<string>();
+  // Oldest id a channel had when the hub said there was nothing older. Once the store trims those messages
+  // (CHAT_LIMIT) or a new snapshot replaces them, the oldest id grows past it and Load older comes back.
+  const exhaustedAt = new Map<string, number>();
+  const oldestId = (channel: string): number => store.chatOf(channel)[0]?.id ?? 0;
+  const exhausted = (channel: string): boolean => {
+    const at = exhaustedAt.get(channel);
+    return at !== undefined && oldestId(channel) <= at;
+  };
 
   const heading = el('h1', 'chat-heading');
   const intro = el('p', 'muted hint');
@@ -142,7 +149,7 @@ export function mountChat(host: HTMLElement, store: Store, api: OfficeApi | null
   const paintMessages = (channel: string, messages: readonly ChatMessageView[]): void => {
     const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < BOTTOM_PX;
     const children: HTMLElement[] = [];
-    if (api && !exhausted.has(channel)) children.push(older);
+    if (api && !exhausted(channel)) children.push(older);
     if (messages.length === 0) children.push(el('p', 'muted hint chat-empty', t('chat.empty')));
     else children.push(...messages.map((message) => messageRow(message, channel)));
     list.replaceChildren(...children);
@@ -154,7 +161,7 @@ export function mountChat(host: HTMLElement, store: Store, api: OfficeApi | null
     if (active) store.markChatSeen(channel);
     paintChannels(channel);
     const messages = store.chatOf(channel);
-    const next = JSON.stringify([store.lang, channel, messages.length, messages[0]?.id, messages.at(-1)?.id, exhausted.has(channel), loadingOlder]);
+    const next = JSON.stringify([store.lang, channel, messages.length, messages[0]?.id, messages.at(-1)?.id, exhausted(channel), loadingOlder]);
     if (next === signature) return;
     signature = next;
     channelTitle.textContent = channelName(channel);
@@ -193,9 +200,9 @@ export function mountChat(host: HTMLElement, store: Store, api: OfficeApi | null
       store.toast(result.message, 'error');
       return;
     }
-    if (result.data.length < HISTORY_PAGE) exhausted.add(channel);
     const before = list.scrollHeight - list.scrollTop;
     store.prependChat(result.data);
+    if (result.data.length < HISTORY_PAGE) exhaustedAt.set(channel, oldestId(channel));
     signature = '';
     paint();
     list.scrollTop = list.scrollHeight - before;
