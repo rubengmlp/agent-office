@@ -179,6 +179,26 @@ describe('LiftController', () => {
   });
 });
 
+describe('stops on the way', () => {
+  test('riders heading the same way are picked up and dropped off on the way, others wait', () => {
+    const controller = lift('a');
+    controller.request(rider('r1', 'c', 'a'));
+    controller.request(rider('r2', 'b', 'c'));
+    controller.request(rider('r3', 'b', 'a'));
+    const log = run(controller, 20, (event) => {
+      if (event.type === 'boarded') controller.aboard(event.key);
+    });
+    expect(log.events.map((event) => `${event.type}:${event.key}`)).toEqual([
+      'boarded:r2',
+      'arrived:r2',
+      'boarded:r1',
+      'boarded:r3',
+      'arrived:r1',
+      'arrived:r3',
+    ]);
+  });
+});
+
 describe('linkLift', () => {
   test('hands each rider its own events, one at a time', () => {
     const controller = lift('a');

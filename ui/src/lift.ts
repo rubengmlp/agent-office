@@ -24,6 +24,8 @@ export type LiftService<P> = {
 
 type Entering = { rider: LiftRider; since: number };
 
+type Detour = { dir: number; goal: number };
+
 const SAME = 1e-6;
 
 function same(a: number | undefined, b: number | undefined): boolean {
@@ -42,6 +44,7 @@ export class LiftController {
   private inside: LiftRider[] = [];
   private faces: LiftFace[] = [];
   private openFor = 0;
+  private detour: Detour | null = null;
   private pending: LiftEvent[] = [];
 
   constructor(private readonly options: LiftOptions) {}
@@ -144,6 +147,7 @@ export class LiftController {
         if (this.door <= 0) {
           this.state = 'idle';
           this.faces = [];
+          this.detour = null;
           this.travel(0);
         }
         break;
@@ -158,7 +162,14 @@ export class LiftController {
       this.state = 'idle';
       return;
     }
-    if (Math.abs(goal - this.pos) <= step) {
+    const dir = Math.sign(goal - this.pos);
+    const via = dir === 0 ? null : this.stopOnTheWay(dir, goal);
+    if (via !== null && Math.abs(via.at - this.pos) <= step) {
+      this.pos = via.at;
+      this.stop = via.slug;
+      this.detour = { dir, goal };
+      this.state = 'opening';
+    } else if (Math.abs(goal - this.pos) <= step) {
       this.pos = goal;
       this.stop = dest;
       this.state = 'opening';
@@ -167,6 +178,27 @@ export class LiftController {
       this.stop = null;
       this.state = 'moving';
     }
+  }
+
+  private stopOnTheWay(dir: number, goal: number): { slug: string; at: number } | null {
+    const slugs = [
+      ...this.inside.map((rider) => rider.to),
+      ...this.waiting.filter((rider) => this.alongside(rider, dir, goal)).map((rider) => rider.from),
+    ];
+    let best: { slug: string; at: number } | null = null;
+    for (const slug of slugs) {
+      const at = this.stops.get(slug);
+      if (at === undefined || (at - this.pos) * dir <= SAME || (goal - at) * dir <= SAME) continue;
+      if (!best || (at - best.at) * dir < 0) best = { slug, at };
+    }
+    return best;
+  }
+
+  private alongside(rider: LiftRider, dir: number, goal: number): boolean {
+    const from = this.stops.get(rider.from);
+    const to = this.stops.get(rider.to);
+    if (from === undefined || to === undefined || Math.sign(to - from) !== dir) return false;
+    return (goal - to) * dir >= -SAME;
   }
 
   private here(): number | undefined {
@@ -192,8 +224,10 @@ export class LiftController {
       this.serve(rider.toFace);
       return false;
     });
+    const detour = this.detour;
     this.waiting = this.waiting.filter((rider) => {
       if (!same(this.stops.get(rider.from), here)) return true;
+      if (detour && !this.alongside(rider, detour.dir, detour.goal)) return true;
       events.push({ type: 'boarded', key: rider.key });
       this.serve(rider.fromFace);
       this.entering.push({ rider, since: 0 });
