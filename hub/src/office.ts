@@ -17,7 +17,6 @@ import {
   realPath,
   type FloorRegistry,
   type GitRootFn,
-  type ResolvedFloor,
 } from './floors';
 import { decideDocumentGate, decideGate, decideReadCap, decideReviewGate, kilobytes, planByteLimit, type GateDecision, type ReviewGateFacts } from './gate';
 import { GitQueue, runGit, type GitRunner } from './git';
@@ -44,9 +43,7 @@ import {
   NOT_DISCARDABLE,
   NOT_PERMISSIONS,
   NO_TESTS,
-  PERSIST_EVERY_MS,
   READ_CAP_TOOLS,
-  RESTORE_WINDOW_MS,
   RULES_MAX_CHARS,
   SAFE_ID,
   SAFE_NAME,
@@ -89,8 +86,8 @@ import {
 } from './office-texts';
 import { OfficeBus } from './office-bus';
 import { SessionBook } from './session-book';
-import { ownerEdits, prepare, type AlertRow, type Sql } from './office-sql';
-import { isPrivate, publicDetail, publicSummary, publicText, storedPayload, visibleKind } from './privacy';
+import { ownerEdits, prepare, type AlertRow, type SessionRow, type Sql } from './office-sql';
+import { publicDetail, publicSummary, publicText, storedPayload, visibleKind } from './privacy';
 import { detectStack, profileFor, type Profiles } from './profiles';
 import { BRIEF_PREFIX, docRef, parseProtocol, parseWaiting, type DocRef } from './protocol';
 import { PERMISSION_ALLOW, PERMISSION_DENY, QuestionDesk, parseQuestions } from './questions';
@@ -107,7 +104,6 @@ import {
   isVerdictRole,
   noLessons,
   remembers,
-  roleFromName,
   roleIdOf,
   roleKind,
 } from './scope';
@@ -124,7 +120,6 @@ import {
   text,
   type Classified,
   type Matchers,
-  type SpawnCall,
 } from './state-machine';
 import { SyncDesk, type SyncResult } from './sync';
 import { floorText, plural, roleText, roundText, scoreText } from './texts';
@@ -293,6 +288,8 @@ export class Office {
       claudeHome: opts.claudeHome,
       tokens: (key) => this.meter.totals(key),
       flags: (session) => this.sessionFlags(session),
+      restored: (session, row) => this.restoredSession(session, row),
+      floors: this.floors,
     });
     this.desk = new QuestionDesk(
       {
@@ -371,7 +368,7 @@ export class Office {
       },
       onMessage: (message) => this.bus.emit({ type: 'chat', data: message }),
     });
-    this.restoreSessions();
+    this.book.restoreSessions();
     this.docs.refresh();
   }
 
@@ -432,7 +429,7 @@ export class Office {
   private ingestEvent(e: HookEvent, meta: HookMeta): string | null {
     const now = this.now();
     this.dumpRaw(e, now);
-    const session = this.touchSession(e, meta, now);
+    const session = this.book.touchSession(e, meta, now);
     if (e.hook_event_name === 'SessionStart' && (e.source === 'startup' || e.source === 'resume')) this.setBaseline(session);
     const kind = visibleKind(session.floorKind, this.book.sessionInOffice(session, text(e.team_name)));
     const matchers = isDepartmentFloor(session.floorKind) ? NO_TESTS : profileFor(this.profiles, session.stack);
@@ -446,7 +443,7 @@ export class Office {
     }
     this.trackOpenTools(e, c, session, now);
     this.noteTranscripts(e, c.agentKey);
-    const agent = this.touchAgent(e, c, session, now);
+    const agent = this.book.touchAgent(e, c, session, now);
     if (this.book.isRetired(agent)) {
       this.ingestRetired(e, c, agent, session, now);
       return this.readCap(c, agent, session, true, now);
@@ -489,10 +486,10 @@ export class Office {
     if (c.tool && c.event === 'PreToolUse') agent.tool = c.tool;
     if (c.blocked) agent.blockedReason = kind === 'observed' ? { key: 'hub.detail.blocked' } : c.blocked;
     else if (c.unblock) agent.blockedReason = null;
-    if (c.filePath) agent.touchedFloor = this.touchedFloor(c.filePath, agent.floor);
+    if (c.filePath) agent.touchedFloor = this.book.touchedFloor(c.filePath, agent.floor);
     agent.away = false;
     if (NEW_TURN.has(c.event)) agent.file = null;
-    if (c.event === 'PreToolUse' && c.filePath && FILE_TOOLS.has(c.tool ?? '')) agent.file = this.fileLabel(c.filePath, session);
+    if (c.event === 'PreToolUse' && c.filePath && FILE_TOOLS.has(c.tool ?? '')) agent.file = this.book.fileLabel(c.filePath, session);
     const isMain = agent.key === session.sessionId;
     if (c.event === 'UserPromptSubmit' && isMain) {
       const task = taskLine(publicText(text(e.prompt), kind));
@@ -593,7 +590,7 @@ export class Office {
   async ask(e: HookEvent, meta: HookMeta = EMPTY_META, signal?: AbortSignal): Promise<string | null> {
     if (!isHookEvent(e) || e.tool_name !== 'AskUserQuestion') return null;
     const now = this.now();
-    const session = this.touchSession(e, meta, now);
+    const session = this.book.touchSession(e, meta, now);
     if (!this.desk.someoneWatching() || !this.book.sessionInOffice(session, text(e.team_name))) return null;
     const input = record(e.tool_input);
     const questions = parseQuestions(input.questions);
@@ -611,7 +608,7 @@ export class Office {
     if (!isHookEvent(e) || e.hook_event_name !== 'PermissionRequest') return null;
     if (NOT_PERMISSIONS.has(e.tool_name ?? '')) return null;
     const now = this.now();
-    const session = this.touchSession(e, meta, now);
+    const session = this.book.touchSession(e, meta, now);
     if (!this.desk.someoneWatching() || !this.book.sessionInOffice(session, text(e.team_name))) return null;
     const tool = text(e.tool_name) ?? '?';
     const input = record(e.tool_input);
@@ -660,7 +657,7 @@ export class Office {
   gate(e: HookEvent): GateDecision {
     if (!isHookEvent(e)) return { pass: true, reason: 'evento no válido' };
     const now = this.now();
-    const session = this.touchSession(e, EMPTY_META, now);
+    const session = this.book.touchSession(e, EMPTY_META, now);
     const scope = text(e.team_name) ?? session.team ?? teamOfSession(e.session_id);
     const lead = this.book.leadSession(scope) ?? session;
     const leadRole = lead.role ?? this.book.agents.get(lead.sessionId)?.role ?? null;
@@ -704,7 +701,7 @@ export class Office {
     const review = parsed?.kind === 'review' ? parsed : null;
     if (!review && !DONE_PREFIX.test(body)) return { pass: true, reason: 'no es un aviso de fin' };
     const now = this.now();
-    const session = this.touchSession(e, EMPTY_META, now);
+    const session = this.book.touchSession(e, EMPTY_META, now);
     const senderRole = this.book.roleForEvent(e, session);
     if (review) {
       if (isDepartmentFloor(session.floorKind) && isAuthorRole(senderRole)) return this.gateReview(e, review, session, now);
@@ -742,7 +739,7 @@ export class Office {
   guard(e: HookEvent, meta: HookMeta = EMPTY_META): GateDecision {
     if (!isHookEvent(e) || !GUARDED_TOOLS.has(e.tool_name ?? '')) return { pass: true, reason: 'herramienta sin guardia' };
     const now = this.now();
-    const session = this.touchSession(e, meta, now);
+    const session = this.book.touchSession(e, meta, now);
     const role = this.book.roleForEvent(e, session);
     if (!departmentOf(role)) return { pass: true, reason: 'fuera de los departamentos' };
     const decision = guardDecision(
@@ -1103,7 +1100,7 @@ export class Office {
     for (const session of this.book.sessions.values()) {
       const floor = this.floors.resolve(session.cwd);
       if (floor.slug === session.floor && floor.kind === session.floorKind && floor.stack === session.stack) continue;
-      this.applyFloor(session, floor);
+      this.book.applyFloor(session, floor);
       this.book.emitSession(session);
       for (const agent of this.book.agents.values()) {
         if (agent.sessionId !== session.sessionId) continue;
@@ -1151,7 +1148,7 @@ export class Office {
     const to = (text(record(e.tool_input).to) ?? '').split('@')[0] ?? '';
     if (!to.startsWith('lead-')) return { pass: true, reason: 'solo cuenta el encargo a un jefe' };
     const now = this.now();
-    const session = this.touchSession(e, EMPTY_META, now);
+    const session = this.book.touchSession(e, EMPTY_META, now);
     if (this.book.roleForEvent(e, session) !== 'office-director') return { pass: true, reason: 'solo cuenta el encargo del director' };
     const max = this.config.limits.maxBriefsPerOrder;
     const scope = `encargo:${session.sessionId}`;
@@ -1401,6 +1398,16 @@ export class Office {
     if (!this.opts.launch || session.launchHash === null) return false;
     const script = this.launchFile(session);
     return !script || this.fileHash(script) !== session.launchHash;
+  }
+
+  private restoredSession(session: SessionRuntime, row: SessionRow): void {
+    if (this.opts.launch && (row.rules_hash === null || row.launch_hash === null)) {
+      session.rulesHash ??= this.rulesHash(session);
+      const script = this.launchFile(session);
+      session.launchHash ??= script ? this.fileHash(script) : null;
+      this.sql.updateHashes.run(session.rulesHash, session.launchHash, session.sessionId);
+    }
+    session.needsRelaunch = this.relaunchNeeded(session);
   }
 
   private sessionFlags(session: SessionRuntime): { rulesPending: boolean; canRelaunch: boolean } {
@@ -1676,7 +1683,7 @@ export class Office {
   private chatReminder(agent: AgentRuntime, session: SessionRuntime, filePath: string, now: number): string | null {
     if (session.floorKind !== 'managed' || roleKind(agent.role) !== 'dev' || !this.chat.isChannel(agent.floor)) return null;
     const slug = agent.floor;
-    const rel = this.fileLabel(filePath, session);
+    const rel = this.book.fileLabel(filePath, session);
     const from = agent.name ? ` --de ${agent.name}` : '';
     const claims = this.chat.claimsOn(slug, rel);
     const others = claims.filter((claim) => claim.authorKey !== agent.key);
@@ -2081,195 +2088,11 @@ export class Office {
     this.pushActivity({ ts: now, agentKey: agent.key, event: 'Lesson', tool: 'SendMessage', state: null, summary });
   }
 
-  private touchSession(e: HookEvent, meta: HookMeta, now: number): SessionRuntime {
-    const cwd = text(e.cwd);
-    let session = this.book.sessions.get(e.session_id);
-    let changed = false;
-    if (!session) {
-      const floor = this.floors.resolve(cwd);
-      session = {
-        sessionId: e.session_id,
-        cwd,
-        floor: floor.slug,
-        floorKind: floor.kind,
-        stack: floor.stack,
-        role: null,
-        name: null,
-        socket: null,
-        token: null,
-        team: null,
-        startedAt: now,
-        updatedAt: now,
-        endedAt: null,
-        rulesHash: null,
-        launchHash: null,
-        needsRelaunch: false,
-        persistedAt: now,
-        ghost: false,
-        openTools: new Map(),
-      };
-      this.book.sessions.set(e.session_id, session);
-      changed = true;
-    } else if (cwd && cwd !== session.cwd) {
-      session.cwd = cwd;
-      this.applyFloor(session, this.floors.resolve(cwd));
-      changed = true;
-    }
-    for (const field of ['socket', 'token', 'role', 'name'] as const) {
-      const value = field === 'role' ? canonicalRole(meta.role) : meta[field];
-      if (value && value !== session[field]) {
-        session[field] = value;
-        changed = true;
-      }
-    }
-    const mainType = e.agent_id ? null : text(e.agent_type);
-    if (!session.role && isOfficeRole(mainType)) {
-      session.role = canonicalRole(mainType);
-      changed = true;
-    }
-    const title = text(e.session_title);
-    if (title && !session.name) {
-      session.name = title;
-      changed = true;
-    }
-    const team = text(e.team_name);
-    if (team && team !== session.team) {
-      session.team = team;
-      changed = true;
-    }
-    if (session.endedAt !== null && (e.hook_event_name === 'SessionStart' || session.ghost)) {
-      session.endedAt = null;
-      session.ghost = false;
-      changed = true;
-    }
-    session.updatedAt = now;
-    // updated_at decides which sessions come back after a restart: a quiet one is written at most once a minute.
-    if (changed || now - session.persistedAt >= PERSIST_EVERY_MS) {
-      this.book.persistSession(session);
-      if (changed) this.book.emitSession(session);
-    }
-    return session;
-  }
 
-  private applyFloor(session: SessionRuntime, floor: ResolvedFloor): void {
-    session.floor = floor.slug;
-    session.floorKind = floor.kind;
-    session.stack = floor.stack;
-  }
 
-  private touchAgent(e: HookEvent, c: Classified, session: SessionRuntime, now: number): AgentRuntime {
-    let agent = this.book.agents.get(c.agentKey);
-    if (!agent) {
-      agent = {
-        key: c.agentKey,
-        sessionId: e.session_id,
-        parentKey: c.parentKey,
-        name: null,
-        role: null,
-        spawnType: null,
-        teammate: false,
-        team: null,
-        floor: session.floor,
-        floorKind: session.floorKind,
-        touchedFloor: null,
-        state: 'idle',
-        stateSince: now,
-        detail: '',
-        tool: null,
-        blockedReason: null,
-        lastTest: null,
-        startedAt: now,
-        closing: null,
-        updatedAt: now,
-        endedAt: null,
-        sentState: null,
-        retiredAt: null,
-        retiredAwake: false,
-        awaitingAnswer: false,
-        file: null,
-        task: null,
-        away: false,
-        planSlug: null,
-        waiting: null,
-        taskOpenSince: null,
-        stalledSince: null,
-      };
-      this.book.agents.set(agent.key, agent);
-    }
-    const isMain = agent.key === e.session_id;
-    agent.floor = session.floor;
-    agent.floorKind = session.floorKind;
-    if (c.parentKey && !agent.parentKey) agent.parentKey = c.parentKey;
-    if (isMain && session.name) agent.name = session.name;
-    if (c.team) agent.team = c.team;
-    if (c.teammate && (e.hook_event_name === 'TeammateIdle' || e.agent_id)) agent.name = c.teammate;
 
-    if (c.spawnCall?.toolUseId) {
-      remember(this.book.spawnCalls, c.spawnCall.toolUseId, c.spawnCall);
-      if (c.spawnCall.name) remember(this.book.spawnCallsByName, `${e.session_id}:${c.spawnCall.name}`, c.spawnCall);
-    }
-    if (c.spawned) {
-      if (c.spawned.teammate) remember(this.book.teammateIds, c.spawned.agentId, true);
-      const call = this.book.spawnCalls.get(c.spawned.toolUseId);
-      if (call) {
-        this.book.spawnCalls.delete(c.spawned.toolUseId);
-        remember(this.book.spawnedAgents, c.spawned.agentId, call);
-      }
-      const target = this.book.agents.get(c.spawned.agentId);
-      if (target) {
-        if (c.spawned.teammate) target.teammate = true;
-        if (call) this.applySpawn(target, call);
-        this.book.emitAgent(target, now);
-      }
-    }
-    if (this.book.teammateIds.has(agent.key) || e.hook_event_name === 'TeammateIdle') agent.teammate = true;
-    const call = this.book.spawnedAgents.get(agent.key);
-    if (call) this.applySpawn(agent, call);
-    if (!isMain && !agent.spawnType) this.resolveSpawnType(e, c, agent, session);
-    const wasOffice = isOfficeRole(agent.role);
-    agent.role = canonicalRole(agent.spawnType ?? c.role ?? agent.role ?? (isMain ? session.role : null));
-    if (isMain && !wasOffice && isOfficeRole(agent.role)) this.book.emitSession(session);
 
-    if (agent.team && !agent.parentKey) {
-      const lead = this.book.leadSession(agent.team);
-      if (lead && lead.sessionId !== agent.key) agent.parentKey = lead.sessionId;
-    }
-    return agent;
-  }
 
-  private resolveSpawnType(e: HookEvent, c: Classified, agent: AgentRuntime, session: SessionRuntime): void {
-    if (isOfficeRole(c.role)) {
-      agent.spawnType = canonicalRole(c.role);
-      return;
-    }
-    const candidate = agent.name ?? c.role;
-    if (!candidate) return;
-    const team = agent.team ?? session.team ?? teamOfSession(e.session_id);
-    const type =
-      this.book.teamMemberType(team, candidate) ??
-      this.book.spawnCallsByName.get(`${e.session_id}:${candidate}`)?.subagentType ??
-      roleFromName(candidate, session.floor, session.floorKind);
-    if (!type) return;
-    agent.spawnType = canonicalRole(type);
-    if (!agent.name && candidate !== type) agent.name = candidate;
-  }
-
-  private applySpawn(agent: AgentRuntime, call: SpawnCall): void {
-    if (!agent.name && call.name) agent.name = call.name;
-    if (!agent.task) agent.task = taskLine(publicText(call.description, this.book.privacyKindOf(agent)));
-    if (call.subagentType) {
-      agent.spawnType = canonicalRole(call.subagentType);
-      agent.role = agent.spawnType;
-    }
-  }
-
-  private touchedFloor(filePath: string, ownFloor: string): string | null {
-    const file = realPath(filePath);
-    for (const [slug, floor] of Object.entries(this.config.floors)) {
-      if (slug !== ownFloor && isInside(file, realPath(floor.path))) return slug;
-    }
-    return null;
-  }
 
   private recordTask(e: HookEvent, c: Classified, agent: AgentRuntime, session: SessionRuntime, now: number): void {
     const task = c.task;
@@ -2319,15 +2142,6 @@ export class Office {
     return !LEAD_BUSY.has(this.book.view(lead, now).state);
   }
 
-  private fileLabel(filePath: string, session: SessionRuntime): string {
-    const name = basename(filePath);
-    if (isPrivate(this.book.privacyKind(session))) return name;
-    const root = this.floors.resolve(session.cwd).path;
-    if (!root) return name;
-    const file = realPath(resolve(session.cwd ?? root, filePath));
-    const base = realPath(root);
-    return file !== base && isInside(file, base) ? relative(base, file) : name;
-  }
 
   private answerReceived(agent: AgentRuntime, now: number): void {
     agent.awaitingAnswer = false;
@@ -2433,79 +2247,6 @@ export class Office {
 
 
 
-  private restoreSessions(): void {
-    for (const row of this.sql.openSessions.all(this.now() - RESTORE_WINDOW_MS)) {
-      if (!row.socket || !existsSync(row.socket)) {
-        this.sql.endSession.run(this.now(), row.session_id);
-        continue;
-      }
-      const floor = this.floors.resolve(row.cwd);
-      const now = this.now();
-      this.book.agents.set(row.session_id, {
-        key: row.session_id,
-        sessionId: row.session_id,
-        parentKey: null,
-        name: row.name,
-        role: canonicalRole(row.role),
-        spawnType: null,
-        teammate: false,
-        team: row.team,
-        floor: floor.slug,
-        floorKind: floor.kind,
-        touchedFloor: null,
-        state: 'idle',
-        stateSince: now,
-        detail: { key: 'hub.detail.waiting' },
-        tool: null,
-        blockedReason: null,
-        lastTest: null,
-        startedAt: row.started_at,
-        closing: null,
-        updatedAt: now,
-        endedAt: null,
-        sentState: null,
-        retiredAt: null,
-        retiredAwake: false,
-        awaitingAnswer: false,
-        file: null,
-        task: null,
-        away: false,
-        planSlug: null,
-        waiting: null,
-        taskOpenSince: row.task_open_since,
-        stalledSince: null,
-      });
-      const session: SessionRuntime = {
-        sessionId: row.session_id,
-        cwd: row.cwd,
-        floor: floor.slug,
-        floorKind: floor.kind,
-        stack: floor.stack,
-        role: canonicalRole(row.role),
-        name: row.name,
-        socket: row.socket,
-        token: row.token,
-        team: row.team,
-        startedAt: row.started_at,
-        updatedAt: row.updated_at,
-        endedAt: null,
-        rulesHash: row.rules_hash,
-        launchHash: row.launch_hash,
-        needsRelaunch: false,
-        persistedAt: row.updated_at,
-        ghost: false,
-        openTools: new Map(),
-      };
-      this.book.sessions.set(row.session_id, session);
-      if (this.opts.launch && (row.rules_hash === null || row.launch_hash === null)) {
-        session.rulesHash ??= this.rulesHash(session);
-        const script = this.launchFile(session);
-        session.launchHash ??= script ? this.fileHash(script) : null;
-        this.sql.updateHashes.run(session.rulesHash, session.launchHash, session.sessionId);
-      }
-      session.needsRelaunch = this.relaunchNeeded(session);
-    }
-  }
 
   private noteTranscripts(e: HookEvent, agentKey: string): void {
     this.meter.noteSession(e.session_id, e.transcript_path);

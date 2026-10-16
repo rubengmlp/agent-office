@@ -1,7 +1,7 @@
-import type { Database } from 'bun:sqlite';
 import { relative } from 'node:path';
 import { realPath } from './floors';
 import type { OfficeConfig } from './types';
+import type { Database } from 'bun:sqlite';
 
 const LISTED_EDITS = 20;
 const GIT_ROOT_LABEL = '. (git)';

@@ -1,13 +1,15 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { RELAUNCH_RESUMES } from './office-sh';
+import { basename, join, relative, resolve } from 'node:path';
+import { FloorResolver, isInside, realPath, type ResolvedFloor } from './floors';
 import type { OfficeBus } from './office-bus';
-import { TEAM_CACHE_MS, teamOfSession, type AgentRuntime, type SessionRuntime } from './office-state';
-import type { Sql } from './office-sql';
-import { inOfficeScope, canonicalRole, isOfficeRole, isVerdictRole, roleFromName, roleIdOf, roleKind } from './scope';
-import { visibleKind } from './privacy';
-import { idText, record, text, type SpawnCall } from './state-machine';
-import type { AgentView, FloorKind, HookEvent, OfficeConfig, SessionView } from './types';
+import { RELAUNCH_RESUMES } from './office-sh';
+import type { SessionRow, Sql } from './office-sql';
+import { PERSIST_EVERY_MS, RESTORE_WINDOW_MS, TEAM_CACHE_MS, remember, teamOfSession, type AgentRuntime, type SessionRuntime } from './office-state';
+import { taskLine } from './office-texts';
+import { isPrivate, publicText, visibleKind } from './privacy';
+import { canonicalRole, inOfficeScope, isOfficeRole, isVerdictRole, roleFromName, roleIdOf, roleKind } from './scope';
+import { idText, record, text, type Classified, type SpawnCall } from './state-machine';
+import type { AgentView, FloorKind, HookEvent, HookMeta, OfficeConfig, SessionView } from './types';
 
 export type SessionBookOpts = {
   sql: Sql;
@@ -17,15 +19,17 @@ export type SessionBookOpts = {
   claudeHome: string;
   tokens: (agentKey: string) => AgentView['tokens'];
   flags: (session: SessionRuntime) => { rulesPending: boolean; canRelaunch: boolean };
+  restored: (session: SessionRuntime, row: SessionRow) => void;
+  floors: FloorResolver;
 };
 
 export class SessionBook {
   readonly agents = new Map<string, AgentRuntime>();
   readonly sessions = new Map<string, SessionRuntime>();
-  readonly spawnCalls = new Map<string, SpawnCall>();
-  readonly spawnCallsByName = new Map<string, SpawnCall>();
-  readonly spawnedAgents = new Map<string, SpawnCall>();
-  readonly teammateIds = new Map<string, true>();
+  private readonly spawnCalls = new Map<string, SpawnCall>();
+  private readonly spawnCallsByName = new Map<string, SpawnCall>();
+  private readonly spawnedAgents = new Map<string, SpawnCall>();
+  private readonly teammateIds = new Map<string, true>();
   private readonly teamCache = new Map<string, { at: number; members: Record<string, unknown>[] }>();
   private readonly sessionFlags = new Map<string, string>();
 
@@ -156,7 +160,7 @@ export class SessionBook {
       .filter((id): id is string => id !== null);
   }
 
-  teamMemberType(team: string, name: string): string | null {
+  private teamMemberType(team: string, name: string): string | null {
     const member = this.teamMembers(team).find((m) => m.name === name);
     const type = member ? (text(member.agentType) ?? text(member.agent_type)) : null;
     return type && type !== 'team-lead' ? type : null;
@@ -245,6 +249,274 @@ export class SessionBook {
     const view = this.view(agent, now);
     agent.sentState = view.state;
     this.opts.bus.emit({ type: 'agent', data: view });
+  }
+
+  touchSession(e: HookEvent, meta: HookMeta, now: number): SessionRuntime {
+    const cwd = text(e.cwd);
+    let session = this.sessions.get(e.session_id);
+    let changed = false;
+    if (!session) {
+      const floor = this.opts.floors.resolve(cwd);
+      session = {
+        sessionId: e.session_id,
+        cwd,
+        floor: floor.slug,
+        floorKind: floor.kind,
+        stack: floor.stack,
+        role: null,
+        name: null,
+        socket: null,
+        token: null,
+        team: null,
+        startedAt: now,
+        updatedAt: now,
+        endedAt: null,
+        rulesHash: null,
+        launchHash: null,
+        needsRelaunch: false,
+        persistedAt: now,
+        ghost: false,
+        openTools: new Map(),
+      };
+      this.sessions.set(e.session_id, session);
+      changed = true;
+    } else if (cwd && cwd !== session.cwd) {
+      session.cwd = cwd;
+      this.applyFloor(session, this.opts.floors.resolve(cwd));
+      changed = true;
+    }
+    for (const field of ['socket', 'token', 'role', 'name'] as const) {
+      const value = field === 'role' ? canonicalRole(meta.role) : meta[field];
+      if (value && value !== session[field]) {
+        session[field] = value;
+        changed = true;
+      }
+    }
+    const mainType = e.agent_id ? null : text(e.agent_type);
+    if (!session.role && isOfficeRole(mainType)) {
+      session.role = canonicalRole(mainType);
+      changed = true;
+    }
+    const title = text(e.session_title);
+    if (title && !session.name) {
+      session.name = title;
+      changed = true;
+    }
+    const team = text(e.team_name);
+    if (team && team !== session.team) {
+      session.team = team;
+      changed = true;
+    }
+    if (session.endedAt !== null && (e.hook_event_name === 'SessionStart' || session.ghost)) {
+      session.endedAt = null;
+      session.ghost = false;
+      changed = true;
+    }
+    session.updatedAt = now;
+    // updated_at decides which sessions come back after a restart: a quiet one is written at most once a minute.
+    if (changed || now - session.persistedAt >= PERSIST_EVERY_MS) {
+      this.persistSession(session);
+      if (changed) this.emitSession(session);
+    }
+    return session;
+  }
+
+  applyFloor(session: SessionRuntime, floor: ResolvedFloor): void {
+    session.floor = floor.slug;
+    session.floorKind = floor.kind;
+    session.stack = floor.stack;
+  }
+
+  touchAgent(e: HookEvent, c: Classified, session: SessionRuntime, now: number): AgentRuntime {
+    let agent = this.agents.get(c.agentKey);
+    if (!agent) {
+      agent = {
+        key: c.agentKey,
+        sessionId: e.session_id,
+        parentKey: c.parentKey,
+        name: null,
+        role: null,
+        spawnType: null,
+        teammate: false,
+        team: null,
+        floor: session.floor,
+        floorKind: session.floorKind,
+        touchedFloor: null,
+        state: 'idle',
+        stateSince: now,
+        detail: '',
+        tool: null,
+        blockedReason: null,
+        lastTest: null,
+        startedAt: now,
+        closing: null,
+        updatedAt: now,
+        endedAt: null,
+        sentState: null,
+        retiredAt: null,
+        retiredAwake: false,
+        awaitingAnswer: false,
+        file: null,
+        task: null,
+        away: false,
+        planSlug: null,
+        waiting: null,
+        taskOpenSince: null,
+        stalledSince: null,
+      };
+      this.agents.set(agent.key, agent);
+    }
+    const isMain = agent.key === e.session_id;
+    agent.floor = session.floor;
+    agent.floorKind = session.floorKind;
+    if (c.parentKey && !agent.parentKey) agent.parentKey = c.parentKey;
+    if (isMain && session.name) agent.name = session.name;
+    if (c.team) agent.team = c.team;
+    if (c.teammate && (e.hook_event_name === 'TeammateIdle' || e.agent_id)) agent.name = c.teammate;
+
+    if (c.spawnCall?.toolUseId) {
+      remember(this.spawnCalls, c.spawnCall.toolUseId, c.spawnCall);
+      if (c.spawnCall.name) remember(this.spawnCallsByName, `${e.session_id}:${c.spawnCall.name}`, c.spawnCall);
+    }
+    if (c.spawned) {
+      if (c.spawned.teammate) remember(this.teammateIds, c.spawned.agentId, true);
+      const call = this.spawnCalls.get(c.spawned.toolUseId);
+      if (call) {
+        this.spawnCalls.delete(c.spawned.toolUseId);
+        remember(this.spawnedAgents, c.spawned.agentId, call);
+      }
+      const target = this.agents.get(c.spawned.agentId);
+      if (target) {
+        if (c.spawned.teammate) target.teammate = true;
+        if (call) this.applySpawn(target, call);
+        this.emitAgent(target, now);
+      }
+    }
+    if (this.teammateIds.has(agent.key) || e.hook_event_name === 'TeammateIdle') agent.teammate = true;
+    const call = this.spawnedAgents.get(agent.key);
+    if (call) this.applySpawn(agent, call);
+    if (!isMain && !agent.spawnType) this.resolveSpawnType(e, c, agent, session);
+    const wasOffice = isOfficeRole(agent.role);
+    agent.role = canonicalRole(agent.spawnType ?? c.role ?? agent.role ?? (isMain ? session.role : null));
+    if (isMain && !wasOffice && isOfficeRole(agent.role)) this.emitSession(session);
+
+    if (agent.team && !agent.parentKey) {
+      const lead = this.leadSession(agent.team);
+      if (lead && lead.sessionId !== agent.key) agent.parentKey = lead.sessionId;
+    }
+    return agent;
+  }
+
+  private resolveSpawnType(e: HookEvent, c: Classified, agent: AgentRuntime, session: SessionRuntime): void {
+    if (isOfficeRole(c.role)) {
+      agent.spawnType = canonicalRole(c.role);
+      return;
+    }
+    const candidate = agent.name ?? c.role;
+    if (!candidate) return;
+    const team = agent.team ?? session.team ?? teamOfSession(e.session_id);
+    const type =
+      this.teamMemberType(team, candidate) ??
+      this.spawnCallsByName.get(`${e.session_id}:${candidate}`)?.subagentType ??
+      roleFromName(candidate, session.floor, session.floorKind);
+    if (!type) return;
+    agent.spawnType = canonicalRole(type);
+    if (!agent.name && candidate !== type) agent.name = candidate;
+  }
+
+  private applySpawn(agent: AgentRuntime, call: SpawnCall): void {
+    if (!agent.name && call.name) agent.name = call.name;
+    if (!agent.task) agent.task = taskLine(publicText(call.description, this.privacyKindOf(agent)));
+    if (call.subagentType) {
+      agent.spawnType = canonicalRole(call.subagentType);
+      agent.role = agent.spawnType;
+    }
+  }
+
+  touchedFloor(filePath: string, ownFloor: string): string | null {
+    const file = realPath(filePath);
+    for (const [slug, floor] of Object.entries(this.opts.config().floors)) {
+      if (slug !== ownFloor && isInside(file, realPath(floor.path))) return slug;
+    }
+    return null;
+  }
+
+  fileLabel(filePath: string, session: SessionRuntime): string {
+    const name = basename(filePath);
+    if (isPrivate(this.privacyKind(session))) return name;
+    const root = this.opts.floors.resolve(session.cwd).path;
+    if (!root) return name;
+    const file = realPath(resolve(session.cwd ?? root, filePath));
+    const base = realPath(root);
+    return file !== base && isInside(file, base) ? relative(base, file) : name;
+  }
+
+  restoreSessions(): void {
+    for (const row of this.opts.sql.openSessions.all(this.opts.now() - RESTORE_WINDOW_MS)) {
+      if (!row.socket || !existsSync(row.socket)) {
+        this.opts.sql.endSession.run(this.opts.now(), row.session_id);
+        continue;
+      }
+      const floor = this.opts.floors.resolve(row.cwd);
+      const now = this.opts.now();
+      this.agents.set(row.session_id, {
+        key: row.session_id,
+        sessionId: row.session_id,
+        parentKey: null,
+        name: row.name,
+        role: canonicalRole(row.role),
+        spawnType: null,
+        teammate: false,
+        team: row.team,
+        floor: floor.slug,
+        floorKind: floor.kind,
+        touchedFloor: null,
+        state: 'idle',
+        stateSince: now,
+        detail: { key: 'hub.detail.waiting' },
+        tool: null,
+        blockedReason: null,
+        lastTest: null,
+        startedAt: row.started_at,
+        closing: null,
+        updatedAt: now,
+        endedAt: null,
+        sentState: null,
+        retiredAt: null,
+        retiredAwake: false,
+        awaitingAnswer: false,
+        file: null,
+        task: null,
+        away: false,
+        planSlug: null,
+        waiting: null,
+        taskOpenSince: row.task_open_since,
+        stalledSince: null,
+      });
+      const session: SessionRuntime = {
+        sessionId: row.session_id,
+        cwd: row.cwd,
+        floor: floor.slug,
+        floorKind: floor.kind,
+        stack: floor.stack,
+        role: canonicalRole(row.role),
+        name: row.name,
+        socket: row.socket,
+        token: row.token,
+        team: row.team,
+        startedAt: row.started_at,
+        updatedAt: row.updated_at,
+        endedAt: null,
+        rulesHash: row.rules_hash,
+        launchHash: row.launch_hash,
+        needsRelaunch: false,
+        persistedAt: row.updated_at,
+        ghost: false,
+        openTools: new Map(),
+      };
+      this.sessions.set(row.session_id, session);
+      this.opts.restored(session, row);
+    }
   }
 
   refreshFlags(session: SessionRuntime): void {

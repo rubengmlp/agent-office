@@ -1,17 +1,5 @@
-import { record, EDIT_TOOLS, type Matchers } from './state-machine';
-import type {
-  AgentState,
-  DocumentStatus,
-  DocumentView,
-  FloorKind,
-  HookEvent,
-  HookMeta,
-  HubText,
-  LessonView,
-  PlanDecision,
-  Stack,
-  TestResult,
-} from './types';
+import { EDIT_TOOLS, record, type Matchers } from './state-machine';
+import type { AgentState, DocumentStatus, DocumentView, FloorKind, HookEvent, HookMeta, HubText, LessonView, PlanDecision, Stack, TestResult } from './types';
 
 export type AgentRuntime = {
   key: string;
