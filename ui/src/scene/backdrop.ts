@@ -1,6 +1,6 @@
-import { BackSide, CanvasTexture, Color, Group, Mesh, MeshBasicMaterial, SRGBColorSpace, SphereGeometry, type Vector3 } from 'three';
-import { Batcher, disposeMeshes } from './batch';
-import { BLOCKS_FAR_K, BLOCKS_NEAR_K, SKY_RADIUS } from './constants';
+import { BackSide, CanvasTexture, Color, Group, Mesh, MeshBasicMaterial, SRGBColorSpace, SphereGeometry, type BufferGeometry, type MeshStandardMaterial, type Vector3 } from 'three';
+import { UNIT_BOX } from './batch';
+import { BLOCKS_FAR_K, BLOCKS_GAP, BLOCKS_HAZE, BLOCKS_RING, SKY_RADIUS } from './constants';
 import { gardenKit, prng } from './materials';
 
 type SkyColors = { zenith: string; horizon: string; ground: string };
@@ -16,8 +16,9 @@ export class Backdrop {
   private readonly texture: CanvasTexture;
   private readonly material: MeshBasicMaterial;
   private readonly dome: Mesh;
-  private ring: Mesh[] = [];
+  private ring: Group[] = [];
   private far = 0;
+  private radius = 0;
   private dark = false;
 
   constructor() {
@@ -39,23 +40,25 @@ export class Backdrop {
 
   follow(eye: Vector3): void {
     this.dome.position.copy(eye);
+    for (const block of this.ring) block.visible = block.position.x * eye.x + block.position.z * eye.z < 0;
   }
 
   retheme(dark: boolean): void {
     this.dark = dark;
     this.paint();
-    this.build();
+    const horizon = this.horizon;
+    for (const block of gardenKit().blocks) block.color.lerp(horizon, BLOCKS_HAZE);
   }
 
-  setFar(far: number): void {
-    if (Math.abs(far - this.far) < 0.5) return;
+  setFar(far: number, radius: number): void {
+    if (Math.abs(far - this.far) < 0.5 && Math.abs(radius - this.radius) < 0.5) return;
     this.far = far;
+    this.radius = radius;
     this.build();
   }
 
   dispose(): void {
-    disposeMeshes(this.ring);
-    this.ring = [];
+    this.clearRing();
     this.dome.geometry.dispose();
     this.material.dispose();
     this.texture.dispose();
@@ -80,31 +83,36 @@ export class Backdrop {
     this.texture.needsUpdate = true;
   }
 
-  private build(): void {
-    disposeMeshes(this.ring);
+  private clearRing(): void {
+    for (const block of this.ring) block.removeFromParent();
     this.ring = [];
+  }
+
+  private build(): void {
+    this.clearRing();
     if (this.far <= 0) return;
     const kit = gardenKit();
     const random = prng(97);
-    const near = this.far * BLOCKS_NEAR_K;
-    const span = this.far * (BLOCKS_FAR_K - BLOCKS_NEAR_K);
-    const b = new Batcher();
+    const near = this.radius + BLOCKS_GAP;
+    const span = Math.max(10, Math.min(BLOCKS_RING, this.far * BLOCKS_FAR_K - near));
+    const part = (parent: Group, geometry: BufferGeometry, material: MeshStandardMaterial, w: number, h: number, d: number, x: number, y: number, z: number): void => {
+      const mesh = new Mesh(geometry, material);
+      mesh.scale.set(w, h, d);
+      mesh.position.set(x, y, z);
+      mesh.matrixAutoUpdate = false;
+      mesh.updateMatrix();
+      parent.add(mesh);
+    };
     for (let index = 0; index < BLOCKS; index += 1) {
       const angle = ((index + random() * 0.6) / BLOCKS) * Math.PI * 2;
       const distance = near + random() * span;
-      const x = Math.cos(angle) * distance;
-      const z = Math.sin(angle) * distance;
+      const block = new Group();
+      block.position.set(Math.cos(angle) * distance, 0, Math.sin(angle) * distance);
+      block.rotation.y = -angle;
       const height = 6 + random() * 18;
-      const width = 6 + random() * 10;
-      b.box(kit.blocks[index % kit.blocks.length], width, height, 5 + random() * 8, x, height / 2, z, { ry: angle, cast: false, receive: false });
-      if (index % 3 === 0) {
-        const tx = Math.cos(angle + 0.05) * (distance - 8);
-        const tz = Math.sin(angle + 0.05) * (distance - 8);
-        b.cylinder(kit.trunk, 0.4, 3, tx, 1.5, tz, { segments: 6, cast: false, receive: false });
-        b.sphere(kit.leafDark, 2.4, tx, 4.2, tz, { cast: false, receive: false });
-        b.sphere(kit.leaf, 1.7, tx + 0.8, 5.4, tz, { cast: false, receive: false });
-      }
+      part(block, UNIT_BOX, kit.blocks[index % kit.blocks.length], 6 + random() * 10, height, 5 + random() * 8, 0, height / 2, 0);
+      this.root.add(block);
+      this.ring.push(block);
     }
-    this.ring = b.build(this.root);
   }
 }
