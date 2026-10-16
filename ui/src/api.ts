@@ -1,4 +1,5 @@
 import { t } from './i18n';
+import { errorText } from './i18n/hub';
 import type {
   AnswerRequest,
   DocumentContent,
@@ -35,7 +36,9 @@ async function readError(response: Response): Promise<string> {
       const record = parsed as Record<string, unknown>;
       for (const field of ['error', 'message']) {
         const value = record[field];
-        if (typeof value === 'string' && value) return value;
+        if (value === undefined || value === '') continue;
+        const text = errorText(t, value);
+        if (text) return text;
       }
     }
   } catch {

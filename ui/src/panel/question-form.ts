@@ -2,6 +2,7 @@ import type { Actions } from '../actions';
 import type { ApiResult } from '../api';
 import { button, el } from '../dom';
 import { t } from '../i18n';
+import { hubText } from '../i18n/hub';
 import type { Store } from '../store';
 import { countdown } from '../time';
 import type { AskQuestion, QuestionView } from '../types';
@@ -38,6 +39,7 @@ class QuestionForm {
   private readonly countdownLabel = el('span', 'countdown');
   private readonly title = el('h3', 'section-title');
   private readonly permissionHint = el('p', 'muted permission-hint');
+  private readonly prompt = el('p', 'ask-text');
   private readonly otherTexts: HTMLInputElement[] = [];
   private lastNow: number | null = null;
   private busy = false;
@@ -61,7 +63,7 @@ class QuestionForm {
           'section',
           'question-card permission-card',
           el('div', 'question-title', this.title, this.countdownLabel),
-          ask ? el('p', 'ask-text', ask.question) : null,
+          ask ? this.prompt : null,
           question.detail ? el('pre', 'permission-detail', question.detail) : null,
           el('div', 'question-actions', this.allow, this.deny, this.release),
           this.permissionHint,
@@ -81,6 +83,8 @@ class QuestionForm {
   relabel(): void {
     this.title.textContent = this.question.kind === 'permission' ? t('question.permissionTitle') : t('question.title');
     this.permissionHint.textContent = t('question.permissionHint');
+    const ask = this.question.questions[0];
+    this.prompt.textContent = this.question.prompt ? hubText(this.question.prompt) : (ask?.question ?? '');
     this.release.textContent = t('question.release');
     this.allow.textContent = t('question.allow');
     this.deny.textContent = t('question.deny');

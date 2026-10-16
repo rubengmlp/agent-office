@@ -199,7 +199,6 @@ export const es = {
   'settings.floors.deleteLabel': 'Borrar la planta {slug}',
   'settings.floors.deleting': 'Borrando…',
   'settings.floors.empty': 'No hay plantas en config.json.',
-  'settings.floors.added': 'Planta {slug} añadida. Arranca su jefe con bun run office.',
   'settings.floors.removed': 'Planta {slug} borrada.',
   'settings.floors.confirm':
     'Se borrará la planta {slug}: sus agentes, su lanzador, su configuración y, de la base de datos de la oficina, sus eventos, mensajes, lecciones (también las tuyas) e informes, además de sus fotos en Redacción. El repositorio no se toca.',

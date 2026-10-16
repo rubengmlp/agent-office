@@ -1,5 +1,6 @@
 import { el, setStateColor } from '../dom';
 import { t } from '../i18n';
+import { hubText } from '../i18n/hub';
 import { agentName, STATE_COLORS } from '../labels';
 import type { Store } from '../store';
 import { clockTime } from '../time';
@@ -33,7 +34,7 @@ function activityItem(entry: ActivityView): HTMLElement {
   const dot = el('span', 'act-dot');
   if (entry.state) setStateColor(dot, STATE_COLORS[entry.state]);
   else dot.classList.add('act-dot-empty');
-  return el('li', 'act', el('time', 'muted', clockTime(entry.ts)), dot, el('span', 'act-text', entry.summary));
+  return el('li', 'act', el('time', 'muted', clockTime(entry.ts)), dot, el('span', 'act-text', hubText(entry.summary)));
 }
 
 function section(title: string, items: readonly HTMLElement[], empty: string): HTMLElement {

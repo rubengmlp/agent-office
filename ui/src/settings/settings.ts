@@ -1,6 +1,7 @@
 import type { OfficeApi } from '../api';
 import { button, el, type Child } from '../dom';
 import { plural, t } from '../i18n';
+import { hubTexts } from '../i18n/hub';
 import { roleHint, stackLabel } from '../labels';
 import type { Notifier } from '../notify';
 import type { Store } from '../store';
@@ -459,9 +460,9 @@ class SettingsPage {
     if (!response.ok) {
       this.outcome = { text: response.message, kind: 'error' };
     } else if (!response.data.ok) {
-      this.outcome = { text: response.data.error, kind: 'error' };
+      this.outcome = { text: hubTexts(response.data.error), kind: 'error' };
     } else {
-      this.outcome = { text: outcomeText(response.data.note, response.data.regenerated), kind: 'ok' };
+      this.outcome = { text: outcomeText(hubTexts(response.data.note), response.data.regenerated), kind: 'ok' };
       this.baseline = applyUpdate(this.baseline ?? baseline, update);
       this.draft = draftFrom(this.baseline);
       void this.load();

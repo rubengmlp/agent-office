@@ -1,9 +1,10 @@
 import type { OfficeApi } from '../api';
 import { button, el, setStateColor } from '../dom';
 import { currentLang, plural, t, type MessageKey } from '../i18n';
+import { hubText } from '../i18n/hub';
 import { DOCUMENT_STATUS_COLORS, documentKindFor, documentStatusText } from '../labels';
 import type { Store } from '../store';
-import type { DocumentAhead, DocumentBase, DocumentStatus, DocumentView } from '../types';
+import type { DocumentAhead, DocumentBase, DocumentStatus, DocumentView, HubText } from '../types';
 import { renderMarkdown } from './markdown';
 
 const SHORT_SHA = 7;
@@ -114,7 +115,7 @@ class DocumentViewer {
   private readonly previousFocus: Element | null = document.activeElement;
   private stopWatching: () => void = () => {};
   private stopRelabel: () => void = () => {};
-  private notice: MessageKey | null = null;
+  private notice: { key: MessageKey } | { hub: HubText } | null = null;
   private ticket = 0;
 
   constructor(
@@ -185,9 +186,12 @@ class DocumentViewer {
     this.renderHead();
   }
 
-  private showNotice(key: MessageKey): void {
-    this.notice = key;
-    this.body.replaceChildren(el('p', 'muted hint', t(key)));
+  // Notices instead of the document (own or from the hub) are kept so a language change can repaint them.
+  private showNotice(notice: { key: MessageKey } | { hub: HubText }): void {
+    this.notice = notice;
+    this.body.replaceChildren(
+      'key' in notice ? el('p', 'muted hint', t(notice.key)) : el('p', 'doc-notice hint', hubText(notice.hub)),
+    );
   }
 
   private renderHead(): void {
@@ -202,12 +206,16 @@ class DocumentViewer {
     const api = viewerApi;
     const mine = ++this.ticket;
     if (api === null) {
-      this.showNotice('deliverables.noHub');
+      this.showNotice({ key: 'deliverables.noHub' });
       return;
     }
-    if (this.body.childElementCount === 0) this.showNotice('deliverables.loading');
+    if (this.body.childElementCount === 0) this.showNotice({ key: 'deliverables.loading' });
     const result = await api.documentContent(this.doc.path);
     if (mine !== this.ticket) return;
+    if (result.ok && result.data.notice) {
+      this.showNotice({ hub: result.data.notice });
+      return;
+    }
     const scroll = this.body.scrollTop;
     const content = result.ok ? renderMarkdown(result.data.markdown) : el('p', 'doc-error hint', result.message);
     this.notice = null;

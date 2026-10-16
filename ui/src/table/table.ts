@@ -1,6 +1,7 @@
 import { stateBadge } from '../badge';
 import { button, el, setStateColor } from '../dom';
 import { plural, t, type MessageKey } from '../i18n';
+import { hubText } from '../i18n/hub';
 import {
   agentName,
   alertLevelHint,
@@ -167,8 +168,9 @@ function agentRow(store: Store, row: Row, now: number): HTMLTableRowElement {
   const stateCell = el('td', 'col-state', stateBadge(state));
   if (store.questionFor(agent.key)) stateCell.append(askFlag());
 
-  const detailCell = el('td', 'col-detail', agent.tool ? el('code', 'tool-tag', agent.tool) : null, agent.detail);
-  detailCell.title = agent.detail;
+  const detail = hubText(agent.detail);
+  const detailCell = el('td', 'col-detail', agent.tool ? el('code', 'tool-tag', agent.tool) : null, detail);
+  detailCell.title = detail;
 
   tr.append(
     nameCell,

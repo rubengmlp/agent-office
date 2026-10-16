@@ -1,13 +1,14 @@
 import type { OfficeApi } from '../api';
 import { button, el } from '../dom';
 import { t, type MessageKey, type Params } from '../i18n';
+import { hubText } from '../i18n/hub';
 import { floorKindLabel, stackLabel } from '../labels';
 import type { Store } from '../store';
-import type { DocumentStatus, SettingsView } from '../types';
+import type { DocumentStatus, HubText, SettingsView } from '../types';
 
 type ProjectFloor = SettingsView['floors'][number];
 
-type Outcome = { kind: 'ok' | 'error'; key: MessageKey; params?: Params } | { kind: 'error'; text: string };
+type Outcome = { kind: 'ok' | 'error'; key: MessageKey; params?: Params } | { kind: 'ok'; hub: HubText } | { kind: 'error'; text: string };
 
 const CLOSED: ReadonlySet<DocumentStatus> = new Set<DocumentStatus>(['cerrado', 'descartado']);
 
@@ -44,7 +45,7 @@ export function mountProjects(host: HTMLElement, store: Store, api: OfficeApi | 
       .map((doc) => doc.title);
 
   const showStatus = (): void => {
-    status.textContent = outcome === null ? '' : 'text' in outcome ? outcome.text : t(outcome.key, outcome.params);
+    status.textContent = outcome === null ? '' : 'text' in outcome ? outcome.text : 'hub' in outcome ? hubText(outcome.hub) : t(outcome.key, outcome.params);
     status.className = outcome === null ? 'settings-status' : `settings-status ${outcome.kind}`;
   };
 
@@ -116,7 +117,7 @@ export function mountProjects(host: HTMLElement, store: Store, api: OfficeApi | 
       if (!result.ok) return { kind: 'error', text: result.message };
       pathInput.value = '';
       slugInput.value = '';
-      return { kind: 'ok', key: 'settings.floors.added', params: { slug: result.data.slug } };
+      return { kind: 'ok', hub: result.data.note };
     }, null);
   };
 

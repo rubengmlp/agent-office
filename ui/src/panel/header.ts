@@ -1,6 +1,7 @@
 import { stateBadge } from '../badge';
 import { el } from '../dom';
 import { t } from '../i18n';
+import { hubText } from '../i18n/hub';
 import { agentName, floorLabel, roleLabel } from '../labels';
 import type { Store } from '../store';
 import { relativeTime } from '../time';
@@ -32,7 +33,7 @@ export function mountHeader(host: HTMLElement, store: Store): void {
         el('span', 'chip', floor ? floorLabel(floor) : agent.floor),
         el('span', 'muted', since),
       ),
-      ...(agent.detail ? [el('p', 'panel-detail', agent.detail)] : []),
+      ...(agent.detail ? [el('p', 'panel-detail', hubText(agent.detail))] : []),
     );
   });
 }

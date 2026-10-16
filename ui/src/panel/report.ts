@@ -1,6 +1,7 @@
 import type { OfficeApi } from '../api';
 import { el, type Child } from '../dom';
 import { t } from '../i18n';
+import { hubText } from '../i18n/hub';
 import { scoreText, verdictLabel } from '../labels';
 import type { Store } from '../store';
 import { clockTime, relativeTime } from '../time';
@@ -56,7 +57,7 @@ function renderReport(report: ReportView, now: number, times: TimeNode[]): HTMLE
   if (report.endedAt === null) span.append(t('report.running'));
   else span.append(`${t('report.end')} `, time(report.endedAt));
 
-  const parts: HTMLElement[] = [el('p', 'report-text', report.summary || t('report.noSummary')), span];
+  const parts: HTMLElement[] = [el('p', 'report-text', (report.summaryText ? hubText(report.summaryText) : report.summary) || t('report.noSummary')), span];
 
   if (report.files.length > 0) {
     const shown = report.files.slice(0, FILE_LIMIT);

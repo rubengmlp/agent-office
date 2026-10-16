@@ -201,7 +201,6 @@ export const en: Messages = {
   'settings.floors.deleteLabel': 'Delete floor {slug}',
   'settings.floors.deleting': 'Deleting…',
   'settings.floors.empty': 'There are no floors in config.json.',
-  'settings.floors.added': 'Floor {slug} added. Start its lead with bun run office.',
   'settings.floors.removed': 'Floor {slug} deleted.',
   'settings.floors.confirm':
     'Floor {slug} will be deleted: its agents, its launcher, its configuration and, from the office database, its events, messages, lessons (yours too) and reports, plus its Drafting snapshots. The repository is not touched.',

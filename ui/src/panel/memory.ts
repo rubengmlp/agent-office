@@ -1,6 +1,7 @@
 import type { OfficeApi } from '../api';
 import { button, el } from '../dom';
 import { currentLang, t } from '../i18n';
+import { hubText } from '../i18n/hub';
 import { agentName, floorLabel, roleLabel } from '../labels';
 import { memoryKey, type Store } from '../store';
 import { relativeTime } from '../time';
@@ -26,7 +27,7 @@ function reportItem(report: ReportView, format: Intl.DateTimeFormat): HTMLElemen
       el('span', 'history-date muted', format.format(report.endedAt ?? report.startedAt)),
       el('span', 'history-name', report.name || report.role || report.agentKey.slice(0, 8)),
     ),
-    el('p', 'history-summary', report.summary || t('memory.noSummary')),
+    el('p', 'history-summary', (report.summaryText ? hubText(report.summaryText) : report.summary) || t('memory.noSummary')),
   );
 }
 
