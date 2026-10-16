@@ -26,7 +26,7 @@ bun run office     # hub + oficina en el navegador + sesiones del director, los 
 - Crea `~/.config/agent-office/` con la key (permisos 600), `config.json` y el puerto.
 - Registra este repositorio como marketplace local e instala el plugin `office` a nivel de usuario. Sus hooks se ejecutan en todas tus sesiones de Claude Code; si el hub no está arrancado, salen al momento sin escribir nada. Un marketplace de directorio local lee el plugin en vivo: un cambio en `plugin/` vale en la siguiente sesión o tras `/reload-plugins`.
 - Ofrece convertir `~/Projects/mobile` y `~/Projects/backend` en plantas gestionadas, lo que escribe tres agentes por planta en `~/.claude/agents/`.
-- Crea el repositorio de documentos `~/Projects/office-docs` (`docsRepo` en `config.json`) con `redaccion/planes/` y `taller/skills/`, y un primer commit.
+- Crea el repositorio de documentos `~/Projects/office-docs` (`docsRepo` en `config.json`) con `redaccion/planes/`, `redaccion/historial/` y `taller/skills/`, y un primer commit.
 - Escribe en `~/.claude/agents/office-*.md` todos los agentes de la oficina (director, revisor y departamentos incluidos) con el modelo y el esfuerzo de su rol. Una configuración de v1 se completa con los valores por defecto sin perder sus plantas.
 
 Aparte de las dos entradas que escribe `claude plugin` en `~/.claude/settings.json`, el marketplace en `extraKnownMarketplaces` y el plugin en `enabledPlugins`, no toca tu configuración. Agent teams y la caché de una hora se activan solo en las sesiones que abre `office.sh`.
@@ -60,11 +60,11 @@ La pestaña **Ajustes** edita `config.json`: el modelo (`opus`, `sonnet`, `haiku
 | Testers | sonnet · medium | Ejecutan los tests que pide el jefe y resumen el resultado. |
 | Revisores de código | opus · high | Buscan fallos y problemas de seguridad que se escaparían. |
 | Redactores | fable · xhigh | Diseñan el plan, que es la decisión de la que depende todo lo demás. |
-| Revisores de planes | sonnet · xhigh | Otro modelo que el redactor y revisión a fondo; en la prueba en vivo encontró un bloqueante real. |
+| Revisores de planes | opus · medium | Otro modelo que el redactor, sin contexto previo y tan rápido como el chat normal. Una configuración guardada con `sonnet · xhigh` pasa a este valor una sola vez (`configVersion: 2`). |
 | Artesanos de skills | sonnet · medium | Siguen `skill-creator` sobre un brief cerrado. |
 | Revisores de skills | opus · high | Revisan scripts que se instalarán en tus sesiones: es revisión de seguridad. |
 
-El esfuerzo sigue el que tienes por modelo en `~/.claude/settings.json` (xhigh para Fable, high para Opus, medium para el resto), salvo el revisor de planes. Fable va solo donde una mala decisión se propaga a todo lo demás: el director y los redactores. Haiku no es el valor por defecto de ningún rol. Todo se puede cambiar en Ajustes.
+El esfuerzo sigue el que tienes por modelo en `~/.claude/settings.json` (xhigh para Fable, high para Opus, medium para el resto), salvo el revisor de planes, que va con esfuerzo medio para ser rápido. Fable va solo donde una mala decisión se propaga a todo lo demás: el director y los redactores. Haiku no es el valor por defecto de ningún rol. Todo se puede cambiar en Ajustes.
 
 Los lanzadores pasan además `--model` y `--effort` al director y a los jefes, y los jefes no nombran modelo al lanzar compañeros: manda el agente generado.
 
@@ -73,14 +73,17 @@ Los lanzadores pasan además `--model` y `--effort` al director y a los jefes, y
 **Redacción** (`lead-redaccion`, en `office-docs/redaccion`):
 
 1. El director o tú le encargáis un plan. El jefe prepara las fuentes con `plugin/scripts/office-sync.sh <slug> <planta>…`: el hub hace `git fetch` de la rama base de cada planta y crea un worktree desacoplado en `redaccion/.fuentes/<slug>/<planta>/`. Nunca hace `pull` ni `checkout` en tu copia de trabajo.
-2. El redactor escribe `redaccion/planes/<slug>.md` y pide `REVISAR:`. Un revisor nuevo por ronda contesta `MEJORAR:` con puntos `bloqueante:` o `menor:`, `APROBADO:` cuando no quedan bloqueantes o `SIN ACUERDO:` en la última ronda.
-3. El hub hace un commit del plan en `office-docs` en cada ronda, con `git commit --only` para no arrastrar lo que tengas preparado.
-4. El `HECHO:` del redactor y el del jefe solo salen si hay un `APROBADO:` de esa ruta posterior al último cambio del fichero. Al entregar, el hub retira los worktrees; tras la aprobación avisa si la rama base ha avanzado.
+2. El redactor escribe `redaccion/planes/<slug>.md` y lleva el historial de rondas aparte, en `redaccion/historial/<slug>.md`. Pide `REVISAR:` a su jefe. Un revisor nuevo por ronda, que solo lee el plan y las fuentes (ni brief, ni historial, ni lecciones), contesta `MEJORAR:` con puntos `bloqueante:` o `menor:`, `APROBADO:` cuando no quedan bloqueantes o `SIN ACUERDO:` en la última ronda.
+3. Cada revisor da **un solo veredicto**: cuenta el primero que manda al redactor (la copia al jefe no), los siguientes se ignoran con una nota y el revisor se retira en cuanto lo emite, aunque luego lo despierten. Por eso ves un revisor por ronda (r1, r2…) y ninguno vuelve.
+4. Si el redactor necesita una decisión tuya, escribe `PREGUNTA: … — opciones: …` a su jefe, que te la hace con `AskUserQuestion` (sale en el panel) y le devuelve la respuesta. Mientras, el redactor aparece preguntando.
+5. El hub hace un commit del plan y de su historial en `office-docs` en cada ronda, con `git commit --only` para no arrastrar lo que tengas preparado.
+6. El `HECHO:` del redactor y el del jefe solo salen si hay un `APROBADO:` de esa ruta posterior al último cambio del fichero. Antes del `HECHO:` al director, el jefe avisa con `PLAN: <ruta> — <resumen>` al jefe de cada planta implicada, que lo lee (los jefes de planta se abren con `--add-dir` de `redaccion/planes`, sin permiso de escritura) y espera. Tras la aprobación el hub avisa si la rama base ha avanzado.
+7. El `HECHO:` del jefe **entrega** el plan: el hub retira los worktrees, guarda las plantas y su base, y el plan queda en la pestaña **Planes** pendiente de tu decisión: **Ejecutar** manda al director la orden de repartirlo entre los jefes, **Aparcar** lo deja para más tarde (también deshace un Ejecutar; el hub no avisa al director), **Cerrar** cuando el director te confirma que las plantas terminaron, y **Descartar** y **Descargar** el `.md`.
 
 **Mantenimiento** (`lead-mantenimiento`, en `office-docs/taller`, edificio anexo):
 
 1. El jefe comprueba que el nombre de la skill está libre y lanza un artesano, que la escribe con la skill `skill-creator` en `taller/skills/<nombre>/`.
-2. Mismo bucle de rondas con un revisor de skills, que además lee los scripts incluidos.
+2. Mismo bucle de rondas con un revisor de skills, que además lee los scripts incluidos y también da un solo veredicto.
 3. Con la aprobación, el jefe te pregunta dónde instalarla (`~/.claude/skills/<nombre>` o `.claude/skills/<nombre>` de una planta) y copia solo esa carpeta.
 
 Los lanzadores de los departamentos comprueban `GET /health` y no abren la sesión sin hub, porque sin hub no hay guardia.
@@ -88,13 +91,14 @@ Los lanzadores de los departamentos comprueban `GET /health` y no abren la sesi�
 ## Memoria e informes
 
 - Un agente que aprende algo envía `LECCIÓN: …` a su jefe. El hub la guarda para la pareja planta y rol, sin duplicados y con tope por sesión, y poda las más antiguas de origen agente; las que añades desde el panel no se podan.
-- Al arrancar, cada agente de la oficina recibe por hook las lecciones de su puesto y una línea de cada uno de los tres últimos informes, como contexto y con un tope de caracteres.
+- Al arrancar, cada agente de la oficina recibe por hook las lecciones de su puesto y una línea de cada uno de los tres últimos informes, como contexto y con un tope de caracteres. El revisor de planes es la excepción: no recibe memoria, no guarda informe y sus lecciones se ignoran.
 - El panel muestra el **Informe** del agente seleccionado (ficheros, tests, veredictos, mensajes, preguntas, bloqueos, lecciones y cierre) y la **Memoria** de su puesto, donde puedes añadir y borrar lecciones.
 
 ## Uso
 
-- La oficina vive en <http://127.0.0.1:4747>. Pestañas **Oficina**, **Tabla** y **Ajustes**; el panel de la derecha muestra el agente seleccionado. La oficina 3D está en <http://127.0.0.1:4747/?view=3d>; la 2D (PixiJS) sigue siendo la vista por defecto hasta que la 3D esté a la par.
-- **Entregables**: al seleccionar un agente de Redacción o Mantenimiento, el panel lista sus planes o skills con estado, ronda, nota, base y avance de la rama, y los abre en un visor de markdown.
+- La oficina vive en <http://127.0.0.1:4747>. Pestañas **Oficina**, **Tabla**, **Planes** y **Ajustes**; el panel de la derecha muestra el agente seleccionado. La oficina 3D está en <http://127.0.0.1:4747/?view=3d>; la 2D (PixiJS) sigue siendo la vista por defecto hasta que la 3D esté a la par.
+- **Entregables**: al seleccionar un agente de Redacción o Mantenimiento, el panel lista sus planes o skills con estado, ronda, nota, base y avance de la rama, los abre en un visor de markdown y los descarga.
+- **Planes**: los planes por estado (pendientes de decisión, aparcados, en ejecución, en redacción, cerrados y descartados), con su contador en la pestaña y los botones Ver, Ejecutar, Aparcar, Cerrar, Descartar y Descargar según el estado. La descarga se hace en el navegador, sin poner la key en ninguna URL.
 - **Preguntas**: con la oficina abierta en el navegador, aunque la pestaña esté tapada por otra ventana, las `AskUserQuestion` de las sesiones de la oficina esperan en el panel hasta una hora en vez de salir en la terminal. "Devolver al terminal" las suelta al momento. Sin ningún panel abierto salen en la terminal como siempre, y si cierras la última pestaña las que esperaban vuelven a la terminal a los 30 segundos.
 - **Órdenes**: el cuadro de órdenes escribe en el inbox de la sesión elegida (por defecto el director). Llegan con el prefijo `[Agent Office]`.
 - **Puerta de tests**: el jefe de planta avisa al director con un mensaje que empieza por `HECHO:`. Si el desarrollador cambió ficheros y no hay tests en verde de un tester de la planta posteriores, el mensaje no sale y el jefe recibe el motivo. Con herramientas de tareas, completar una tarea pasa por la misma comprobación.
