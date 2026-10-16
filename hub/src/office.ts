@@ -1,7 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { basename, join, relative, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { CHAT_SCRIPT, managedFloors } from './agents';
 import { ChatDesk, GLOBAL_CHANNEL, READ_LIMIT, SNAPSHOT_LIMIT, USER_NAME, isChatKind, normalizeChatPath, type ChatAuthor, type ChatError, type ChatUnread } from './chat';
 import { chatInboxText, deliver, encodeInbox, orderText } from './courier';
@@ -20,7 +20,7 @@ import {
 } from './floors';
 import { decideDocumentGate, decideGate, decideReadCap, decideReviewGate, kilobytes, planByteLimit, type GateDecision, type ReviewGateFacts } from './gate';
 import { GitQueue, runGit, type GitRunner } from './git';
-import { GUARDED_TOOLS, GuardWatch, fingerprint, gitIgnored, guardDecision, shellWrites, zonesFor, type GuardContext, type GuardFinding } from './guard';
+import { GUARDED_TOOLS, guardDecision } from './guard';
 import type { Log } from './log';
 import { keyMatches } from './security';
 import { captureLesson, cleanLesson, deleteLesson, isRoleId, listLessons, memoryContext } from './memory';
@@ -29,10 +29,8 @@ import {
   DECISION_FROM,
   EMPTY_META,
   FILE_TOOLS,
-  FINGERPRINT_ACTIVITY,
   FORGET_ENDED_MS,
   HOLDS_QUESTION,
-  MAX_ALERTS,
   MAX_MESSAGES,
   NEW_TURN,
   NOT_DISCARDABLE,
@@ -44,7 +42,6 @@ import {
   DAY_MS,
   isHookEvent,
   recentDocuments,
-  remember,
   teamOfSession,
   type AgentRuntime,
   type DecideResult,
@@ -57,7 +54,7 @@ import {
   type SessionRuntime,
   type TmuxFn,
 } from './office-state';
-import { chatFreeCommand, withoutChatCalls } from './chat-commands';
+import { withoutChatCalls } from './chat-commands';
 import {
   STATUS_REQUEST,
   VERDICT_DETAILS,
@@ -75,12 +72,13 @@ import {
   taskLine,
   withoutDiscardMark,
 } from './office-texts';
+import { GuardDesk } from './guard-desk';
 import { MeterDesk } from './meter-desk';
 import { OfficeBus } from './office-bus';
 import { RulesDesk } from './rules-desk';
 import { SessionBook } from './session-book';
 import { StallDesk } from './stall-desk';
-import { ownerEdits, prepare, type AlertRow, type Sql } from './office-sql';
+import { ownerEdits, prepare, type Sql } from './office-sql';
 import { publicDetail, publicSummary, publicText, storedPayload, visibleKind } from './privacy';
 import { detectStack, profileFor, type Profiles } from './profiles';
 import { BRIEF_PREFIX, docRef, parseProtocol, type DocRef } from './protocol';
@@ -110,10 +108,9 @@ import {
   short,
   text,
   type Classified,
-  type Matchers,
 } from './state-machine';
 import { SyncDesk, type SyncResult } from './sync';
-import { floorText, plural, roleText, roundText, scoreText } from './texts';
+import { floorText, roleText, roundText, scoreText } from './texts';
 import { planSlugIn } from './tokens';
 import { UsageDesk } from './usage';
 import type {
@@ -124,8 +121,6 @@ import type {
   ChatUserResult,
   DocumentContent,
   DocumentView,
-  FloorKind,
-  GuardAlert,
   HookEvent,
   HookMeta,
   HubText,
@@ -216,6 +211,7 @@ export class Office {
   private readonly bus: OfficeBus;
   private readonly book: SessionBook;
   private readonly rules: RulesDesk;
+  private readonly guards: GuardDesk;
   private readonly stall: StallDesk;
   private readonly now: () => number;
   private readonly deliverFn: typeof deliver;
@@ -223,10 +219,6 @@ export class Office {
   private readonly sql: Sql;
   private readonly docs: DocumentDesk;
   private readonly sync: SyncDesk;
-  private readonly watch: GuardWatch;
-  private readonly changes: GuardWatch;
-  private readonly pendingWrites = new Map<string, { root: string; paths: Map<string, string>; gitTree: boolean }>();
-  private readonly fingerprintEdits = new Map<string, true>();
   private readonly usage: UsageDesk;
   private readonly meter: MeterDesk;
   readonly chat: ChatDesk;
@@ -307,34 +299,21 @@ export class Office {
       db: opts.db,
       root: () => this.docsRoot(),
       enabled: () => this.config.departments,
-      installTargets: () => this.installTargets(),
+      installTargets: () => this.guards.installTargets(),
       base: (slug) => this.sync.base(slug),
       ahead: (slug) => this.sync.ahead(slug),
       onChange: (docs) => this.bus.emit({ type: 'documents', data: this.meter.withPlanTokens(docs) }),
       maxRounds: () => this.config.review.maxRounds,
     });
-    this.watch = new GuardWatch({
+    this.guards = new GuardDesk({
       git: this.git,
-      floors: () => this.guardFloors(),
+      sql: this.sql,
       now: this.now,
-      attributed: (floor, from, to) => this.attributedFiles(floor, from, to, false),
-      active: (floor, from, to) => this.sql.floorActive.get(floor, from, to) !== null,
-      exempt: (agentKey) => {
-        const agent = this.book.agents.get(agentKey);
-        const own = agent ? (zonesFor(agent.role, this.guardContext())?.allowed ?? []) : [];
-        return [...own, ...this.installTargets().map((target) => realPath(target.dir))];
-      },
-      report: (finding) => this.recordAlert(finding),
-    });
-    this.changes = new GuardWatch({
-      git: this.git,
-      headDiff: true,
-      floors: () => this.guardFloors(),
-      now: this.now,
-      attributed: (floor, from, to) => this.attributedFiles(floor, from, to, true),
-      active: () => false,
-      exempt: () => this.installTargets().map((target) => realPath(target.dir)),
-      report: (finding) => this.recordBashChanges(finding),
+      bus: this.bus,
+      book: this.book,
+      config: () => this.config,
+      claudeHome: opts.claudeHome,
+      docsRoot: () => this.docsRoot(),
     });
     this.usage = new UsageDesk(this.now, (view) => this.bus.emit({ type: 'usage', data: view }));
     this.meter = new MeterDesk({ db: opts.db, claudeHome: opts.claudeHome, now: this.now, bus: this.bus, book: this.book });
@@ -385,7 +364,7 @@ export class Office {
       messages: this.messages.slice(-100),
       activity: this.bus.recent(),
       documents: this.meter.withPlanTokens(recentDocuments(this.docs.list())),
-      alerts: this.alerts(),
+      alerts: this.guards.alerts(),
       usage: this.usage.view(),
       chat: this.chat.recent(SNAPSHOT_LIMIT),
     };
@@ -490,7 +469,7 @@ export class Office {
     agent.updatedAt = now;
 
     if (c.edit !== null) this.sql.insertEdit.run(now, agent.key, session.floor, publicText(c.edit, kind) ?? '');
-    this.bashWrites(e, c, agent, session, kind, matchers, now);
+    this.guards.bashWrites(e, c, agent, session, kind, matchers, now);
     if (c.test === 'pass' || c.test === 'fail') {
       const ok = c.test === 'pass';
       const command = publicText(c.command, kind) ?? '';
@@ -514,8 +493,8 @@ export class Office {
     this.book.emitAgent(agent, now);
     if (c.message) this.recordMessage(c.message, agent, session, now);
     this.pushActivity({ ts: now, agentKey: agent.key, event: c.event, tool: c.tool, state: nextState, summary: publicSummary(c, kind) });
-    this.trackDepartment(agent, c.event, ended);
-    this.trackChanges(agent, kind, c.event, ended);
+    this.guards.trackDepartment(agent, c.event, ended);
+    this.guards.trackChanges(agent, kind, c.event, ended);
     this.settlePermissions(agent.key, c.event, c.tool, e.tool_input);
     if (c.event === 'SubagentStop' || c.event === 'Stop' || c.event === 'SessionEnd') this.storeReport(agent, now);
 
@@ -636,7 +615,7 @@ export class Office {
       lastTesterGreen,
       changed: edits.files,
       changedTotal: edits.total,
-      fingerprintPending: this.changes.busy(lead.floor),
+      fingerprintPending: this.guards.busy(lead.floor),
     });
     this.sql.insertGate.run(now, scope, taskId, decision.pass ? 'pass' : 'block', decision.reason);
     if (taskId) {
@@ -683,7 +662,7 @@ export class Office {
       lastTesterGreen,
       changed: edits.files,
       changedTotal: edits.total,
-      fingerprintPending: this.changes.busy(session.floor),
+      fingerprintPending: this.guards.busy(session.floor),
     });
     this.sql.insertGate.run(now, team, null, decision.pass ? 'pass' : 'block', decision.reason);
     this.pushActivity({
@@ -705,7 +684,7 @@ export class Office {
     if (!departmentOf(role)) return { pass: true, reason: 'fuera de los departamentos' };
     const decision = guardDecision(
       { tool: e.tool_name ?? '', input: record(e.tool_input), cwd: text(e.cwd) ?? session.cwd, role, name: this.book.agents.get(e.agent_id ?? e.session_id)?.name ?? null },
-      this.guardContext(),
+      this.guards.context(),
     );
     if (!decision.pass) {
       this.sql.insertGate.run(now, 'guardia', null, 'block', decision.reason);
@@ -1124,147 +1103,6 @@ export class Office {
     this.docs.refresh();
   }
 
-  private guardFloors(): { slug: string; path: string }[] {
-    return managedFloors(this.config)
-      .map(([slug, floor]) => ({ slug, path: realPath(floor.path) }))
-      .filter((f) => existsSync(f.path));
-  }
-
-  private guardContext(): GuardContext {
-    return { docsRoot: this.docsRoot(), claudeHome: realPath(this.opts.claudeHome), floors: this.guardFloors() };
-  }
-
-  private installTargets(): { label: string; dir: string }[] {
-    return [
-      { label: '~/.claude/skills', dir: join(this.opts.claudeHome, 'skills') },
-      ...managedFloors(this.config).map(([slug, floor]) => ({ label: `${slug}: .claude/skills`, dir: join(floor.path, '.claude', 'skills') })),
-    ];
-  }
-
-  // Files changed with Edit, Bash or a turn fingerprint between from and to. The department guard leaves the
-  // fingerprint rows out: a file a writer changed during a developer turn is not the developer's.
-  private attributedFiles(floor: string, from: number, to: number, includeFingerprints: boolean): Set<string> {
-    const out = new Set<string>();
-    for (const row of this.sql.editsBetween.all(floor, from, to)) {
-      if (!row.path) continue;
-      const path = realPath(row.path);
-      if (!includeFingerprints && this.fingerprintEdits.has(fingerprintKey(floor, row.ts, path))) continue;
-      out.add(path);
-    }
-    return out;
-  }
-
-  private recordBashChanges(finding: GuardFinding): void {
-    for (const file of finding.files) {
-      const path = realPath(file);
-      this.sql.insertEdit.run(finding.ts, finding.agentKey, finding.floor, path);
-      remember(this.fingerprintEdits, fingerprintKey(finding.floor, finding.ts, path), true);
-    }
-    for (const file of finding.files.slice(0, FINGERPRINT_ACTIVITY)) {
-      this.pushActivity({
-        ts: finding.ts,
-        agentKey: finding.agentKey,
-        event: 'Fingerprint',
-        tool: null,
-        state: null,
-        summary: { key: 'hub.act.edited', params: { name: basename(file) } },
-      });
-    }
-  }
-
-  // Bash writes of a managed floor: the fingerprints of the candidate files before the command, compared after it.
-  private bashWrites(e: HookEvent, c: Classified, agent: AgentRuntime, session: SessionRuntime, kind: FloorKind, matchers: Matchers, now: number): void {
-    const id = text(e.tool_use_id);
-    if (c.tool !== 'Bash' || !id) return;
-    if (c.event === 'PostToolUse' || c.event === 'PostToolUseFailure') {
-      const entry = this.pendingWrites.get(id);
-      if (!entry) return;
-      this.pendingWrites.delete(id);
-      if (e.is_interrupt === true) return;
-      let changed = [...entry.paths].filter(([path, before]) => fingerprint(path) !== before).map(([path]) => path);
-      if (changed.length > 0 && this.changes.watching(agent.key)) {
-        const ignored = gitIgnored(entry.root, changed.map((path) => relative(entry.root, path)));
-        changed = changed.filter((path) => !ignored.has(path));
-      }
-      for (const path of changed) this.sql.insertEdit.run(now, agent.key, session.floor, path);
-      if (entry.gitTree) this.sql.insertEdit.run(now, agent.key, session.floor, entry.root);
-      return;
-    }
-    if (c.event !== 'PreToolUse' || kind !== 'managed' || c.test !== null) return;
-    const input = record(e.tool_input);
-    const raw = text(input.command);
-    if (!raw || input.run_in_background === true) return;
-    const command = chatFreeCommand(raw) ?? raw;
-    const floorPath = this.config.floors[session.floor]?.path;
-    if (!command.trim() || matchers.check.test(command) || !floorPath) return;
-    const root = realPath(floorPath);
-    const writes = shellWrites(command, text(e.cwd) ?? session.cwd, root);
-    if (writes.paths.length === 0 && !writes.gitTree) return;
-    remember(this.pendingWrites, id, { root, gitTree: writes.gitTree, paths: new Map(writes.paths.map((path) => [path, fingerprint(path)])) });
-  }
-
-  // The turn of a developer (or of the subagents it launches) on a managed floor: a git status fingerprint before
-  // and after, for what neither Edit nor Bash declared.
-  private trackChanges(agent: AgentRuntime, floorKind: FloorKind, event: string, ended: boolean): void {
-    const kind = roleKind(agent.role);
-    if (floorKind !== 'managed' || (kind !== 'dev' && kind !== 'intern') || agent.key === agent.sessionId) return;
-    if (TURN_OVER.has(event)) {
-      if (this.changes.watching(agent.key)) this.bus.background(this.changes.finish(agent.key));
-      return;
-    }
-    if (event === 'SessionStart' || event === 'Notification' || ended || agent.endedAt !== null || this.changes.watching(agent.key)) return;
-    const floors = this.guardFloors().filter((f) => f.slug === agent.floor);
-    if (floors.length === 0) return;
-    this.changes.start(agent.key, floors);
-    this.bus.background(this.changes.ready(agent.key));
-  }
-
-  private recordAlert(finding: GuardFinding): void {
-    const id = Number(this.sql.insertAlert.run(finding.ts, finding.level, finding.floor, finding.agentKey, JSON.stringify(finding.files)).lastInsertRowid);
-    const alert: GuardAlert = { id, ...finding };
-    this.bus.emit({ type: 'alert', data: alert });
-    const who = this.book.agents.get(finding.agentKey)?.name ?? finding.agentKey;
-    this.pushActivity({
-      ts: finding.ts,
-      agentKey: finding.agentKey,
-      event: 'GuardAlert',
-      tool: null,
-      state: null,
-      summary: plural('hub.act.guardAlert', finding.files.length, {
-        level: { key: finding.level === 'alerta' ? 'hub.alertLevel.alerta' : 'hub.alertLevel.posible' },
-        floor: finding.floor,
-        who,
-      }),
-    });
-  }
-
-  private alerts(): GuardAlert[] {
-    return this.sql.recentAlerts
-      .all(MAX_ALERTS)
-      .reverse()
-      .map((row: AlertRow) => ({
-        id: row.id,
-        ts: row.ts,
-        level: row.level === 'posible' ? 'posible' : 'alerta',
-        floor: row.floor,
-        agentKey: row.agent_key,
-        files: parseList(row.files),
-      }));
-  }
-
-  private trackDepartment(agent: AgentRuntime, event: string, ended: boolean): void {
-    if (!departmentOf(agent.role)) return;
-    if (event === 'SubagentStop' || event === 'Stop' || event === 'SessionEnd') {
-      if (this.watch.watching(agent.key)) this.bus.background(this.watch.finish(agent.key));
-      return;
-    }
-    if (event === 'SessionStart' || event === 'Notification' || event === 'TeammateIdle') return;
-    if (!ended && agent.endedAt === null && !this.watch.watching(agent.key)) {
-      this.watch.start(agent.key);
-      this.bus.background(this.watch.ready(agent.key));
-    }
-  }
-
   private settlePermissions(agentKey: string, event: string, tool: string | null, input: unknown): void {
     if (this.permissionHolds.size === 0) return;
     const turnOver = event === 'Stop' || event === 'SubagentStop' || event === 'SessionEnd' || event === 'UserPromptSubmit';
@@ -1583,8 +1421,7 @@ export class Office {
     }
     if (agent.endedAt === null) agent.endedAt = now;
     agent.updatedAt = now;
-    if (this.watch.watching(agent.key)) this.bus.background(this.watch.finish(agent.key));
-    if (this.changes.watching(agent.key)) this.bus.background(this.changes.finish(agent.key));
+    this.guards.finish(agent.key);
     this.book.persistAgent(agent);
     this.book.emitAgent(agent, now);
     this.storeReport(agent, now);
@@ -1868,8 +1705,7 @@ export class Office {
       this.book.emitAgent(agent, now);
       this.storeReport(agent, now);
       this.meter.later(agent);
-      if (this.watch.watching(agent.key)) this.bus.background(this.watch.finish(agent.key));
-      if (this.changes.watching(agent.key)) this.bus.background(this.changes.finish(agent.key));
+      this.guards.finish(agent.key);
     }
     for (const q of this.desk.list()) if (q.sessionId === session.sessionId) this.desk.release(q.id);
   }
@@ -1913,17 +1749,4 @@ export class Office {
 
 function assigns(from: AgentRuntime, to: AgentRuntime): boolean {
   return from.parentKey !== to.key && roleKind(to.role) !== 'director';
-}
-
-function fingerprintKey(floor: string, ts: number, path: string): string {
-  return `${floor}\0${ts}\0${path}`;
-}
-
-function parseList(raw: string): string[] {
-  try {
-    const value: unknown = JSON.parse(raw);
-    return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
-  } catch {
-    return [];
-  }
 }
