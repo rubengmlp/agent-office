@@ -52,7 +52,7 @@ Los perfiles por stack (skill, comandos de test y de revisión) están en `plugi
 
 ## Ajustes: modelo y esfuerzo por rol y por planta
 
-La pestaña **Ajustes** edita `config.json`: el modelo (`opus`, `sonnet`, `haiku`, `fable`, `inherit` o un id completo) y el esfuerzo (`low` a `max`) de cada rol, los departamentos activos, el número máximo de rondas de revisión, los topes de la memoria y la rama base de cada planta. Al guardar, el hub regenera los agentes de `~/.claude/agents/` y los lanzadores; vale para las sesiones y los equipos nuevos, y las sesiones abiertas siguen igual hasta que las reinicias con `bun run office`.
+La pestaña **Ajustes** edita `config.json`: el modelo (`opus`, `sonnet`, `haiku`, `fable`, `inherit` o un id completo) y el esfuerzo (`low` a `max`) de cada rol, los departamentos activos, el número máximo de rondas de revisión, el tamaño de los planes y las lecturas de cada revisor, los topes de la memoria, los encargos por orden y los minutos hasta dar a un jefe por parado (sección Oficina; 0 desactiva cada tope) y la rama base de cada planta. Al guardar, el hub regenera los agentes de `~/.claude/agents/` y los lanzadores; vale para las sesiones y los equipos nuevos, y las sesiones abiertas siguen igual hasta que las reinicias con `bun run office`.
 
 | Rol | Por defecto | Por qué |
 |---|---|---|
@@ -61,12 +61,14 @@ La pestaña **Ajustes** edita `config.json`: el modelo (`opus`, `sonnet`, `haiku
 | Desarrolladores | opus · high | Cambios en varios ficheros de código real, donde un fallo cuesta de detectar. |
 | Testers | sonnet · medium | Ejecutan los tests que pide el jefe y resumen el resultado. |
 | Revisores de código | opus · high | Buscan fallos y problemas de seguridad que se escaparían. |
-| Redactores | fable · xhigh | Diseñan el plan, que es la decisión de la que depende todo lo demás. |
-| Revisores de planes | opus · medium | Otro modelo que el redactor, sin contexto previo y tan rápido como el chat normal. Una configuración guardada con `sonnet · xhigh` pasa a este valor una sola vez (`configVersion: 2`). |
+| Redactores | opus · high | Diseñan el plan, que es la decisión de la que depende todo lo demás. |
+| Revisores de planes | sonnet · medium | Otro modelo que el redactor, sin contexto previo: gastan lo mismo por turno que Opus y su veredicto no fue peor. |
 | Artesanos de skills | sonnet · medium | Siguen `skill-creator` sobre un brief cerrado. |
 | Revisores de skills | opus · high | Revisan scripts que se instalarán en tus sesiones: es revisión de seguridad. |
 
-El esfuerzo sigue el que tienes por modelo en `~/.claude/settings.json` (xhigh para Fable, high para Opus, medium para el resto), salvo el revisor de planes, que va con esfuerzo medio para ser rápido. Fable va solo donde una mala decisión se propaga a todo lo demás: el director y los redactores. Haiku no es el valor por defecto de ningún rol. Todo se puede cambiar en Ajustes.
+El esfuerzo sigue el que tienes por modelo en `~/.claude/settings.json` (xhigh para Fable, high para Opus, medium para el resto). Fable va solo donde una mala decisión se propaga a todo lo demás: el director. Haiku no es el valor por defecto de ningún rol. Todo se puede cambiar en Ajustes.
+
+Una configuración guardada con los valores por defecto anteriores los cambia una sola vez al arrancar (`configVersion: 3`): rondas máximas 4 → 2, caracteres de memoria 4000 → 2500, revisor de planes `opus · medium` → `sonnet · medium` y redactor `fable · xhigh` → `opus · high`. Lo que hubieras cambiado tú se queda como está.
 
 Esa tabla son los valores por defecto (sección «Modelos por defecto»). Debajo, Ajustes tiene una sección por planta gestionada, por Redacción y por Mantenimiento con los roles de ese destino (planta: jefe, desarrollador y tester; Redacción: jefe, redactor y revisor de planes; Mantenimiento: jefe, artesano y revisor de skills). «Por defecto» hereda el valor global; al elegir un modelo o un esfuerzo se crea una anulación solo para ese destino, con el otro valor copiado, y volver a «Por defecto» la borra. En `config.json` son un mapa disperso, y lo que no está en él hereda de `roles`:
 
@@ -86,17 +88,18 @@ Los lanzadores pasan además `--model` y `--effort` al director y a los jefes (c
 **Redacción** (`lead-redaccion`, en `office-docs/redaccion`):
 
 1. El director o tú le encargáis un plan. El jefe prepara las fuentes con `plugin/scripts/office-sync.sh <slug> <planta>…`: el hub hace `git fetch` de la rama base de cada planta y crea un worktree desacoplado en `redaccion/.fuentes/<slug>/<planta>/`. Nunca hace `pull` ni `checkout` en tu copia de trabajo. El hub deja en `redaccion/.fuentes/<slug>/.office` su id (`~/.config/agent-office/id`) y al arrancar solo retira fotos con su id; las de otro hub o sin marcador las deja y lo avisa en la actividad.
-2. El redactor escribe `redaccion/planes/<slug>.md` y lleva el historial de rondas aparte, en `redaccion/historial/<slug>.md`. Pide `REVISAR:` a su jefe. Un revisor nuevo por ronda, que solo lee el plan y las fuentes (ni brief, ni historial, ni lecciones), contesta `MEJORAR:` con puntos `bloqueante:` o `menor:`, `APROBADO:` cuando no quedan bloqueantes o `SIN ACUERDO:` en la última ronda.
-3. Cada revisor da **un solo veredicto**: cuenta el primero que manda al redactor (la copia al jefe no), los siguientes se ignoran con una nota y el revisor se retira en cuanto lo emite, aunque luego lo despierten. Por eso ves un revisor por ronda (r1, r2…) y ninguno vuelve.
-4. Si el redactor necesita una decisión tuya, escribe `PREGUNTA: … — opciones: …` a su jefe, que te la hace con `AskUserQuestion` (sale en el panel) y le devuelve la respuesta. Mientras, el redactor aparece preguntando.
-5. El hub hace un commit del plan y de su historial en `office-docs` en cada ronda, con `git commit --only` para no arrastrar lo que tengas preparado.
-6. El `HECHO:` del redactor y el del jefe solo salen si hay un `APROBADO:` de esa ruta posterior al último cambio del fichero. Antes del `HECHO:` al director, el jefe avisa con `PLAN: <ruta> — <resumen>` al jefe de cada planta implicada, que lo lee (los jefes de planta se abren con `--add-dir` de `redaccion/planes`, sin permiso de escritura) y espera. Tras la aprobación el hub avisa si la rama base ha avanzado.
-7. El `HECHO:` del jefe **entrega** el plan: el hub retira los worktrees, guarda las plantas y su base, y el plan queda en la pestaña **Planes** pendiente de tu decisión: **Ejecutar** manda al director la orden de repartirlo entre los jefes, **Aparcar** lo deja para más tarde (también deshace un Ejecutar; el hub no avisa al director), **Cerrar** cuando el director te confirma que las plantas terminaron, y **Descartar** y **Descargar** el `.md`. Si el documento es un análisis (`> Tipo: análisis` bajo el título), el botón es **Encargar planes…**: el director te pregunta qué planes encargar a Redacción y en qué orden antes de encargar nada.
+2. El redactor escribe `redaccion/planes/<slug>.md` y lleva el historial de rondas aparte, en `redaccion/historial/<slug>.md`. Pide `REVISAR:` a su jefe. Un revisor nuevo por ronda, que solo lee el plan y las fuentes (ni brief, ni historial, ni lecciones), contesta `MEJORAR:` con 6 puntos como mucho, `bloqueante:` o `menor:`, `APROBADO:` en una línea cuando no quedan bloqueantes o `SIN ACUERDO:` en la última ronda. Las rondas no pasan de `review.maxRounds` (2): la puerta de `REVISAR:` bloquea la siguiente y un `SIN ACUERDO:` ya no abre otras; para seguir, decides tú y subes «Rondas máximas» en Ajustes.
+3. **Longitud**: un plan ocupa como mucho `review.maxPlanBytes` (20 000 bytes) si es de una planta, la mitad más por cada planta de su foto hasta el doble, y el doble si es un análisis. La puerta de `REVISAR:` rechaza uno más largo con su tamaño en KB, sin abrir ronda ni hacer commit; el redactor lo mide antes y lo condensa. Si el trabajo tiene fases que se ejecutan por separado, el redactor pide `PARTIR: <ruta> — fases: …`: el hub solo lo anota en la actividad, el jefe te pregunta y, si aceptas, abre un encargo por fase (`<padre>-fase-N`) y mueve el plan padre a `redaccion/historial/<padre>.partido.md`, con lo que sale de **Planes** y su foto se retira en la siguiente limpieza.
+4. Cada revisor da **un solo veredicto**: cuenta el primero que manda al redactor (la copia al jefe no), los siguientes se ignoran con una nota y el revisor se retira en cuanto lo emite, aunque luego lo despierten. Por eso ves un revisor por ronda (r1, r2…) y ninguno vuelve. Lee el plan una vez y comprueba como mucho 8 afirmaciones; tras `review.maxReviewerReads` (30) lecturas (`Read`, `Grep`, `Glob` o `Bash`) el hub le deniega la siguiente y le pide el veredicto con lo leído, y un revisor retirado ya no puede leer. La denegación viaja en la respuesta de `/events` al `PreToolUse` que `emit.sh` ya imprime, sin hook nuevo.
+5. Si el redactor necesita una decisión tuya, escribe `PREGUNTA: … — opciones: …` a su jefe, que te la hace con `AskUserQuestion` (sale en el panel) y le devuelve la respuesta. Mientras, el redactor aparece preguntando.
+6. El hub hace un commit del plan y de su historial en `office-docs` en cada ronda, con `git commit --only` para no arrastrar lo que tengas preparado.
+7. El `HECHO:` del redactor y el del jefe solo salen si hay un `APROBADO:` de esa ruta posterior al último cambio del fichero. Antes del `HECHO:` al director, el jefe avisa con `PLAN: <ruta> — <resumen>` al jefe de cada planta implicada, que lo lee (los jefes de planta se abren con `--add-dir` de `redaccion/planes`, sin permiso de escritura) y espera. Tras la aprobación el hub avisa si la rama base ha avanzado.
+8. El `HECHO:` del jefe **entrega** el plan: el hub retira los worktrees, guarda las plantas y su base, y el plan queda en la pestaña **Planes** pendiente de tu decisión: **Ejecutar** manda al director la orden de repartirlo entre los jefes, **Aparcar** lo deja para más tarde (también deshace un Ejecutar; el hub no avisa al director), **Cerrar** cuando el director te confirma que las plantas terminaron, y **Descartar** y **Descargar** el `.md`. Si el documento es un análisis (`> Tipo: análisis` bajo el título), el botón es **Encargar planes…**: el director te pregunta qué planes encargar a Redacción y en qué orden antes de encargar nada.
 
 **Mantenimiento** (`lead-mantenimiento`, en `office-docs/taller`, edificio anexo):
 
 1. El jefe comprueba que el nombre de la skill está libre y lanza un artesano, que la escribe con la skill `skill-creator` en `taller/skills/<nombre>/`.
-2. Mismo bucle de rondas con un revisor de skills, que además lee los scripts incluidos y también da un solo veredicto.
+2. Mismo bucle de rondas con un revisor de skills, que además lee los scripts incluidos, también da un solo veredicto y tiene el mismo tope de lecturas.
 3. Con la aprobación, el jefe te pregunta dónde instalarla (`~/.claude/skills/<nombre>` o `.claude/skills/<nombre>` de una planta) y copia solo esa carpeta.
 
 Los lanzadores de los departamentos comprueban `GET /health` y no abren la sesión sin hub, porque sin hub no hay guardia.
@@ -104,7 +107,7 @@ Los lanzadores de los departamentos comprueban `GET /health` y no abren la sesi�
 ## Memoria e informes
 
 - Un agente que aprende algo envía `LECCIÓN: …` a su jefe. El hub la guarda para la pareja planta y rol, sin duplicados y con tope por sesión, y poda las más antiguas de origen agente; las que añades desde el panel no se podan.
-- Al arrancar, cada agente de la oficina recibe por hook las lecciones de su puesto y una línea de cada uno de los tres últimos informes, como contexto y con un tope de caracteres. El revisor de planes es la excepción: no recibe memoria, no guarda informe y sus lecciones se ignoran.
+- Al arrancar, cada agente de la oficina recibe por hook las lecciones de su puesto y una línea de cada uno de los tres últimos informes, como contexto y con un tope de caracteres. El revisor de planes es la excepción: no recibe memoria ni guarda informe. Los revisores de planes y de skills no escriben `LECCIÓN:`, y si alguno llega el hub lo descarta en silencio.
 - El panel muestra el **Informe** del agente seleccionado (ficheros, tests, veredictos, mensajes, preguntas, bloqueos, lecciones y cierre) y la **Memoria** de su puesto, donde puedes añadir y borrar lecciones.
 
 ## Uso
@@ -134,7 +137,7 @@ hub/      Bun + Hono + SQLite: estado de los agentes, puertas, guardia, memoria,
 ui/       Vite + TypeScript: tabla, oficina 2D (PixiJS) y 3D (Three.js), panel, ajustes y replay
 ```
 
-Cada hook ejecuta `plugin/hooks/emit.sh`, que hace POST del evento al hub con `curl -m 2`, reenvía en cabeceras el socket y el token de mensajería de la sesión e imprime la respuesta del hub cuando la hay (la memoria de `SessionStart` y `SubagentStart`). `AskUserQuestion` usa el mismo script contra `/ask`, que puede esperar hasta 15 minutos. `gate.sh` comprueba los `HECHO:` y `guard.sh` las escrituras de los departamentos; los dos salen con código 2 y el motivo cuando el hub bloquea, y con 0 si el hub no responde.
+Cada hook ejecuta `plugin/hooks/emit.sh`, que hace POST del evento al hub con `curl -m 2`, reenvía en cabeceras el socket y el token de mensajería de la sesión e imprime la respuesta del hub cuando la hay (la memoria de `SessionStart` y `SubagentStart`, o la denegación de una lectura de un revisor por encima de su tope en `PreToolUse`). `AskUserQuestion` usa el mismo script contra `/ask`, que puede esperar hasta 15 minutos. `gate.sh` comprueba los `HECHO:` y `guard.sh` las escrituras de los departamentos; los dos salen con código 2 y el motivo cuando el hub bloquea, y con 0 si el hub no responde.
 
 ### Seguridad
 

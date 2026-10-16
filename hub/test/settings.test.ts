@@ -219,4 +219,31 @@ describe('settings', () => {
     expect(saved).toHaveLength(2);
     cleanup();
   });
+
+  test('the plan length and reviewer read caps reach the templates and a change regenerates them', () => {
+    const { dir, cleanup } = tempDir();
+    const p = fakePaths(dir);
+    saveConfig(p, testConfig({ docsRepo: join(dir, 'docs'), departments: { redaccion: true, mantenimiento: true } }));
+    writeFloor(p, profiles, planFloor(p, profiles, makeRepo(dir, 'mobile', { 'pubspec.yaml': '' })));
+    const redactor = () => readFileSync(agentPath(p, 'office-redactor'), 'utf8');
+    const reviewer = () => readFileSync(agentPath(p, 'office-revisor-planes'), 'utf8');
+    expect(redactor()).toContain('El plan ocupa como mucho 20 KB para una planta');
+    expect(redactor()).toContain('y 40 KB si es un análisis');
+    expect(redactor()).toContain('PARTIR: <ruta> — fases:');
+    expect(reviewer()).toContain('La oficina corta tus lecturas a las 30');
+    expect(reviewer()).toContain('No escribas mensajes `LECCIÓN:`');
+    expect(readFileSync(agentPath(p, 'office-revisor-skills'), 'utf8')).toContain('La oficina corta tus lecturas a las 30');
+    expect(readFileSync(agentPath(p, 'office-revisor-skills'), 'utf8')).not.toContain('LECCIÓN: con una frase');
+    expect(readFileSync(agentPath(p, 'office-lead-redaccion'), 'utf8')).toContain('redaccion/historial/<padre>.partido.md');
+    for (const name of ['office-redactor', 'office-revisor-planes', 'office-revisor-skills', 'office-lead-redaccion']) {
+      expect(readFileSync(agentPath(p, name), 'utf8')).not.toContain('{{');
+    }
+
+    const settings = createSettings(p, () => profiles, () => {});
+    expect(settings.update({ review: { maxPlanBytes: 30000, maxReviewerReads: 12 } })).toMatchObject({ ok: true });
+    expect(redactor()).toContain('El plan ocupa como mucho 30 KB para una planta');
+    expect(redactor()).toContain('y 60 KB si es un análisis');
+    expect(reviewer()).toContain('La oficina corta tus lecturas a las 12');
+    cleanup();
+  });
 });
