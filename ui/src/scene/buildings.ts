@@ -418,6 +418,18 @@ export class Site {
     return this.rooms.get(slug)?.origin ?? null;
   }
 
+  occludes(point: Vector3, eye: Vector3): boolean {
+    for (const room of this.order) {
+      const ceiling = room.origin.y + CLEAR_H;
+      if (point.y >= ceiling || eye.y <= ceiling) continue;
+      const t = (ceiling - point.y) / (eye.y - point.y);
+      const x = point.x + (eye.x - point.x) * t - room.origin.x;
+      const z = point.z + (eye.z - point.z) * t - room.origin.z;
+      if (Math.abs(x) <= room.width / 2 && z >= -HALF_D && z <= HALF_D) return true;
+    }
+    return false;
+  }
+
   update(floors: readonly FloorView[], mainWidth: number, annexWidth: number): boolean {
     const main = floors.filter((floor) => buildingOf(floor) === 'main');
     const annex = floors.filter((floor) => buildingOf(floor) === 'annex');

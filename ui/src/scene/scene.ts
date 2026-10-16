@@ -31,7 +31,6 @@ import { CameraRig, OVERVIEW } from './camera';
 import { Character } from './characters';
 import {
   CLEAR_H,
-  DONE_HOLD_S,
   HALF_D,
   LEAD_ZONE,
   MEETING_REFRESH_S,
@@ -371,7 +370,7 @@ class OfficeScene {
       const plan = this.plans.get(agent.floor);
       if (!plan) continue;
       let entry = this.entries.get(agent.key);
-      if (!entry && agent.away) continue;
+      if (agent.away && (!entry || entry.character.faded)) continue;
       present.add(agent.key);
       if (!entry) {
         const character = new Character(
@@ -451,10 +450,7 @@ class OfficeScene {
     const room = this.site.room(agent.floor);
     if (!room) return null;
     const state = this.store.shownState(agent);
-    if (agent.away) {
-      const waving = state === 'done' && !entry.character.leaving && this.store.now() - agent.stateSince < DONE_HOLD_S * 1000;
-      return waving ? null : exitTarget(this.site.nav);
-    }
+    if (agent.away) return entry.character.waving(state) ? null : exitTarget(this.site.nav);
     const leaving = state === 'done' || state === 'failed' || agent.endedAt !== null;
     if (!leaving && state === 'testing') {
       const index = labUse.get(agent.floor) ?? 0;
@@ -476,6 +472,7 @@ class OfficeScene {
     const testing = new Set<string>();
     const claimed = new Set<Desk>();
     const resolve = (floor: string): Vector3 | null => this.site.origin(floor);
+    const occluded = (point: Vector3): boolean => this.site.occludes(point, camera);
     let loading = false;
     for (const [key, entry] of this.entries) {
       const agent = this.store.agents.get(key) ?? entry.agent;
@@ -490,12 +487,14 @@ class OfficeScene {
           selected: key === this.store.selectedKey,
           pending: this.store.questionFor(key) !== undefined,
           ended: agent.endedAt !== null && !agent.away,
+          away: agent.away,
           lastTest: agent.lastTest,
           name: agentName(agent),
           following: following === key,
           camera,
         },
         resolve,
+        occluded,
       );
       if (entry.character.desk) claimed.add(entry.character.desk);
       if (!entry.character.ready) loading = true;

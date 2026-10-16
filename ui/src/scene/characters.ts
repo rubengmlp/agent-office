@@ -35,6 +35,7 @@ export type FrameInput = {
   selected: boolean;
   pending: boolean;
   ended: boolean;
+  away: boolean;
   lastTest: TestResult | null;
   name: string;
   following: boolean;
@@ -42,6 +43,8 @@ export type FrameInput = {
 };
 
 export type Resolver = (floor: string) => Vector3 | null;
+
+export type Occlusion = (point: Vector3) => boolean;
 
 type Activity = {
   clip: LogicalClip;
@@ -76,6 +79,7 @@ const BASE: Activity = {
 const UP = new Vector3(0, 1, 0);
 const LABEL_HEIGHT = 1.95;
 const HEAD_HEIGHT = 1.62;
+const WAIST_HEIGHT = 0.9;
 
 const ROLE_SHIRTS: Partial<Record<RoleKind, number>> = {
   director: 0x24324d,
@@ -142,6 +146,7 @@ export class Character {
   private alphaLevel = -1;
   private exitAt: number | null = null;
   private left = false;
+  private shown = 1;
   private tintLevel = -1;
   private castShadows = true;
   private readonly weights = { typing: 0, mug: 0, sip: 0, folder: 0, gesture: 0, slump: 0, pitch: 0, yaw: 0 };
@@ -182,6 +187,15 @@ export class Character {
 
   get gone(): boolean {
     return this.left;
+  }
+
+  get faded(): boolean {
+    return !this.leaving && this.shown <= 0;
+  }
+
+  waving(state: AgentState): boolean {
+    if (state !== 'done' || this.leaving) return false;
+    return this.lastState !== 'done' || this.seconds - this.stateStart < DONE_HOLD_S;
   }
 
   placeAt(point: Waypoint, nav: Nav): void {
@@ -233,7 +247,7 @@ export class Character {
     this.replan();
   }
 
-  update(input: FrameInput, resolve: Resolver): void {
+  update(input: FrameInput, resolve: Resolver, occluded: Occlusion): void {
     this.seconds += input.dt;
     const t = this.seconds;
     this.trackState(input.state);
@@ -279,8 +293,10 @@ export class Character {
     }
 
     const fade = this.fadeAlpha(input, t);
+    this.shown = fade;
     const spawn = this.readyAt === null ? 0 : Math.min(1, (t - this.readyAt) / SPAWN_FADE_S);
-    this.applyAlpha(Math.min(fade, spawn));
+    const alpha = Math.min(fade, spawn);
+    this.applyAlpha(alpha);
     this.applyTint(activity.tint, t);
     this.pickable = fade > 0.05;
     this.rings.select.visible = input.selected && fade > 0.05;
@@ -294,10 +310,10 @@ export class Character {
       state: input.state,
       icon: this.iconFor(input.state, input.pending),
       progress: input.state === 'testing',
-      badge: this.badgeUntil > t ? this.badge : null,
+      badge: this.badgeUntil > t && input.state !== 'done' && input.state !== 'failed' ? this.badge : null,
       selected: input.selected,
       pending: input.pending,
-      alpha: fade,
+      alpha: alpha > 0.01 && !occluded(_b.copy(this.root.position).addScaledVector(UP, WAIST_HEIGHT * input.scale)) ? alpha : 0,
       lod,
       following: input.following,
     });
@@ -667,7 +683,7 @@ export class Character {
     }
     this.exitAt = null;
     let alpha = 1;
-    if (input.state === 'done' || input.state === 'failed') {
+    if (!input.away && (input.state === 'done' || input.state === 'failed')) {
       const hold = input.state === 'done' ? DONE_HOLD_S : FAILED_HOLD_S;
       alpha = Math.max(0, Math.min(1, 1 - (t - this.stateStart - hold) / FADE_S));
     }
