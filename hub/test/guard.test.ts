@@ -26,6 +26,7 @@ describe('write guard', () => {
     const outside = write('office-redactor', '/p/mobile/lib/main.dart');
     expect(outside.pass).toBe(false);
     expect(outside.reason).toContain('Redacción solo escribe dentro de /docs/redaccion');
+    expect(outside.target).toBe('/p/mobile/lib/main.dart');
     expect(write('office-redactor', '/docs/redaccion/.fuentes/login/mobile/lib/a.dart').pass).toBe(false);
     expect(write('office-lead-redaccion', '/docs/taller/skills/x/SKILL.md').pass).toBe(false);
     expect(write('office-revisor-planes', '/docs/redaccion/planes/login.md').pass).toBe(true);

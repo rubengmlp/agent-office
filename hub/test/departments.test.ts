@@ -360,6 +360,14 @@ describe('department floors have no tests', () => {
     expect(agent(LEAD)?.state).not.toBe('testing');
     expect(h.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM verdicts WHERE kind = 'tests'").get()?.n).toBe(0);
     expect(h.office.report('ared-1')?.summary).toBe('Todavía sin ficheros, tests ni mensajes');
+    expect(h.office.report('ared-1')?.summaryText).toEqual({ key: 'hub.report.empty' });
+  });
+
+  test('a document over MAX_CONTENT_BYTES answers with a notice', () => {
+    redaccionTeam();
+    writeFileSync(join(docs, PLAN), 'x'.repeat(1_000_001));
+    h.office.refreshDocuments();
+    expect(h.office.documentContent(PLAN)).toEqual({ path: PLAN, kind: 'plan', markdown: '', notice: { key: 'hub.doc.tooLarge' } });
   });
 });
 
@@ -381,7 +389,7 @@ describe('guard through the hub', () => {
     expect(write(LEAD, cwd, 'ared-1', 'redactor-login', join(docs, 'redaccion', '.fuentes', 'login', 'mobile', 'a.dart')).pass).toBe(false);
     const blocked = write(LEAD, cwd, null, null, join(repo, 'lib', 'main.dart'));
     expect(blocked.pass).toBe(false);
-    expect(h.office.snapshot().activity.at(-1)?.summary).toContain('guardia: bloquea');
+    expect(h.office.snapshot().activity.at(-1)?.summary).toMatchObject({ key: 'hub.act.guardBlocked' });
     h.office.ingest(ev(DEV_LEAD, repo, 'SessionStart', {}), { socket: null, token: null, role: 'office-lead-mobile', name: 'lead-mobile' });
     expect(write(DEV_LEAD, repo, null, null, join(docs, PLAN)).pass).toBe(true);
     const mantCwd = join(docs, 'taller');

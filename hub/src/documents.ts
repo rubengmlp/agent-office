@@ -169,7 +169,7 @@ export class DocumentDesk {
     if (!doc) return null;
     const file = doc.kind === 'plan' ? join(this.opts.root(), doc.path) : join(this.opts.root(), doc.path, 'SKILL.md');
     try {
-      if (statSync(file).size > MAX_CONTENT_BYTES) return { path, kind: doc.kind, markdown: 'El documento es demasiado grande para mostrarlo en el panel.' };
+      if (statSync(file).size > MAX_CONTENT_BYTES) return { path, kind: doc.kind, markdown: '', notice: { key: 'hub.doc.tooLarge' } };
       return { path, kind: doc.kind, markdown: readFileSync(file, 'utf8') };
     } catch {
       return null;

@@ -1,7 +1,8 @@
 import type { Database } from 'bun:sqlite';
 import { lessonsBy } from './memory';
 import { BLOCK_PREFIX, DONE_PREFIX, short } from './state-machine';
-import type { ReportView, RoleId, VerdictKind } from './types';
+import { plural } from './texts';
+import type { HubText, ReportView, RoleId, VerdictKind } from './types';
 
 export const MAX_REPORTS_PER_ROLE = 50;
 const MAX_LIST = 30;
@@ -22,19 +23,29 @@ type VerdictRow = { ts: number; kind: string; ok: number; command: string | null
 type MessageRow = { ts: number; from_key: string; to_name: string; text: string | null };
 type ReportRow = { data: string };
 
-function summarize(sent: MessageRow[], closing: string | null, files: number, tests: number): string {
+type Summary = { summary: string; summaryText: HubText | null };
+
+// summary stays in Spanish for the agents (memoryContext) and the reports.summary column; summaryText is the panel
+// form, null when the summary is what an agent wrote (HECHO:, BLOQUEADO:, closing message).
+function summarize(sent: readonly { to: string; text: string | null }[], closing: string | null, files: number, tests: number): Summary {
   const done = [...sent].reverse().find((m) => m.text && DONE_PREFIX.test(m.text));
-  if (done?.text) return short(done.text, 160);
+  if (done?.text) return { summary: short(done.text, 160), summaryText: null };
   const blocked = [...sent].reverse().find((m) => m.text && BLOCK_PREFIX.test(m.text));
-  if (blocked?.text) return short(blocked.text, 160);
+  if (blocked?.text) return { summary: short(blocked.text, 160), summaryText: null };
   const firstLine = closing?.split('\n').find((line) => line.trim());
-  if (firstLine) return short(firstLine, 160);
+  if (firstLine) return { summary: short(firstLine, 160), summaryText: null };
   if (files > 0 || tests > 0) {
-    return `${files} ${files === 1 ? 'fichero cambiado' : 'ficheros cambiados'} · ${tests} ${tests === 1 ? 'ejecución de tests' : 'ejecuciones de tests'}`;
+    return {
+      summary: `${files} ${files === 1 ? 'fichero cambiado' : 'ficheros cambiados'} · ${tests} ${tests === 1 ? 'ejecución de tests' : 'ejecuciones de tests'}`,
+      summaryText: { key: 'hub.report.counts', params: { files: plural('hub.report.files', files, {}), tests: plural('hub.report.tests', tests, {}) } },
+    };
   }
   const lastSent = [...sent].reverse().find((m) => m.text);
-  if (lastSent?.text) return `Último mensaje a ${lastSent.to_name}: ${short(lastSent.text, 120)}`;
-  return 'Todavía sin ficheros, tests ni mensajes';
+  if (lastSent?.text) {
+    const text = short(lastSent.text, 120);
+    return { summary: `Último mensaje a ${lastSent.to}: ${text}`, summaryText: { key: 'hub.report.lastMessage', params: { to: lastSent.to, text } } };
+  }
+  return { summary: 'Todavía sin ficheros, tests ni mensajes', summaryText: { key: 'hub.report.empty' } };
 }
 
 export function buildReport(db: Database, s: ReportSubject, nameOf: (key: string) => string): ReportView {
@@ -74,7 +85,12 @@ export function buildReport(db: Database, s: ReportSubject, nameOf: (key: string
     startedAt: s.startedAt,
     endedAt: s.endedAt,
     live: s.endedAt === null,
-    summary: summarize(sentAll, s.closing, files.length, tests.length),
+    ...summarize(
+      sentAll.map((m) => ({ to: m.to_name, text: m.text })),
+      s.closing,
+      files.length,
+      tests.length,
+    ),
     files,
     tests,
     verdicts,
@@ -104,10 +120,19 @@ export function saveReport(db: Database, report: ReportView, now: number): void 
   ).run(report.floor, report.roleId, report.floor, report.roleId, MAX_REPORTS_PER_ROLE);
 }
 
+// Reports saved before summaryText have only the Spanish summary. Without a migration (the schema forbids UPDATE),
+// the panel form is recomputed from the saved data and adopted only if it yields exactly the saved summary.
+function legacySummaryText(report: ReportView): HubText | null {
+  const again = summarize(report.sent ?? [], report.closing ?? null, report.files?.length ?? 0, report.tests?.length ?? 0);
+  return again.summary === report.summary ? again.summaryText : null;
+}
+
 function parse(row: ReportRow | null | undefined): ReportView | null {
   if (!row) return null;
   try {
-    return { ...(JSON.parse(row.data) as ReportView), live: false };
+    const report = { ...(JSON.parse(row.data) as ReportView), live: false };
+    if (report.summaryText === undefined) report.summaryText = legacySummaryText(report);
+    return report;
   } catch {
     return null;
   }

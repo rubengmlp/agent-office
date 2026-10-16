@@ -45,6 +45,7 @@ import {
 import { settingsView } from './settings';
 import { DONE_PREFIX, classify, idText, record, short, text, type Classified, type Matchers, type SpawnCall } from './state-machine';
 import { SyncDesk, type SyncResult } from './sync';
+import { floorText, plural, roleText, roundText, scoreText } from './texts';
 import type {
   ActivityView,
   AgentState,
@@ -55,6 +56,7 @@ import type {
   GuardAlert,
   HookEvent,
   HookMeta,
+  HubText,
   LessonView,
   MemoryView,
   MessageView,
@@ -85,9 +87,9 @@ type AgentRuntime = {
   touchedFloor: string | null;
   state: AgentState;
   stateSince: number;
-  detail: string;
+  detail: HubText;
   tool: string | null;
-  blockedReason: string | null;
+  blockedReason: HubText | null;
   lastTest: TestResult | null;
   startedAt: number;
   closing: string | null;
@@ -338,10 +340,10 @@ export class Office {
       agent.state = nextState;
       agent.stateSince = now;
     }
-    if (c.event === 'SubagentStop' && agent.teammate) agent.detail = 'esperando';
+    if (c.event === 'SubagentStop' && agent.teammate) agent.detail = { key: 'hub.detail.waiting' };
     else if (c.detail) agent.detail = publicDetail(c, kind);
     if (c.tool && c.event === 'PreToolUse') agent.tool = c.tool;
-    if (c.blocked) agent.blockedReason = kind === 'observed' ? 'bloqueado' : c.blocked;
+    if (c.blocked) agent.blockedReason = kind === 'observed' ? { key: 'hub.detail.blocked' } : c.blocked;
     else if (c.unblock) agent.blockedReason = null;
     if (c.filePath) agent.touchedFloor = this.touchedFloor(c.filePath, agent.floor);
     const closing = text(e.last_assistant_message);
@@ -402,10 +404,10 @@ export class Office {
     const now = this.now();
     const session = this.touchSession(e, meta, now);
     if (!this.desk.someoneWatching() || !this.inScope(e, session)) return null;
-    const tool = text(e.tool_name) ?? 'una herramienta';
+    const tool = text(e.tool_name) ?? '?';
     const input = record(e.tool_input);
     const key = e.agent_id ?? e.session_id;
-    const who = this.agents.get(key)?.name ?? (key === e.session_id ? session.name : null) ?? 'un agente de la oficina';
+    const who = this.agents.get(key)?.name ?? (key === e.session_id ? session.name : null) ?? key.slice(0, 8);
     const id = `permiso-${randomUUID()}`;
     this.permissionHolds.set(id, { agentKey: key, match: permissionMatch(tool, input) });
     return this.desk.hold(
@@ -414,16 +416,11 @@ export class Office {
         kind: 'permission',
         detail: permissionDetail(tool, input),
         tool: text(e.tool_name) ?? undefined,
+        prompt: permissionPrompt(tool, who),
         agentKey: key,
         sessionId: e.session_id,
         floor: session.floor,
-        questions: [
-          {
-            question: `¿Permites a ${who} ${permissionVerb(tool)}?`,
-            header: 'Permiso',
-            options: [{ label: PERMISSION_ALLOW }, { label: PERMISSION_DENY }],
-          },
-        ],
+        questions: [{ question: 'permiso', options: [{ label: PERMISSION_ALLOW }, { label: PERMISSION_DENY }] }],
         createdAt: now,
       },
       input,
@@ -471,7 +468,7 @@ export class Office {
       event: 'TaskCompleted',
       tool: null,
       state: null,
-      summary: decision.pass ? `tarea cerrada: ${subject}` : `cierre bloqueado (falta tester): ${subject}`,
+      summary: { key: decision.pass ? 'hub.act.taskClosed' : 'hub.act.taskBlocked', params: { subject } },
     });
     return decision;
   }
@@ -502,7 +499,7 @@ export class Office {
       event: 'GateMessage',
       tool: 'SendMessage',
       state: null,
-      summary: decision.pass ? `aviso de fin aceptado: ${short(body, 60)}` : 'aviso de fin bloqueado: falta tester',
+      summary: decision.pass ? { key: 'hub.act.doneAccepted', params: { text: short(body, 60) } } : { key: 'hub.act.doneBlocked' },
     });
     return decision;
   }
@@ -526,7 +523,7 @@ export class Office {
         event: 'Guard',
         tool: e.tool_name ?? null,
         state: null,
-        summary: `guardia: bloquea a ${this.agents.get(key)?.name ?? role ?? 'un agente'} (${short(decision.reason.replace(/^Guardia de Agent Office: /, ''), 80)})`,
+        summary: { key: 'hub.act.guardBlocked', params: { who: this.agents.get(key)?.name ?? role ?? key.slice(0, 8), target: decision.target ?? '?' } },
       });
     }
     return decision;
@@ -547,7 +544,7 @@ export class Office {
       event: 'Order',
       tool: null,
       state: null,
-      summary: `orden desde el panel: ${short(body, 60)}`,
+      summary: { key: 'hub.act.order', params: { text: short(body, 60) } },
     });
     return 'ok';
   }
@@ -605,7 +602,7 @@ export class Office {
     const now = this.now();
     this.docs.markDiscarded({ path: doc.path, kind: doc.kind, slug: doc.slug }, now);
     this.refreshDocuments();
-    this.pushActivity({ ts: now, agentKey: 'panel', event: 'Discard', tool: null, state: null, summary: `plan descartado desde el panel: ${doc.path}` });
+    this.pushActivity({ ts: now, agentKey: 'panel', event: 'Discard', tool: null, state: null, summary: { key: 'hub.act.planDiscarded', params: { path: doc.path } } });
     await this.sync.remove(doc.slug);
     return 'ok';
   }
@@ -619,7 +616,7 @@ export class Office {
         event: 'Sync',
         tool: null,
         state: null,
-        summary: `fuentes preparadas para ${result.slug}: ${result.floors.map((f) => f.floor).join(', ')}`,
+        summary: { key: 'hub.act.sourcesReady', params: { slug: result.slug, floors: result.floors.map((f) => f.floor).join(', ') } },
       });
     }
     return result;
@@ -674,7 +671,7 @@ export class Office {
 
     const rows = purgeFloorData(this.opts.db, slug, path);
     const now = this.now();
-    this.pushActivity({ ts: now, agentKey: 'panel', event: 'FloorRemoved', tool: null, state: null, summary: `planta borrada desde el panel: ${slug}` });
+    this.pushActivity({ ts: now, agentKey: 'panel', event: 'FloorRemoved', tool: null, state: null, summary: { key: 'hub.act.floorRemoved', params: { slug } } });
     this.emit({ type: 'snapshot', data: this.snapshot() });
     return { rows, worktrees };
   }
@@ -751,7 +748,11 @@ export class Office {
       event: 'GuardAlert',
       tool: null,
       state: null,
-      summary: `${finding.level === 'alerta' ? 'alerta' : 'posible cambio'}: ${finding.files.length} fichero(s) de ${finding.floor} cambiaron sin atribuir mientras trabajaba ${who}`,
+      summary: plural('hub.act.guardAlert', finding.files.length, {
+        level: { key: finding.level === 'alerta' ? 'hub.alertLevel.alerta' : 'hub.alertLevel.posible' },
+        floor: finding.floor,
+        who,
+      }),
     });
   }
 
@@ -840,7 +841,7 @@ export class Office {
       event: 'Memory',
       tool: null,
       state: null,
-      summary: `memoria entregada: ${lessons.length} lecciones y ${reports.length} informes`,
+      summary: { key: 'hub.act.memoryDelivered', params: { lessons: lessons.length, reports: reports.length } },
     });
     return JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: context } });
   }
@@ -879,8 +880,10 @@ export class Office {
       tool: 'SendMessage',
       state: null,
       summary: decision.pass
-        ? `entrega aceptada: ${ref?.path ?? short(body, 60)}`
-        : `entrega bloqueada: ${ref ? `${ref.path} sin aprobación vigente` : 'falta la ruta del documento'}`,
+        ? { key: 'hub.act.deliveryAccepted', params: { path: ref?.path ?? short(body, 60) } }
+        : ref
+          ? { key: 'hub.act.deliveryBlockedStale', params: { path: ref.path } }
+          : { key: 'hub.act.deliveryBlockedNoPath' },
     });
     if (decision.pass && ref && isLeadRole(role)) {
       this.docs.markClosed(ref, now);
@@ -912,7 +915,7 @@ export class Office {
         event: 'Review',
         tool: 'SendMessage',
         state: null,
-        summary: `pide revisión de ${ref.path}${round ? ` (ronda ${round})` : ''}`,
+        summary: { key: 'hub.act.reviewRequested', params: { path: ref.path, round: roundText(round) } },
       });
       return;
     }
@@ -930,15 +933,14 @@ export class Office {
     }
     this.refreshDocuments();
     if (duplicate) return;
-    const label = verdict === 'approved' ? 'aprueba' : verdict === 'improve' ? 'pide mejoras en' : 'sin acuerdo en';
-    const score = parsed.score !== null ? ` · nota ${parsed.score}/10` : '';
+    const key = verdict === 'approved' ? 'hub.act.verdictApproved' : verdict === 'improve' ? 'hub.act.verdictImprove' : 'hub.act.verdictNoAgreement';
     this.pushActivity({
       ts: now,
       agentKey: from.key,
       event: 'Verdict',
       tool: 'SendMessage',
       state: null,
-      summary: `${label} ${ref.path}${round ? ` (ronda ${round})` : ''}${score}`,
+      summary: { key, params: { path: ref.path, round: roundText(round), score: scoreText(parsed.score) } },
     });
   }
 
@@ -956,7 +958,7 @@ export class Office {
               event: 'Commit',
               tool: null,
               state: null,
-              summary: `no se pudo hacer commit de ${ref.path} en ${root}`,
+              summary: { key: 'hub.act.commitFailed', params: { path: ref.path, root } },
             });
           }
         }),
@@ -972,14 +974,14 @@ export class Office {
       this.config.memory,
     );
     if (result.status === 'saved') this.emit({ type: 'memory', floor: agent.floor, role: roleId });
-    const summary =
+    const summary: HubText =
       result.status === 'saved'
-        ? `lección guardada para ${ROLE_LABELS[roleId]} en ${floorLabel(agent.floor)}`
+        ? { key: 'hub.act.lessonSaved', params: { role: roleText(roleId), floor: floorText(agent.floor) } }
         : result.status === 'duplicate'
-          ? 'lección repetida: ya estaba guardada'
+          ? { key: 'hub.act.lessonDuplicate' }
           : result.status === 'cap'
-            ? `lección descartada: tope de ${this.config.memory.maxLessonsPerSession} por sesión`
-            : 'lección vacía descartada';
+            ? { key: 'hub.act.lessonCap', params: { max: this.config.memory.maxLessonsPerSession } }
+            : { key: 'hub.act.lessonEmpty' };
     this.pushActivity({ ts: now, agentKey: agent.key, event: 'Lesson', tool: 'SendMessage', state: null, summary });
   }
 
@@ -1289,7 +1291,7 @@ export class Office {
       event: permission ? 'Permission' : 'Question',
       tool: permission ? 'PermissionRequest' : 'AskUserQuestion',
       state: 'asking',
-      summary: permission ? `permiso esperando en el panel: ${short(view.detail ?? '', 60)}` : 'pregunta esperando en el panel',
+      summary: permission ? { key: 'hub.act.permissionWaiting', params: { detail: short(view.detail ?? '', 60) } } : { key: 'hub.act.questionWaiting' },
     });
   }
 
@@ -1311,7 +1313,7 @@ export class Office {
       now - agent.stateSince > this.config.blockedAfterMinutes * 60_000
     ) {
       state = 'blocked';
-      detail = `sin respuesta: ${agent.detail}`;
+      detail = { key: 'hub.detail.noAnswer', params: { detail: agent.detail } };
     }
     return {
       key: agent.key,
@@ -1397,7 +1399,7 @@ export class Office {
         touchedFloor: null,
         state: 'idle',
         stateSince: now,
-        detail: 'esperando',
+        detail: { key: 'hub.detail.waiting' },
         tool: null,
         blockedReason: null,
         lastTest: null,
@@ -1442,12 +1444,12 @@ export function permissionMatch(tool: string, input: Record<string, unknown>): s
   return `${tool}|${JSON.stringify(input)}`;
 }
 
-export function permissionVerb(tool: string): string {
-  if (tool === 'Bash') return 'ejecutar este comando';
-  if (tool === 'Edit' || tool === 'Write' || tool === 'MultiEdit' || tool === 'NotebookEdit') return 'modificar este fichero';
-  if (tool === 'Read' || tool === 'Grep' || tool === 'Glob') return 'leer fuera de su carpeta';
-  if (tool === 'WebFetch' || tool === 'WebSearch') return 'consultar la web';
-  return `usar ${tool}`;
+export function permissionPrompt(tool: string, who: string): HubText {
+  if (tool === 'Bash') return { key: 'hub.permission.bash', params: { who } };
+  if (tool === 'Edit' || tool === 'Write' || tool === 'MultiEdit' || tool === 'NotebookEdit') return { key: 'hub.permission.edit', params: { who } };
+  if (tool === 'Read' || tool === 'Grep' || tool === 'Glob') return { key: 'hub.permission.read', params: { who } };
+  if (tool === 'WebFetch' || tool === 'WebSearch') return { key: 'hub.permission.web', params: { who } };
+  return { key: 'hub.permission.other', params: { who, tool } };
 }
 
 export function permissionDetail(tool: string, input: Record<string, unknown>): string {
@@ -1457,7 +1459,7 @@ export function permissionDetail(tool: string, input: Record<string, unknown>): 
     text(input.notebook_path) ??
     text(input.url) ??
     text(input.query) ??
-    (text(input.pattern) ? `${input.pattern as string}${text(input.path) ? ` en ${input.path as string}` : ''}` : null);
+    (text(input.pattern) ? `${input.pattern as string}${text(input.path) ? ` (${input.path as string})` : ''}` : null);
   return short(value ?? `${tool} ${JSON.stringify(input)}`, 600);
 }
 

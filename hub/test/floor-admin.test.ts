@@ -10,7 +10,7 @@ import { realPath } from '../src/floors';
 import type { GitRunner } from '../src/git';
 import { loadProfiles } from '../src/profiles';
 import type { FloorAddResult, FloorRemoveResult } from '../src/types';
-import { ev, fakePaths, git, harness, makeRepo, testConfig, useGitIdentity, type Harness } from './helpers';
+import { ev, fakePaths, git, harness, keyOf, makeRepo, testConfig, useGitIdentity, type Harness } from './helpers';
 
 useGitIdentity();
 
@@ -203,7 +203,7 @@ describe('floor admin', () => {
     expect(snapshot.agents.filter((agent) => agent.floor === 'mobile')).toEqual([]);
     expect(snapshot.sessions.filter((session) => session.floor === 'mobile')).toEqual([]);
     expect(snapshot.messages.filter((message) => message.floor === 'mobile')).toEqual([]);
-    expect(snapshot.activity.some((entry) => entry.summary.includes('planta borrada'))).toBe(true);
+    expect(snapshot.activity.some((entry) => keyOf(entry.summary) === 'hub.act.floorRemoved')).toBe(true);
 
     const floorsAt = h.messages.findIndex((msg) => msg.type === 'floors');
     expect(floorsAt).toBeGreaterThan(0);
