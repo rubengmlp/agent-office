@@ -68,6 +68,17 @@ describe('write guard', () => {
     expect(named('Bash', { command: 'echo x > /docs/taller/skills/otra/notas.md' }).pass).toBe(true);
   });
 
+  test('MultiEdit and NotebookEdit follow the order too', () => {
+    const named = (tool: string, input: Record<string, unknown>) =>
+      guardDecision({ tool, input, cwd: '/docs/redaccion', role: 'office-redactor', name: 'redactor-a' }, ctx);
+    expect(named('MultiEdit', { file_path: 'planes/a.md', edits: [] }).pass).toBe(true);
+    expect(named('MultiEdit', { file_path: 'planes/b.md', edits: [] }).pass).toBe(false);
+    expect(named('NotebookEdit', { notebook_path: '/docs/redaccion/historial/a.md' }).pass).toBe(true);
+    const notebook = named('NotebookEdit', { notebook_path: '/docs/redaccion/planes/b.ipynb' });
+    expect(notebook.pass).toBe(false);
+    expect(notebook.reason).toContain('redactor-a');
+  });
+
   test('roles outside the departments and unknown roles are never blocked', () => {
     expect(write('office-dev-mobile', '/p/backend/app/x.php').pass).toBe(true);
     expect(write('office-lead-mobile', '/anywhere').pass).toBe(true);

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { openDb } from '../src/db';
 import { ensureDocsRepo } from '../src/docs-repo';
@@ -151,7 +151,58 @@ describe('Redacción sources', () => {
     expect(await s.desk.cleanup(new Set())).toEqual([]);
     expect(existsSync(s.fuentes('ajeno', 'mobile'))).toBe(true);
     expect(existsSync(s.fuentes('propio', 'mobile'))).toBe(true);
-    expect(s.foreign).toEqual(['ajeno/mobile']);
+    expect(s.foreign).toEqual(['ajeno/mobile', 'propio/mobile']);
+    s.cleanup();
+  });
+
+  test('with an empty database even snapshots with its own id are kept: office.db may have been recreated', async () => {
+    const s = setup();
+    s.handmade('propio', 'hub-a');
+    expect(await s.desk.cleanup(new Set())).toEqual([]);
+    expect(existsSync(s.fuentes('propio', 'mobile'))).toBe(true);
+    expect(worktrees(s.mobile.repo)).toContain(s.fuentes('propio', 'mobile'));
+    expect(s.foreign).toEqual(['propio/mobile']);
+    s.cleanup();
+  });
+
+  test('links inside .fuentes are never followed nor removed', async () => {
+    const s = setup();
+    ok(await s.desk.sync({ slug: 'login', floors: ['mobile'] }));
+    const outside = join(s.root, 'fuera');
+    mkdirSync(join(outside, 'mobile'), { recursive: true });
+    writeFileSync(join(outside, 'mobile', 'valioso.txt'), 'x');
+    writeFileSync(join(outside, '.office'), 'hub-a\n');
+    mkdirSync(join(s.docs, 'redaccion', '.fuentes', 'enlace'), { recursive: true });
+    writeFileSync(s.fuentes('enlace', '.office'), 'hub-a\n');
+    symlinkSync(join(outside, 'mobile'), s.fuentes('enlace', 'mobile'));
+    symlinkSync(outside, join(s.docs, 'redaccion', '.fuentes', 'carpeta'));
+    expect(await s.desk.cleanup(new Set())).toEqual([]);
+    expect(existsSync(join(outside, 'mobile', 'valioso.txt'))).toBe(true);
+    expect(existsSync(s.fuentes('enlace', 'mobile'))).toBe(true);
+    expect(s.foreign.sort()).toEqual(['carpeta/mobile', 'enlace/mobile']);
+    s.cleanup();
+  });
+
+  test('the marker is never written through a link', async () => {
+    const s = setup();
+    ok(await s.desk.sync({ slug: 'login', floors: ['mobile'] }));
+    rmSync(s.fuentes('login', '.office'));
+    const stolen = join(s.root, 'robado.txt');
+    symlinkSync(stolen, s.fuentes('login', '.office'));
+    expect(await s.desk.cleanup(new Set())).toEqual([]);
+    expect(existsSync(stolen)).toBe(false);
+    expect(existsSync(s.fuentes('login', 'mobile'))).toBe(true);
+    s.cleanup();
+  });
+
+  test('entries starting with a dot are ignored at every level of .fuentes', async () => {
+    const s = setup();
+    ok(await s.desk.sync({ slug: 'login', floors: ['mobile'] }));
+    mkdirSync(join(s.docs, 'redaccion', '.fuentes', '.tmp', 'x'), { recursive: true });
+    writeFileSync(join(s.docs, 'redaccion', '.fuentes', '.tmp', 'x', 'a.txt'), 'x');
+    expect(await s.desk.cleanup(new Set())).toEqual([]);
+    expect(existsSync(join(s.docs, 'redaccion', '.fuentes', '.tmp', 'x', 'a.txt'))).toBe(true);
+    expect(s.foreign).toEqual([]);
     s.cleanup();
   });
 
