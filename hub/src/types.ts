@@ -329,7 +329,7 @@ export type ServerMessage =
 
 export type ClientMessage =
   | { type: 'auth'; key: string }
-  | { type: 'heartbeat'; visible: boolean };
+  | { type: 'heartbeat'; visible: boolean; notify?: boolean };
 
 export type Recording = {
   version: 1;

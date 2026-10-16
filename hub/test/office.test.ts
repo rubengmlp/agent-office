@@ -267,6 +267,19 @@ describe('questions held for the panel', () => {
     expect(await h.office.ask(question(repo, 'q4'), leadMeta)).toBeNull();
   });
 
+  test('a hidden tab that can notify counts as watching', async () => {
+    h = harness({ holdMs: 60_000 });
+    const repo = managedRepo();
+    h.office.heartbeat(false, 1);
+    const pending = h.office.ask(question(repo, 'q4b'), leadMeta);
+    expect(h.office.snapshot().questions.map((q) => q.id)).toEqual(['q4b']);
+    h.office.heartbeat(false, 0);
+    h.clock.advance(31_000);
+    h.office.tick();
+    expect(await pending).toBeNull();
+    expect(h.messages).toContainEqual({ type: 'question-closed', id: 'q4b', outcome: 'released' });
+  });
+
   test('observed floors and sessions outside the office are not held', async () => {
     h = harness({ holdMs: 60_000 });
     h.office.heartbeat(true);

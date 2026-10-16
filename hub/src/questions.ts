@@ -21,6 +21,7 @@ export type DeskEvents = {
 export class QuestionDesk {
   private readonly pending = new Map<string, Pending>();
   private lastVisibleAt = Number.NEGATIVE_INFINITY;
+  private notifiers = 0;
 
   constructor(
     private readonly events: DeskEvents,
@@ -28,12 +29,14 @@ export class QuestionDesk {
     private readonly now: () => number = Date.now,
   ) {}
 
-  heartbeat(visible: boolean): void {
+  // notifiers: open panels that can raise a desktop notification even while hidden.
+  heartbeat(visible: boolean, notifiers = 0): void {
     if (visible) this.lastVisibleAt = this.now();
+    this.notifiers = notifiers;
   }
 
   someoneWatching(): boolean {
-    return this.now() - this.lastVisibleAt < VISIBLE_WINDOW_MS;
+    return this.now() - this.lastVisibleAt < VISIBLE_WINDOW_MS || this.notifiers > 0;
   }
 
   hold(view: Omit<QuestionView, 'expiresAt'>, toolInput: Record<string, unknown>): Promise<string | null> {

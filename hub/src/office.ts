@@ -437,8 +437,8 @@ export class Office {
     return this.desk.release(id);
   }
 
-  heartbeat(visible: boolean): void {
-    this.desk.heartbeat(visible);
+  heartbeat(visible: boolean, notifiers = 0): void {
+    this.desk.heartbeat(visible, notifiers);
   }
 
   gate(e: HookEvent): GateDecision {
