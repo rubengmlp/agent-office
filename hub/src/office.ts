@@ -18,7 +18,6 @@ import { type GateDecision } from './gate';
 import { GitQueue, runGit, type GitRunner } from './git';
 import { GUARDED_TOOLS, guardDecision } from './guard';
 import type { Log } from './log';
-import { captureLesson } from './memory';
 import {
   ANSWERS_QUESTION,
   DECISION_FROM,
@@ -50,12 +49,10 @@ import {
 import { withoutChatCalls } from './chat-commands';
 import {
   STATUS_REQUEST,
-  VERDICT_DETAILS,
   DISCARDED_MARK,
   ROLE_LABELS,
   analysisOrderText,
   executeOrderText,
-  historyPath,
   isUserPrompt,
   taskLine,
   withoutDiscardMark,
@@ -64,6 +61,7 @@ import { AskDesk } from './ask-desk';
 import { ChatRoom, type ReadChatResult, type UserChatResult } from './chat-room';
 import { ContextDesk } from './context-desk';
 import { GateDesk } from './gate-desk';
+import { ProtocolDesk } from './protocol-desk';
 import { GuardDesk } from './guard-desk';
 import { MeterDesk } from './meter-desk';
 import { OfficeBus } from './office-bus';
@@ -73,15 +71,11 @@ import { StallDesk } from './stall-desk';
 import { prepare, type Sql } from './office-sql';
 import { publicDetail, publicSummary, publicText, storedPayload, visibleKind } from './privacy';
 import { detectStack, profileFor, type Profiles } from './profiles';
-import { docRef, parseProtocol, type DocRef } from './protocol';
+import { parseProtocol, type DocRef } from './protocol';
 import { QuestionDesk } from './questions';
 import { buildReport, saveReport, savedReport, savedReports } from './reports';
 import {
-  isAuthorRole,
   isDepartmentFloor,
-  isLeadRole,
-  isVerdictRole,
-  noLessons,
   remembers,
   roleIdOf,
   roleKind,
@@ -122,7 +116,6 @@ import type {
   Stack,
   UsageRange,
   UsageSummary,
-  VerdictKind,
 } from './types';
 
 export {
@@ -196,6 +189,7 @@ export class Office {
   private readonly book: SessionBook;
   private readonly rules: RulesDesk;
   private readonly guards: GuardDesk;
+  private readonly protocol: ProtocolDesk;
   private readonly gates: GateDesk;
   private readonly room: ChatRoom;
   private readonly context: ContextDesk;
@@ -343,6 +337,23 @@ export class Office {
       context: () => this.guards.context(),
       busy: (floor) => this.guards.busy(floor),
       userAnswered: (sessionId) => this.stall.userAnswered(sessionId),
+    });
+    this.protocol = new ProtocolDesk({
+      db: opts.db,
+      sql: this.sql,
+      now: this.now,
+      bus: this.bus,
+      book: this.book,
+      config: () => this.config,
+      docs: this.docs,
+      sync: this.sync,
+      git: this.git,
+      queue: this.docsQueue,
+      docsRoot: () => this.docsRoot(),
+      refreshDocuments: () => this.refreshDocuments(),
+      review: (ref, round, from) => this.gates.reviewBlock(ref, round, from),
+      declareWaiting: (agent, rest, now) => this.stall.declareWaiting(agent, rest, now),
+      retire: (agent, detail, now) => this.retire(agent, detail, now),
     });
     this.book.restoreSessions();
     this.docs.refresh();
@@ -842,106 +853,6 @@ export class Office {
     this.docs.refresh();
   }
 
-  private handleProtocol(message: { to: string; toKey: string | null; text: string }, from: AgentRuntime, session: SessionRuntime, now: number): void {
-    if (!remembers(session.floorKind)) return;
-    const parsed = parseProtocol(message.text);
-    if (!parsed) return;
-    if (parsed.kind === 'lesson') {
-      if (noLessons(roleKind(from.role))) return;
-      this.captureAgentLesson(from, parsed.rest, now);
-      return;
-    }
-    if (parsed.kind === 'waiting') {
-      if (this.stall.declareWaiting(from, parsed.rest, now)) this.book.emitAgent(from, now);
-      return;
-    }
-    if (!isDepartmentFloor(session.floorKind)) return;
-    const ref = docRef(parsed.target, this.docsRoot(), session.cwd);
-    if (!ref) return;
-    if (parsed.kind === 'split') {
-      if (ref.kind === 'plan') {
-        this.pushActivity({
-          ts: now,
-          agentKey: from.key,
-          event: 'Split',
-          tool: 'SendMessage',
-          state: null,
-          summary: { key: 'hub.act.splitRequested', params: { who: from.name ?? from.key, path: ref.path } },
-        });
-      }
-      return;
-    }
-    if (parsed.kind === 'plan') {
-      if (ref.kind === 'plan' && isLeadRole(from.role)) {
-        this.pushActivity({ ts: now, agentKey: from.key, event: 'Plan', tool: 'SendMessage', state: null, summary: { key: 'hub.act.planNotice', params: { to: message.to, path: ref.path } } });
-      }
-      return;
-    }
-    const round = parsed.round;
-    if (parsed.kind === 'review' && isAuthorRole(from.role)) {
-      // gate.sh blocks it, but emit.sh runs in the same PreToolUse: no round opens and nothing is committed.
-      const { decision, summary } = this.gates.reviewBlock(ref, round, 'ingest');
-      if (!decision.pass) {
-        if (summary) this.pushActivity({ ts: now, agentKey: from.key, event: 'Review', tool: 'SendMessage', state: null, summary });
-        return;
-      }
-      this.docs.markRequested(ref, round, now);
-      this.commitRound(ref, round);
-      this.refreshDocuments();
-      this.pushActivity({
-        ts: now,
-        agentKey: from.key,
-        event: 'Review',
-        tool: 'SendMessage',
-        state: null,
-        summary: { key: 'hub.act.reviewRequested', params: { path: ref.path, round: roundText(round) } },
-      });
-      return;
-    }
-    const verdict: Exclude<VerdictKind, 'tests'> | null =
-      parsed.kind === 'improve' ? 'improve' : parsed.kind === 'approved' ? 'approved' : parsed.kind === 'no-agreement' ? 'no-agreement' : null;
-    if (!verdict || !isVerdictRole(from.role) || !this.toAuthor(message, ref)) return;
-    if (this.sql.agentVerdict.get(from.key, ref.path)) {
-      this.pushActivity({
-        ts: now,
-        agentKey: from.key,
-        event: 'Verdict',
-        tool: 'SendMessage',
-        state: null,
-        summary: { key: 'hub.act.verdictIgnored', params: { who: from.name ?? from.key, path: ref.path } },
-      });
-      return;
-    }
-    // A SIN ACUERDO: is recorded at most at the round the document had, and without a round at that round.
-    const docRound = this.docs.find(ref.path)?.round ?? 0;
-    const stored = verdict !== 'no-agreement' || docRound <= 0 ? round : Math.min(round ?? docRound, docRound);
-    this.sql.insertVerdict.run(now, from.key, from.role, session.floor, verdict, verdict === 'approved' ? 1 : 0, null, ref.path, stored, parsed.score);
-    this.docs.markRound(ref, round, now);
-    if (verdict === 'approved') {
-      this.commitRound(ref, round);
-      if (ref.kind === 'plan') this.bus.background(this.sync.checkAhead(ref.slug));
-    }
-    this.refreshDocuments();
-    const key = verdict === 'approved' ? 'hub.act.verdictApproved' : verdict === 'improve' ? 'hub.act.verdictImprove' : 'hub.act.verdictNoAgreement';
-    this.pushActivity({
-      ts: now,
-      agentKey: from.key,
-      event: 'Verdict',
-      tool: 'SendMessage',
-      state: null,
-      summary: { key, params: { path: ref.path, round: roundText(round), score: scoreText(parsed.score) } },
-    });
-    this.retire(from, VERDICT_DETAILS[verdict], now);
-  }
-
-  private toAuthor(message: { to: string; toKey: string | null }, ref: DocRef): boolean {
-    const author = `${ref.kind === 'plan' ? 'redactor' : 'artesano'}-${ref.slug}`;
-    const name = message.to.split('@')[0] ?? '';
-    if (name === author) return true;
-    const recipient = message.toKey ? this.book.agents.get(message.toKey) : undefined;
-    return !!recipient && recipient.name === author && isAuthorRole(recipient.role);
-  }
-
   private retire(agent: AgentRuntime, detail: HubText, now: number): void {
     agent.retiredAt = now;
     agent.retiredAwake = true;
@@ -1012,48 +923,6 @@ export class Office {
     this.bus.background(this.docsQueue.run(root, () => commitDocument(this.git, root, ref.path, message)));
   }
 
-  private commitRound(ref: DocRef, round: number | null): void {
-    const root = this.docsRoot();
-    const message = `${ref.kind === 'plan' ? 'redaccion' : 'taller'}: ${ref.slug} ronda ${round ?? '?'}`;
-    const paths = ref.kind === 'plan' ? [ref.path, historyPath(ref.slug)] : [ref.path];
-    this.bus.background(
-      this.docsQueue
-        .run(root, () => commitDocument(this.git, root, paths, message))
-        .then((outcome) => {
-          if (outcome === 'failed') {
-            this.pushActivity({
-              ts: this.now(),
-              agentKey: 'redaccion',
-              event: 'Commit',
-              tool: null,
-              state: null,
-              summary: { key: 'hub.act.commitFailed', params: { path: ref.path, root } },
-            });
-          }
-        }),
-    );
-  }
-
-  private captureAgentLesson(agent: AgentRuntime, raw: string, now: number): void {
-    const roleId = roleIdOf(agent.role);
-    if (!roleId) return;
-    const result = captureLesson(
-      this.opts.db,
-      { floor: agent.floor, role: roleId, text: raw, origin: 'agent', agentKey: agent.key, now },
-      this.config.memory,
-    );
-    if (result.status === 'saved') this.bus.emit({ type: 'memory', floor: agent.floor, role: roleId });
-    const summary: HubText =
-      result.status === 'saved'
-        ? { key: 'hub.act.lessonSaved', params: { role: roleText(roleId), floor: floorText(agent.floor) } }
-        : result.status === 'duplicate'
-          ? { key: 'hub.act.lessonDuplicate' }
-          : result.status === 'cap'
-            ? { key: 'hub.act.lessonCap', params: { max: this.config.memory.maxLessonsPerSession } }
-            : { key: 'hub.act.lessonEmpty' };
-    this.pushActivity({ ts: now, agentKey: agent.key, event: 'Lesson', tool: 'SendMessage', state: null, summary });
-  }
-
   private recordTask(e: HookEvent, c: Classified, agent: AgentRuntime, session: SessionRuntime, now: number): void {
     const task = c.task;
     if (!task?.taskId) return;
@@ -1073,7 +942,7 @@ export class Office {
     this.stall.settleWaiting(from, recipient, body, now);
     if (recipient && recipient !== from) this.messageReceived(recipient, assigns(from, recipient) ? body : null, now);
     if (recipient && recipient !== from && recipient.awaitingAnswer) this.answerReceived(recipient, now);
-    if (body) this.handleProtocol({ to: message.to, toKey, text: body }, from, session, now);
+    if (body) this.protocol.handleProtocol({ to: message.to, toKey, text: body }, from, session, now);
   }
 
   private messageReceived(agent: AgentRuntime, body: string | null, now: number): void {
