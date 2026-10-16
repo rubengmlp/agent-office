@@ -98,7 +98,7 @@ function floorsMeta(groups: readonly (readonly AgentView[])[]): string | null {
 }
 
 export function mountFloors(host: HTMLElement, store: Store, api: OfficeApi | null): void {
-  const section = panelSection({ id: 'floors', title: () => t('floors.title'), defaultOpen: true, host });
+  const section = panelSection({ id: 'floors', title: () => t('floors.title'), host });
   const open = new Set<string>();
   let touched = false;
   let selectedFloor: string | null = null;

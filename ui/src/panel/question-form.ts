@@ -226,7 +226,6 @@ export function mountQuestion(host: HTMLElement, store: Store, actions: Actions)
   const section = panelSection({
     id: 'question',
     title: () => (form?.question.kind === 'permission' ? t('question.permissionTitle') : t('question.title')),
-    defaultOpen: true,
     host,
   });
   section.root.classList.add('question-section');

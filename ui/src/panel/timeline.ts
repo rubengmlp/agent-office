@@ -49,7 +49,7 @@ function section(title: string, items: readonly HTMLElement[], empty: string): H
 
 export function mountTimeline(host: HTMLElement, store: Store): void {
   let signature = '';
-  const card = panelSection({ id: 'timeline', title: () => t('timeline.title'), defaultOpen: false, host });
+  const card = panelSection({ id: 'timeline', title: () => t('timeline.title'), host });
   const { body } = card;
   host.hidden = true;
 

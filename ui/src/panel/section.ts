@@ -1,9 +1,13 @@
 import { el } from '../dom';
 import { readJson, writeJson } from '../prefs';
 
-export const SECTIONS_KEY = 'agent-office.panel.sections';
+export const OPEN_SECTION_KEY = 'agent-office.panel.open';
 
 export type SectionId = 'floors' | 'now' | 'question' | 'deliverables' | 'report' | 'memory' | 'timeline' | 'orders';
+
+export const DEFAULT_SECTION: SectionId = 'now';
+
+const SECTION_IDS: ReadonlySet<string> = new Set<SectionId>(['floors', 'now', 'question', 'deliverables', 'report', 'memory', 'timeline', 'orders']);
 
 export type PanelSection = {
   root: HTMLDetailsElement;
@@ -16,29 +20,25 @@ export type PanelSection = {
 export type SectionOptions = {
   id: SectionId;
   title: () => string;
-  defaultOpen: boolean;
   host?: HTMLElement;
 };
 
-function storedSections(): Record<string, boolean> {
-  const raw = readJson(SECTIONS_KEY);
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {};
-  const sections: Record<string, boolean> = {};
-  for (const [id, open] of Object.entries(raw as Record<string, unknown>)) {
-    if (typeof open === 'boolean') sections[id] = open;
-  }
-  return sections;
+type LiveSection = { id: SectionId; choose(open: boolean): void };
+
+const live = new Set<LiveSection>();
+
+export function readOpenSection(): SectionId | null {
+  const raw = readJson(OPEN_SECTION_KEY);
+  if (raw === null) return DEFAULT_SECTION;
+  if (raw === '') return null;
+  return typeof raw === 'string' && SECTION_IDS.has(raw) ? (raw as SectionId) : DEFAULT_SECTION;
 }
 
-export function readSectionOpen(id: SectionId, defaultOpen: boolean): boolean {
-  return storedSections()[id] ?? defaultOpen;
+export function storeOpenSection(id: SectionId | null): void {
+  writeJson(OPEN_SECTION_KEY, id ?? '');
 }
 
-export function storeSectionOpen(id: SectionId, open: boolean): void {
-  writeJson(SECTIONS_KEY, { ...storedSections(), [id]: open });
-}
-
-export function panelSection({ id, title, defaultOpen, host }: SectionOptions): PanelSection {
+export function panelSection({ id, title, host }: SectionOptions): PanelSection {
   const heading = el('span', 'section-title');
   const meta = el('span', 'panel-section-meta');
   meta.hidden = true;
@@ -47,7 +47,7 @@ export function panelSection({ id, title, defaultOpen, host }: SectionOptions): 
   const root = el('details', 'panel-card panel-section', summary, body);
   root.dataset.id = id;
 
-  let chosen = readSectionOpen(id, defaultOpen);
+  let chosen = readOpenSection() === id;
   let forced = false;
 
   const show = (open: boolean): void => {
@@ -55,6 +55,13 @@ export function panelSection({ id, title, defaultOpen, host }: SectionOptions): 
     root.open = open;
   };
   show(chosen);
+  live.add({
+    id,
+    choose(open: boolean): void {
+      chosen = open;
+      show(forced || open);
+    },
+  });
 
   summary.addEventListener('click', (event) => {
     if (forced) event.preventDefault();
@@ -67,7 +74,9 @@ export function panelSection({ id, title, defaultOpen, host }: SectionOptions): 
       root.dataset.shown = root.open ? '1' : '0';
       if (forced) return;
       chosen = root.open;
-      storeSectionOpen(id, chosen);
+      storeOpenSection(chosen ? id : null);
+      if (!chosen) return;
+      for (const other of live) if (other.id !== id) other.choose(false);
     },
     true,
   );

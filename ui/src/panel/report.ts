@@ -166,7 +166,7 @@ export function mountReport(host: HTMLElement, store: Store, api: OfficeApi | nu
 
   const client = api;
   const chip = el('span', 'chip');
-  const section = panelSection({ id: 'report', title: () => t('report.title'), defaultOpen: false, host });
+  const section = panelSection({ id: 'report', title: () => t('report.title'), host });
   const { body } = section;
 
   let currentKey: string | null = null;

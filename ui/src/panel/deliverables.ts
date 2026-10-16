@@ -324,7 +324,6 @@ export function mountDeliverables(host: HTMLElement, store: Store, api: OfficeAp
   const section = panelSection({
     id: 'deliverables',
     title: () => t(kind === 'skill' ? 'deliverables.title.skill' : 'deliverables.title.plan'),
-    defaultOpen: false,
     host,
   });
   const count = el('span', 'chip');

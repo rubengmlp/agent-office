@@ -48,7 +48,7 @@ export function mountMemory(host: HTMLElement, store: Store, api: OfficeApi | nu
   const status = el('p', 'memory-status');
   const reportsHost = el('div', 'memory-reports');
   const form = el('div', 'memory-add', text, el('div', 'memory-add-actions', add, status));
-  const section = panelSection({ id: 'memory', title: () => t('memory.title'), defaultOpen: false, host });
+  const section = panelSection({ id: 'memory', title: () => t('memory.title'), host });
   section.body.append(scope, lessonsHost, form, reportsHost);
 
   let target: Target | null = null;

@@ -65,7 +65,7 @@ function stalledLine(agent: AgentView, now: number, times: TimeNode[]): HTMLElem
 
 export function mountNow(host: HTMLElement, store: Store, api: OfficeApi | null): void {
   let times: TimeNode[] = [];
-  const section = panelSection({ id: 'now', title: () => t('now.title'), defaultOpen: true, host });
+  const section = panelSection({ id: 'now', title: () => t('now.title'), host });
 
   store.watch(['selection', 'agents', 'activity', 'lang'], () => {
     times = [];

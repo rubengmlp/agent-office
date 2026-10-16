@@ -27,7 +27,7 @@ export function mountOrders(host: HTMLElement, store: Store, actions: Actions): 
   const status = el('p', 'orders-status');
   const targetLabel = el('span', 'field-label muted');
 
-  const section = panelSection({ id: 'orders', title: () => t('orders.title'), defaultOpen: true, host });
+  const section = panelSection({ id: 'orders', title: () => t('orders.title'), host });
   section.body.append(el('label', 'field', targetLabel, select), textarea, el('div', 'orders-actions', send, status));
 
   let busy = false;

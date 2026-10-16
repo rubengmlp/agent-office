@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { panelSection, readSectionOpen, SECTIONS_KEY, storeSectionOpen } from '../src/panel/section';
+import { DEFAULT_SECTION, OPEN_SECTION_KEY, panelSection, readOpenSection, type SectionId, storeOpenSection } from '../src/panel/section';
 import { readJson, writeJson } from '../src/prefs';
 
 class FakeElement extends EventTarget {
@@ -61,8 +61,8 @@ beforeEach(() => {
   broken = false;
 });
 
-function make(defaultOpen = false, host?: FakeElement) {
-  const section = panelSection({ id: 'report', title: () => 'Informe', defaultOpen, host: host as unknown as HTMLElement });
+function make(host?: FakeElement, id: SectionId = 'report') {
+  const section = panelSection({ id, title: () => 'Informe', host: host as unknown as HTMLElement });
   const root = section.root as unknown as FakeElement;
   const summary = root.children[0] as FakeElement;
   return { section, root, summary };
@@ -74,7 +74,7 @@ function userSets(root: FakeElement, open: boolean): void {
 }
 
 function stored(): unknown {
-  return JSON.parse(storage.get(SECTIONS_KEY) ?? 'null');
+  return JSON.parse(storage.get(OPEN_SECTION_KEY) ?? 'null');
 }
 
 describe('prefs', () => {
@@ -94,30 +94,63 @@ describe('prefs', () => {
 });
 
 describe('section state', () => {
-  test('a missing or malformed entry gives the default', () => {
-    expect(readSectionOpen('memory', true)).toBe(true);
-    expect(readSectionOpen('memory', false)).toBe(false);
-    storage.set(SECTIONS_KEY, JSON.stringify({ memory: 'yes', report: true }));
-    expect(readSectionOpen('memory', false)).toBe(false);
-    expect(readSectionOpen('report', false)).toBe(true);
-    storage.set(SECTIONS_KEY, '[true]');
-    expect(readSectionOpen('report', false)).toBe(false);
+  test('nothing stored opens the default section; junk falls back to it; empty means all closed', () => {
+    expect(readOpenSection()).toBe(DEFAULT_SECTION);
+    storage.set(OPEN_SECTION_KEY, JSON.stringify('memory'));
+    expect(readOpenSection()).toBe('memory');
+    storage.set(OPEN_SECTION_KEY, JSON.stringify('nope'));
+    expect(readOpenSection()).toBe(DEFAULT_SECTION);
+    storage.set(OPEN_SECTION_KEY, JSON.stringify(''));
+    expect(readOpenSection()).toBeNull();
   });
 
-  test('storing one section keeps the others and drops junk', () => {
-    storage.set(SECTIONS_KEY, JSON.stringify({ floors: false, junk: 3 }));
-    storeSectionOpen('timeline', true);
-    expect(stored()).toEqual({ floors: false, timeline: true });
+  test('storing a section or none', () => {
+    storeOpenSection('timeline');
+    expect(stored()).toBe('timeline');
+    storeOpenSection(null);
+    expect(stored()).toBe('');
+  });
+});
+
+describe('accordion', () => {
+  test('opening one section closes the others and remembers it', () => {
+    const report = make(undefined, 'report');
+    const memory = make(undefined, 'memory');
+    userSets(report.root, true);
+    expect(stored()).toBe('report');
+    userSets(memory.root, true);
+    expect(memory.root.open).toBe(true);
+    expect(report.root.open).toBe(false);
+    expect(stored()).toBe('memory');
+  });
+
+  test('closing the open section leaves all closed', () => {
+    const report = make(undefined, 'report');
+    userSets(report.root, true);
+    userSets(report.root, false);
+    expect(stored()).toBe('');
+    expect(make(undefined, 'report').root.open).toBe(false);
+  });
+
+  test('a forced section stays open when another one opens', () => {
+    const question = make(undefined, 'question');
+    const memory = make(undefined, 'memory');
+    question.section.setForced(true);
+    userSets(memory.root, true);
+    expect(question.root.open).toBe(true);
+    expect(memory.root.open).toBe(true);
+    question.section.setForced(false);
+    expect(question.root.open).toBe(false);
   });
 });
 
 describe('panelSection', () => {
   test('builds the details once with title, hidden meta and the default state', () => {
     const host = new FakeElement('div');
-    const { section, root, summary } = make(true, host);
+    const { section, root, summary } = make(host, DEFAULT_SECTION);
     expect(host.children).toEqual([root]);
     expect(root.tagName).toBe('details');
-    expect(root.dataset.id).toBe('report');
+    expect(root.dataset.id).toBe(DEFAULT_SECTION);
     expect(root.open).toBe(true);
     expect(summary.tagName).toBe('summary');
     expect((summary.children[0] as FakeElement).textContent).toBe('Informe');
@@ -125,45 +158,35 @@ describe('panelSection', () => {
     expect(root.children[1]).toBe(section.body as unknown as FakeElement);
   });
 
-  test('a user toggle persists and the next section starts from it', () => {
-    const { root } = make(false);
-    userSets(root, true);
-    expect(stored()).toEqual({ report: true });
-    expect(make(false).root.open).toBe(true);
-    userSets(root, false);
-    expect(stored()).toEqual({ report: false });
-    expect(make(true).root.open).toBe(false);
-  });
-
   test('a toggle event for a programmatic change is ignored', () => {
-    const { section, root } = make(false);
+    const { section, root } = make();
     section.setForced(true);
     root.dispatchEvent(new Event('toggle'));
     section.setForced(false);
     root.dispatchEvent(new Event('toggle'));
-    expect(storage.has(SECTIONS_KEY)).toBe(false);
+    expect(storage.has(OPEN_SECTION_KEY)).toBe(false);
   });
 
   test('a toggle from a nested details does not count', () => {
-    const { section, root } = make(false);
+    const { section, root } = make();
     const inner = new FakeElement('details');
     section.body.append(inner as unknown as Node);
     root.open = true;
     const event = new Event('toggle');
     Object.defineProperty(event, 'target', { value: inner });
     root.dispatchEvent(event);
-    expect(storage.has(SECTIONS_KEY)).toBe(false);
+    expect(storage.has(OPEN_SECTION_KEY)).toBe(false);
   });
 
   test('setForced opens without persisting, blocks the summary and then restores the choice', () => {
-    const { section, root, summary } = make(false);
+    const { section, root, summary } = make();
     section.setForced(true);
     expect(root.open).toBe(true);
     expect(root.classList.contains('panel-section-forced')).toBe(true);
     const click = new Event('click', { cancelable: true });
     summary.dispatchEvent(click);
     expect(click.defaultPrevented).toBe(true);
-    expect(storage.has(SECTIONS_KEY)).toBe(false);
+    expect(storage.has(OPEN_SECTION_KEY)).toBe(false);
     section.setForced(false);
     expect(root.open).toBe(false);
     expect(root.classList.contains('panel-section-forced')).toBe(false);
@@ -173,7 +196,7 @@ describe('panelSection', () => {
   });
 
   test('releasing a section that was never forced leaves it alone', () => {
-    const { section, root } = make(true);
+    const { section, root } = make(undefined, DEFAULT_SECTION);
     section.setForced(false);
     expect(root.open).toBe(true);
   });
@@ -196,7 +219,7 @@ describe('panelSection', () => {
 
   test('setTitle re-reads the title', () => {
     let title = 'Memoria';
-    const section = panelSection({ id: 'memory', title: () => title, defaultOpen: false });
+    const section = panelSection({ id: 'memory', title: () => title });
     const heading = ((section.root as unknown as FakeElement).children[0] as FakeElement).children[0] as FakeElement;
     expect(heading.textContent).toBe('Memoria');
     title = 'Memory';
@@ -206,7 +229,7 @@ describe('panelSection', () => {
 
   test('blocked storage still builds and toggles the section', () => {
     broken = true;
-    const { section, root } = make(true);
+    const { section, root } = make(undefined, DEFAULT_SECTION);
     expect(root.open).toBe(true);
     expect(() => userSets(root, false)).not.toThrow();
     section.setForced(true);
