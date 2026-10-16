@@ -18,7 +18,14 @@ export type NumberKey =
   | 'maxContextChars'
   | 'leaveAfterMinutes'
   | 'maxBriefsPerOrder'
-  | 'stalledAfterMinutes';
+  | 'stalledAfterMinutes'
+  | 'checksTimeoutMinutes'
+  | 'checksMaxParallel'
+  | 'checksTailBytes'
+  | 'worktreeRetentionDays'
+  | 'worktreeMaxActive'
+  | 'worktreeWarnGb'
+  | 'checkpointMaxFileKb';
 
 export type NumberField = {
   key: NumberKey;
@@ -136,4 +143,14 @@ export const OFFICE_FIELDS: readonly NumberField[] = [
   },
 ];
 
-export const NUMBER_FIELDS: readonly NumberField[] = [...REVIEW_FIELDS, ...MEMORY_FIELDS, ...OFFICE_FIELDS];
+export const DELIVERY_FIELDS: readonly NumberField[] = [
+  { key: 'checksTimeoutMinutes', labelKey: 'settings.field.checksTimeoutMinutes', hintKey: 'settings.field.hint.checksTimeoutMinutes', min: 1, max: 120 },
+  { key: 'checksMaxParallel', labelKey: 'settings.field.checksMaxParallel', hintKey: 'settings.field.hint.checksMaxParallel', min: 1, max: 8 },
+  { key: 'checksTailBytes', labelKey: 'settings.field.checksTailBytes', hintKey: 'settings.field.hint.checksTailBytes', min: 1000, max: 64000 },
+  { key: 'worktreeRetentionDays', labelKey: 'settings.field.worktreeRetentionDays', hintKey: 'settings.field.hint.worktreeRetentionDays', min: 1, max: 90 },
+  { key: 'worktreeMaxActive', labelKey: 'settings.field.worktreeMaxActive', hintKey: 'settings.field.hint.worktreeMaxActive', min: 1, max: 20 },
+  { key: 'worktreeWarnGb', labelKey: 'settings.field.worktreeWarnGb', hintKey: 'settings.field.hint.worktreeWarnGb', min: 1, max: 1000 },
+  { key: 'checkpointMaxFileKb', labelKey: 'settings.field.checkpointMaxFileKb', hintKey: 'settings.field.hint.checkpointMaxFileKb', min: 1, max: 102400 },
+];
+
+export const NUMBER_FIELDS: readonly NumberField[] = [...REVIEW_FIELDS, ...MEMORY_FIELDS, ...OFFICE_FIELDS, ...DELIVERY_FIELDS];

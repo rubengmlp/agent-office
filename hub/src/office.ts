@@ -804,7 +804,7 @@ export class Office {
     this.book.refloor(now);
     this.rules.refreshSessionFlags(now, true);
     this.bus.emit({ type: 'floors', data: this.floors.views() });
-    this.bus.emit({ type: 'settings', data: settingsView(config) });
+    this.bus.emit({ type: 'settings', data: settingsView(config, profiles) });
     this.docs.watch();
     this.refreshDocuments();
   }

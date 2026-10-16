@@ -5,6 +5,9 @@ import { hubText } from '../i18n/hub';
 import { floorKindLabel, stackLabel } from '../labels';
 import type { Store } from '../store';
 import type { DocumentStatus, HubText, SettingsView } from '../types';
+import { deliveryEditor, type DeliveryContext } from './floor-delivery';
+import type { FloorDeliveryDraft } from './floor-delivery-model';
+import { mountWorktreesPanel } from './worktrees-panel';
 
 type ProjectFloor = SettingsView['floors'][number];
 
@@ -34,6 +37,8 @@ export function mountProjects(host: HTMLElement, store: Store, api: OfficeApi | 
   const status = el('p', 'settings-status');
   const list = el('div', 'project-list');
   host.append(el('section', 'settings-section', title, hint, el('div', 'project-form', pathInput, slugInput, add), status, list));
+  mountWorktreesPanel(host, store, client);
+  const delivery: DeliveryContext = { store, api: client, drafts: new Map<string, FloorDeliveryDraft>(), open: new Set<string>() };
 
   let busy = false;
   let deleting: string | null = null;
@@ -61,7 +66,7 @@ export function mountProjects(host: HTMLElement, store: Store, api: OfficeApi | 
     remove.setAttribute('aria-label', t('settings.floors.deleteLabel', { slug: floor.slug }));
     remove.disabled = busy;
     remove.addEventListener('click', () => void removeFloor(floor.slug));
-    return el(
+    const header = el(
       'div',
       'setting-row',
       el(
@@ -78,6 +83,7 @@ export function mountProjects(host: HTMLElement, store: Store, api: OfficeApi | 
       ),
       remove,
     );
+    return el('div', 'project-item', header, floor.managed ? deliveryEditor(floor, delivery) : null);
   };
 
   const renderList = (): void => {
@@ -139,7 +145,10 @@ export function mountProjects(host: HTMLElement, store: Store, api: OfficeApi | 
       return;
     }
     await run(async () => {
-      const result = await client.deleteFloor(slug);
+      let result = await client.deleteFloor(slug);
+      if (!result.ok && result.key === 'hub.floors.dirtyWorktrees' && window.confirm(t('settings.floors.forceAsk', { reason: result.message }))) {
+        result = await client.deleteFloor(slug, true);
+      }
       if (!result.ok) return { kind: 'error', text: result.message };
       return { kind: 'ok', key: 'settings.floors.removed', params: { slug } };
     }, slug);

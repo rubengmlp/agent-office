@@ -191,6 +191,12 @@ export type HubTextParams = {
   'hub.settings.badFloorRole': { id: string; slug: string };
   'hub.settings.badFloorModel': { id: string; slug: string };
   'hub.settings.badFloorEffort': { id: string; slug: string };
+  'hub.settings.badChecks': { slug: string };
+  'hub.settings.badSetup': { slug: string };
+  'hub.settings.badGateMode': { slug: string };
+  'hub.settings.badLinkDirs': { slug: string };
+  'hub.settings.badCheckFiles': { slug: string };
+  'hub.settings.badSkipGlobs': undefined;
 
   'hub.api.questionClosed': undefined;
   'hub.api.answerMissing': undefined;
@@ -775,7 +781,35 @@ export type SettingsView = {
   port: number;
   permissionModes: Record<string, PermissionMode>;
   leaveAfterMinutes: number;
-  floors: { slug: string; path: string; stack: Stack; managed: boolean; baseBranch: string }[];
+  checksConfig: ChecksConfig;
+  worktrees: WorktreesConfig;
+  checkpoints: CheckpointsConfig;
+  floors: SettingsFloor[];
+};
+
+// What the panel edits of a floor besides its branch. mode default is "what the stack of the floor does".
+export type SettingsFloor = {
+  slug: string;
+  path: string;
+  stack: Stack;
+  managed: boolean;
+  baseBranch: string;
+  checks: { mode: 'default' | 'custom'; list: CheckSpec[] };
+  setup: { mode: 'default' | 'none' | 'custom'; command: string | null };
+  linkDirs: string[];
+  gateMode: GateMode | null;
+  effectiveGateMode: GateMode;
+  checkFiles: string[];
+  profileCheckFiles: string[];
+};
+
+export type SettingsFloorUpdate = {
+  baseBranch?: string;
+  checks?: { mode: 'default' } | { mode: 'custom'; list: CheckSpec[] };
+  setup?: { mode: 'default' } | { mode: 'none' } | { mode: 'custom'; command: string };
+  linkDirs?: string[];
+  gateMode?: GateMode | null;
+  checkFiles?: string[];
 };
 
 export type SettingsUpdate = {
@@ -785,9 +819,12 @@ export type SettingsUpdate = {
   review?: Partial<ReviewConfig>;
   memory?: Partial<MemoryConfig>;
   limits?: Partial<LimitsConfig>;
-  floors?: Record<string, { baseBranch?: string }>;
+  floors?: Record<string, SettingsFloorUpdate>;
   permissionModes?: Record<string, PermissionMode>;
   leaveAfterMinutes?: number;
+  checksConfig?: Partial<ChecksConfig>;
+  worktrees?: Partial<WorktreesConfig>;
+  checkpoints?: Partial<CheckpointsConfig>;
 };
 
 export type SettingsResult = { ok: true; regenerated: number; note: HubText[] } | { ok: false; error: HubText[] };

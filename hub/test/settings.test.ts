@@ -247,3 +247,86 @@ describe('settings', () => {
     cleanup();
   });
 });
+
+describe('delivery settings of a floor', () => {
+  const config = () => testConfig({ floors: { mobile: floor('/m'), web: floor('/w', true, 'node') } });
+  const apply = (raw: unknown, base = config()) => {
+    const result = applySettings(base, raw);
+    if ('error' in result) throw new Error(JSON.stringify(result.error));
+    return result;
+  };
+
+  test('the view says what a floor runs by default and what it overrides', () => {
+    const view = settingsView(config(), loadProfiles(PROFILES_DIR));
+    const mobile = view.floors.find((f) => f.slug === 'mobile');
+    expect(mobile).toMatchObject({
+      checks: { mode: 'default', list: [{ name: 'analyze', command: 'flutter analyze' }, { name: 'test', command: 'flutter test' }] },
+      setup: { mode: 'default', command: 'flutter pub get' },
+      linkDirs: [],
+      gateMode: null,
+      effectiveGateMode: 'checks',
+      checkFiles: [],
+      profileCheckFiles: ['analysis_options.yaml', 'dart_test.yaml'],
+    });
+    expect(view.checksConfig).toEqual({ timeoutMinutes: 15, maxParallel: 2, tailBytes: 8000 });
+    expect(view.worktrees).toEqual({ retentionDays: 3, maxActivePerFloor: 4, warnTotalGb: 20 });
+    expect(view.checkpoints.maxFileKb).toBe(1024);
+    const custom = settingsView(testConfig({ floors: { mobile: { ...floor('/m'), checks: [], setup: null, gateMode: 'tester' } } }));
+    expect(custom.floors[0]).toMatchObject({ checks: { mode: 'custom', list: [] }, setup: { mode: 'none', command: null }, gateMode: 'tester', effectiveGateMode: 'tester' });
+  });
+
+  test('checks, setup, link folders, gate mode and check files are set and cleared', () => {
+    const set = apply({
+      floors: {
+        mobile: {
+          checks: { mode: 'custom', list: [{ name: 'test', command: 'make test' }] },
+          setup: { mode: 'custom', command: ' make deps ' },
+          linkDirs: ['vendor'],
+          gateMode: 'checks+tester',
+          checkFiles: ['Makefile'],
+        },
+      },
+    });
+    expect(set.changed).toBe(true);
+    expect(set.config.floors.mobile).toMatchObject({
+      checks: [{ name: 'test', command: 'make test' }],
+      setup: 'make deps',
+      linkDirs: ['vendor'],
+      gateMode: 'checks+tester',
+      checkFiles: ['Makefile'],
+    });
+    const none = apply({ floors: { mobile: { checks: { mode: 'custom', list: [] }, setup: { mode: 'none' } } } }, set.config);
+    expect(none.config.floors.mobile).toMatchObject({ checks: [], setup: null });
+    const cleared = apply({ floors: { mobile: { checks: { mode: 'default' }, setup: { mode: 'default' }, linkDirs: [], gateMode: null, checkFiles: [] } } }, set.config);
+    expect(cleared.config.floors.mobile).toEqual(floor('/m'));
+    expect(apply({ floors: { mobile: { gateMode: null } } }).changed).toBe(false);
+  });
+
+  test('bad values are refused with the floor named and nothing is applied', () => {
+    const bad = (update: Record<string, unknown>, key: string) => {
+      const result = applySettings(config(), { floors: { mobile: update } });
+      expect('error' in result && result.error.map((e) => (typeof e === 'string' ? e : e.key))).toEqual([key]);
+    };
+    bad({ checks: { mode: 'custom', list: [{ name: 'Bad Name', command: 'x' }] } }, 'hub.settings.badChecks');
+    bad({ checks: { mode: 'custom', list: Array.from({ length: 9 }, (_, i) => ({ name: `c${i}`, command: 'x' })) } }, 'hub.settings.badChecks');
+    bad({ checks: { mode: 'custom' } }, 'hub.settings.badChecks');
+    bad({ checks: { mode: 'otro' } }, 'hub.settings.badChecks');
+    bad({ setup: { mode: 'custom', command: '' } }, 'hub.settings.badSetup');
+    bad({ setup: { mode: 'custom', command: 'a\nb' } }, 'hub.settings.badSetup');
+    bad({ setup: { mode: 'raro' } }, 'hub.settings.badSetup');
+    bad({ linkDirs: ['../fuera'] }, 'hub.settings.badLinkDirs');
+    bad({ gateMode: 'nunca' }, 'hub.settings.badGateMode');
+    bad({ checkFiles: ['/abs'] }, 'hub.settings.badCheckFiles');
+    expect(applySettings(config(), { floors: { nada: { gateMode: 'tester' } } })).toMatchObject({ error: [{ key: 'hub.settings.noFloor' }] });
+  });
+
+  test('the numbers of the delivery cycle stay inside their ranges', () => {
+    const ok = apply({ checksConfig: { timeoutMinutes: 30, maxParallel: 4, tailBytes: 4000 }, worktrees: { retentionDays: 7, maxActivePerFloor: 6, warnTotalGb: 50 }, checkpoints: { maxFileKb: 2048, skipGlobs: ['*.zip'] } });
+    expect(ok.config.checksConfig).toEqual({ timeoutMinutes: 30, maxParallel: 4, tailBytes: 4000 });
+    expect(ok.config.worktrees).toEqual({ retentionDays: 7, maxActivePerFloor: 6, warnTotalGb: 50 });
+    expect(ok.config.checkpoints).toEqual({ maxFileKb: 2048, skipGlobs: ['*.zip'] });
+    const bad = applySettings(config(), { checksConfig: { timeoutMinutes: 0, maxParallel: 99 }, worktrees: { retentionDays: 'x' }, checkpoints: { skipGlobs: 'no' } });
+    expect('error' in bad && bad.error).toHaveLength(4);
+    expect('error' in bad && bad.error.map((e) => (typeof e === 'string' ? e : e.key))).toEqual(['hub.settings.badRange', 'hub.settings.badRange', 'hub.settings.badRange', 'hub.settings.badSkipGlobs']);
+  });
+});

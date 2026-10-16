@@ -8,17 +8,23 @@ import {
   saveConfig,
   targetRoles,
   validBranch,
+  validCheckFiles,
+  validChecks,
   validEffort,
+  validGateMode,
+  validGlobs,
   validInt,
+  validLinkDirs,
   validModel,
   validPermissionMode,
+  validSetup,
   type Paths,
 } from './config';
 import { ensureDocsRepo } from './docs-repo';
 import { regenerateAgents } from './floor-cli';
-import type { Profiles } from './profiles';
+import { checkFilesOf, checksOf, defaultChecks, gateModeOf, setupOf, type Profiles } from './profiles';
 import { record } from './state-machine';
-import type { HubText, OfficeConfig, RoleId, RoleSettings, SettingsResult, SettingsTarget, SettingsView } from './types';
+import type { FloorConfig, HubText, OfficeConfig, RoleId, RoleSettings, SettingsFloor, SettingsResult, SettingsTarget, SettingsView } from './types';
 
 export function permissionTargets(config: OfficeConfig): string[] {
   const targets = ['direccion'];
@@ -43,7 +49,25 @@ function settingsTargets(config: OfficeConfig): SettingsTarget[] {
     }));
 }
 
-export function settingsView(config: OfficeConfig): SettingsView {
+function settingsFloor(slug: string, floor: FloorConfig, profiles?: Profiles): SettingsFloor {
+  const hasChecks = floor.checks !== undefined;
+  return {
+    slug,
+    path: floor.path,
+    stack: floor.stack,
+    managed: floor.managed,
+    baseBranch: floor.baseBranch,
+    checks: { mode: hasChecks ? 'custom' : 'default', list: hasChecks ? structuredClone(floor.checks ?? []) : defaultChecks(floor.path, floor.stack) },
+    setup: floor.setup === undefined ? { mode: 'default', command: setupOf(floor) } : floor.setup === null ? { mode: 'none', command: null } : { mode: 'custom', command: floor.setup },
+    linkDirs: [...(floor.linkDirs ?? [])],
+    gateMode: floor.gateMode ?? null,
+    effectiveGateMode: gateModeOf(floor),
+    checkFiles: [...(floor.checkFiles ?? [])],
+    profileCheckFiles: profiles ? checkFilesOf(profiles, { stack: floor.stack }) : [],
+  };
+}
+
+export function settingsView(config: OfficeConfig, profiles?: Profiles): SettingsView {
   const permissionModes: SettingsView['permissionModes'] = {};
   for (const slug of permissionTargets(config)) permissionModes[slug] = permissionModeFor(config, slug);
   return {
@@ -58,9 +82,12 @@ export function settingsView(config: OfficeConfig): SettingsView {
     port: config.port,
     permissionModes,
     leaveAfterMinutes: config.leaveAfterMinutes,
+    checksConfig: { ...config.checksConfig },
+    worktrees: { ...config.worktrees },
+    checkpoints: { ...config.checkpoints, skipGlobs: [...config.checkpoints.skipGlobs] },
     floors: Object.entries(config.floors)
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([slug, f]) => ({ slug, path: f.path, stack: f.stack, managed: f.managed, baseBranch: f.baseBranch })),
+      .map(([slug, f]) => settingsFloor(slug, f, profiles)),
   };
 }
 
@@ -170,10 +197,63 @@ export function applySettings(config: OfficeConfig, raw: unknown): { config: Off
       errors.push({ key: 'hub.settings.noFloor', params: { slug } });
       continue;
     }
-    const branch = record(value).baseBranch;
-    if (branch === undefined) continue;
-    if (validBranch(branch)) floor.baseBranch = branch;
-    else errors.push({ key: 'hub.settings.badBranch', params: { branch: String(branch), slug } });
+    const change = record(value);
+    if (change.baseBranch !== undefined) {
+      if (validBranch(change.baseBranch)) floor.baseBranch = change.baseBranch;
+      else errors.push({ key: 'hub.settings.badBranch', params: { branch: String(change.baseBranch), slug } });
+    }
+    if (change.checks !== undefined) {
+      const checks = record(change.checks);
+      const list = checks.mode === 'custom' ? validChecks(checks.list) : null;
+      if (checks.mode === 'default') delete floor.checks;
+      else if (list) floor.checks = list;
+      else errors.push({ key: 'hub.settings.badChecks', params: { slug } });
+    }
+    if (change.setup !== undefined) {
+      const setup = record(change.setup);
+      if (setup.mode === 'default') delete floor.setup;
+      else if (setup.mode === 'none') floor.setup = null;
+      else if (setup.mode === 'custom' && typeof setup.command === 'string' && validSetup(setup.command.trim())) floor.setup = setup.command.trim();
+      else errors.push({ key: 'hub.settings.badSetup', params: { slug } });
+    }
+    if (change.linkDirs !== undefined) {
+      const dirs = validLinkDirs(change.linkDirs);
+      if (!dirs) errors.push({ key: 'hub.settings.badLinkDirs', params: { slug } });
+      else if (dirs.length === 0) delete floor.linkDirs;
+      else floor.linkDirs = dirs;
+    }
+    if (change.gateMode !== undefined) {
+      if (change.gateMode === null) delete floor.gateMode;
+      else if (validGateMode(change.gateMode)) floor.gateMode = change.gateMode;
+      else errors.push({ key: 'hub.settings.badGateMode', params: { slug } });
+    }
+    if (change.checkFiles !== undefined) {
+      const files = validCheckFiles(change.checkFiles);
+      if (!files) errors.push({ key: 'hub.settings.badCheckFiles', params: { slug } });
+      else if (files.length === 0) delete floor.checkFiles;
+      else floor.checkFiles = files;
+    }
+  }
+  const delivery = [
+    ['checksConfig', 'timeoutMinutes', 'checksTimeoutMinutes'],
+    ['checksConfig', 'maxParallel', 'checksMaxParallel'],
+    ['checksConfig', 'tailBytes', 'checksTailBytes'],
+    ['worktrees', 'retentionDays', 'worktreeRetentionDays'],
+    ['worktrees', 'maxActivePerFloor', 'worktreeMaxActive'],
+    ['worktrees', 'warnTotalGb', 'worktreeWarnGb'],
+    ['checkpoints', 'maxFileKb', 'checkpointMaxFileKb'],
+  ] as const;
+  for (const [group, field, limit] of delivery) {
+    const value = record(update[group])[field];
+    if (value === undefined) continue;
+    if (validInt(value, LIMITS[limit])) (next[group] as Record<string, number | string[]>)[field] = value;
+    else errors.push({ key: 'hub.settings.badRange', params: { key: field, min: LIMITS[limit].min, max: LIMITS[limit].max } });
+  }
+  const skipGlobs = record(update.checkpoints).skipGlobs;
+  if (skipGlobs !== undefined) {
+    const globs = validGlobs(skipGlobs);
+    if (globs) next.checkpoints.skipGlobs = globs;
+    else errors.push({ key: 'hub.settings.badSkipGlobs' });
   }
   const modes = record(update.permissionModes);
   for (const [slug, mode] of Object.entries(modes)) {
@@ -199,7 +279,7 @@ export type SettingsService = {
 
 export function createSettings(p: Paths, profiles: () => Profiles, onSaved: (config: OfficeConfig) => void): SettingsService {
   return {
-    view: () => settingsView(loadConfig(p)),
+    view: () => settingsView(loadConfig(p), profiles()),
     update: (raw) => {
       const current = loadConfig(p);
       const applied = applySettings(current, raw);

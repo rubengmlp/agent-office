@@ -1,5 +1,7 @@
 import { t } from '../i18n';
 import type {
+  CheckpointsConfig,
+  ChecksConfig,
   DepartmentsConfig,
   Effort,
   LimitsConfig,
@@ -10,6 +12,7 @@ import type {
   RoleSettings,
   SettingsUpdate,
   SettingsView,
+  WorktreesConfig,
 } from '../types';
 import {
   BRANCH_PATTERN,
@@ -78,6 +81,13 @@ function numbersOf(view: SettingsView): Record<NumberKey, number> {
     leaveAfterMinutes: view.leaveAfterMinutes,
     maxBriefsPerOrder: view.limits.maxBriefsPerOrder,
     stalledAfterMinutes: view.limits.stalledAfterMinutes,
+    checksTimeoutMinutes: view.checksConfig.timeoutMinutes,
+    checksMaxParallel: view.checksConfig.maxParallel,
+    checksTailBytes: view.checksConfig.tailBytes,
+    worktreeRetentionDays: view.worktrees.retentionDays,
+    worktreeMaxActive: view.worktrees.maxActivePerFloor,
+    worktreeWarnGb: view.worktrees.warnTotalGb,
+    checkpointMaxFileKb: view.checkpoints.maxFileKb,
   };
 }
 
@@ -256,6 +266,22 @@ export function diffDraft(baseline: SettingsView, draft: SettingsDraft): Setting
 
   if (changed.leaveAfterMinutes !== undefined) update.leaveAfterMinutes = changed.leaveAfterMinutes;
 
+  const checksConfig: Partial<ChecksConfig> = {};
+  if (changed.checksTimeoutMinutes !== undefined) checksConfig.timeoutMinutes = changed.checksTimeoutMinutes;
+  if (changed.checksMaxParallel !== undefined) checksConfig.maxParallel = changed.checksMaxParallel;
+  if (changed.checksTailBytes !== undefined) checksConfig.tailBytes = changed.checksTailBytes;
+  if (Object.keys(checksConfig).length > 0) update.checksConfig = checksConfig;
+
+  const worktrees: Partial<WorktreesConfig> = {};
+  if (changed.worktreeRetentionDays !== undefined) worktrees.retentionDays = changed.worktreeRetentionDays;
+  if (changed.worktreeMaxActive !== undefined) worktrees.maxActivePerFloor = changed.worktreeMaxActive;
+  if (changed.worktreeWarnGb !== undefined) worktrees.warnTotalGb = changed.worktreeWarnGb;
+  if (Object.keys(worktrees).length > 0) update.worktrees = worktrees;
+
+  const checkpoints: Partial<CheckpointsConfig> = {};
+  if (changed.checkpointMaxFileKb !== undefined) checkpoints.maxFileKb = changed.checkpointMaxFileKb;
+  if (Object.keys(checkpoints).length > 0) update.checkpoints = checkpoints;
+
   const floors: Record<string, { baseBranch?: string }> = {};
   for (const floor of managedFloors(baseline)) {
     const branch = (draft.branches[floor.slug] ?? floor.baseBranch).trim();
@@ -304,6 +330,9 @@ export function applyUpdate(view: SettingsView, update: SettingsUpdate): Setting
     limits: { ...view.limits, ...update.limits },
     permissionModes: { ...view.permissionModes, ...update.permissionModes },
     leaveAfterMinutes: update.leaveAfterMinutes ?? view.leaveAfterMinutes,
+    checksConfig: { ...view.checksConfig, ...update.checksConfig },
+    worktrees: { ...view.worktrees, ...update.worktrees },
+    checkpoints: { ...view.checkpoints, ...update.checkpoints },
     floors: view.floors.map((floor) => {
       const baseBranch = update.floors?.[floor.slug]?.baseBranch;
       return baseBranch === undefined ? floor : { ...floor, baseBranch };

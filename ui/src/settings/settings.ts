@@ -24,6 +24,7 @@ import {
 } from './draft';
 import {
   DEFAULT_CHOICE,
+  DELIVERY_FIELDS,
   DEPARTMENT_ROWS,
   EFFORTS,
   MEMORY_FIELDS,
@@ -400,6 +401,7 @@ class SettingsPage {
       section(t('settings.section.review'), t('settings.section.hint.review'), ...numberRows(REVIEW_FIELDS)),
       section(t('settings.section.memory'), t('settings.section.hint.memory'), ...numberRows(MEMORY_FIELDS)),
       section(t('settings.section.office'), t('settings.section.hint.office'), ...numberRows(OFFICE_FIELDS)),
+      section(t('settings.section.delivery'), t('settings.section.hint.delivery'), ...numberRows(DELIVERY_FIELDS)),
       section(
         t('settings.section.floors'),
         t('settings.section.hint.floors'),
