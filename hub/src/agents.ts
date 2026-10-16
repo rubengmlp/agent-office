@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { SCRIPTS_DIR, TEMPLATES_DIR, docsRepoPath, roleSettingsFor, writeAtomic, type Paths } from './config';
-import { planByteLimit } from './gate';
+import { kilobytes, planByteLimit } from './gate';
 import { profileFor, testCommandFor, type CompiledProfile, type Profiles } from './profiles';
 import type { FloorConfig, OfficeConfig, RoleId } from './types';
 
@@ -82,8 +82,8 @@ export function commonVars(
     effort: role.effort,
     docsRepo: docsRepoPath(config),
     maxRounds: String(config.review.maxRounds),
-    maxPlanKb: String(Math.ceil(planByteLimit(config.review.maxPlanBytes, 1, false) / 1000)),
-    maxPlanKbAnalysis: String(Math.ceil(planByteLimit(config.review.maxPlanBytes, 1, true) / 1000)),
+    maxPlanKb: String(kilobytes(planByteLimit(config.review.maxPlanBytes, 1, false))),
+    maxPlanKbAnalysis: String(kilobytes(planByteLimit(config.review.maxPlanBytes, 1, true))),
     maxReviewerReads: String(config.review.maxReviewerReads),
     maxBriefsPerOrder: String(config.limits.maxBriefsPerOrder),
     maxLessonsPerSession: String(config.memory.maxLessonsPerSession),

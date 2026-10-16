@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { CONFIG_VERSION, DEFAULT_ROLES, PROFILES_DIR, createIdIfMissing, createKeyIfMissing, defaultConfig, loadConfig, migrateConfig, normalizeConfig, roleSettingsFor, saveConfig } from '../src/config';
 import { configTargets, watchTargets } from '../src/config-watch';
 import { openDb } from '../src/db';
-import { decideGate, decideReviewGate } from '../src/gate';
+import { decideGate, decideReviewGate, planByteLimit, type ReviewGateFacts } from '../src/gate';
 import { directorFloorsText, modelArgs, officeScript, sessionScript, sessionSpecs, sq } from '../src/office-sh';
 import { loadProfiles } from '../src/profiles';
 import { prune } from '../src/prune';
@@ -385,14 +385,54 @@ describe('launch scripts', () => {
   });
 });
 
-describe('round cap', () => {
+describe('review gate', () => {
+  const facts = (over: Partial<ReviewGateFacts> = {}): ReviewGateFacts => ({
+    path: 'redaccion/planes/x.md',
+    round: 1,
+    maxRounds: 2,
+    bytes: 1000,
+    maxBytes: 20000,
+    analysis: false,
+    floors: 1,
+    ...over,
+  });
+
   test('a REVISAR over maxRounds is blocked with the reason, whatever SIN ACUERDO came before', () => {
-    const over = decideReviewGate({ path: 'redaccion/planes/x.md', round: 3, maxRounds: 2 });
-    expect(over.pass).toBe(false);
+    const over = decideReviewGate(facts({ round: 3 }));
+    expect(over).toMatchObject({ pass: false, cause: 'rounds' });
     expect(over.reason).toContain('ronda 3');
     expect(over.reason).toContain('2 rondas');
     expect(over.reason).toContain('Rondas máximas');
-    expect(decideReviewGate({ path: 'redaccion/planes/x.md', round: 2, maxRounds: 2 }).pass).toBe(true);
-    expect(decideReviewGate({ path: 'redaccion/planes/x.md', round: null, maxRounds: 2 }).pass).toBe(true);
+    expect(decideReviewGate(facts({ round: 2 })).pass).toBe(true);
+    expect(decideReviewGate(facts({ round: null })).pass).toBe(true);
+  });
+
+  test('the plan byte cap grows by half per extra floor up to double, and doubles for an analysis', () => {
+    expect(planByteLimit(20000, 1, false)).toBe(20000);
+    expect(planByteLimit(20000, 2, false)).toBe(30000);
+    expect(planByteLimit(20000, 3, false)).toBe(40000);
+    expect(planByteLimit(20000, 4, false)).toBe(40000);
+    expect(planByteLimit(20000, 1, true)).toBe(40000);
+    expect(planByteLimit(20000, 4, true)).toBe(40000);
+    expect(planByteLimit(20000, 0, false)).toBe(20000);
+  });
+
+  test('a plan over its byte cap is blocked with the sizes in KB; 0 turns the cap off', () => {
+    const long = decideReviewGate(facts({ bytes: 43_210 }));
+    expect(long).toMatchObject({ pass: false, cause: 'size' });
+    expect(long.reason).toStartWith('Plan demasiado largo: redaccion/planes/x.md ocupa 44 KB y el tope es 20 KB (review.maxPlanBytes).');
+    expect(long.reason).toContain('PARTIR:');
+    expect(long.reason).toContain('con la misma ronda');
+    expect(decideReviewGate(facts({ bytes: 43_210, floors: 2 })).reason).toContain('el tope es 30 KB, para 2 plantas');
+    expect(decideReviewGate(facts({ bytes: 43_210, analysis: true })).reason).toContain('el tope es 40 KB, el doble por ser un análisis');
+    expect(decideReviewGate(facts({ bytes: 20_000 })).pass).toBe(true);
+    expect(decideReviewGate(facts({ bytes: 20_001 })).pass).toBe(false);
+    expect(decideReviewGate(facts({ bytes: 43_210, maxBytes: 0 })).pass).toBe(true);
+    expect(decideReviewGate(facts({ bytes: null })).pass).toBe(true);
+    expect(decideReviewGate(facts({ bytes: 43_210, round: null })).pass).toBe(false);
+  });
+
+  test('the round is checked before the size', () => {
+    expect(decideReviewGate(facts({ round: 3, bytes: 90_000 }))).toMatchObject({ pass: false, cause: 'rounds' });
   });
 });

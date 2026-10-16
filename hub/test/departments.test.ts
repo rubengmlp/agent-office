@@ -279,6 +279,64 @@ describe('Redacción review loop', () => {
   });
 });
 
+describe('plan length', () => {
+  const seedBase = (floors: string[]) => {
+    for (const f of floors) {
+      h.db
+        .query('INSERT INTO sync_worktrees (slug, floor, repo, path, ref, sha, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run('login', f, join(h.root, f), join(docs, 'redaccion', '.fuentes', 'login', f), 'develop', 'abc1234', 1);
+    }
+  };
+
+  test('a REVISAR of a plan over its byte cap is blocked, opens no round and commits nothing', async () => {
+    const cwd = redaccionTeam();
+    h.config.review.maxPlanBytes = 1000;
+    const file = join(docs, PLAN);
+    writeFileSync(file, `# Plan\n\n${'x'.repeat(2500)}\n`);
+    touch(file, -60_000);
+    const blocked = gate(LEAD, cwd, 'ared-1', 'redactor-login', `REVISAR: ${PLAN} ronda 1`);
+    expect(blocked.pass).toBe(false);
+    expect(blocked.reason).toContain(`Plan demasiado largo: ${PLAN} ocupa 3 KB y el tope es 1 KB (review.maxPlanBytes)`);
+    say(LEAD, cwd, 'ared-1', 'redactor-login', 'team-lead', `REVISAR: ${PLAN} ronda 1`);
+    await h.office.idle();
+    h.office.refreshDocuments();
+    expect(doc(PLAN)).toMatchObject({ status: 'borrador', round: 0 });
+    expect(git(docs, 'log', '--format=%s')).not.toContain('login ronda 1');
+    const summaries = h.office.snapshot().activity.map((a) => a.summary);
+    expect(summaries).toContainEqual({ key: 'hub.act.reviewBlockedTooLong', params: { path: PLAN, kb: 3, max: 1 } });
+    expect(summaries).toContainEqual({ key: 'hub.act.reviewIgnoredTooLong', params: { path: PLAN, kb: 3, max: 1 } });
+    expect(summaries.some((x) => keyOf(x) === 'hub.act.reviewRequested')).toBe(false);
+    expect(h.db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM gate_decisions WHERE decision = 'block' AND task_id = ?").get(PLAN)?.n).toBe(1);
+
+    writeFileSync(file, '# Plan\n\nCondensado.\n');
+    touch(file, -1000);
+    expect(gate(LEAD, cwd, 'ared-1', 'redactor-login', `REVISAR: ${PLAN} ronda 1`).pass).toBe(true);
+    say(LEAD, cwd, 'ared-1', 'redactor-login', 'team-lead', `REVISAR: ${PLAN} ronda 1`);
+    await h.office.idle();
+    expect(doc(PLAN)).toMatchObject({ status: 'revision', round: 1 });
+    expect(git(docs, 'log', '--format=%s')).toContain('redaccion: login ronda 1');
+  });
+
+  test('the cap grows with the floors of the plan base and doubles for an analysis; 0 turns it off', () => {
+    const cwd = redaccionTeam();
+    h.config.review.maxPlanBytes = 1000;
+    const file = join(docs, PLAN);
+    writeFileSync(file, `# Plan\n\n${'x'.repeat(1400)}\n`);
+    expect(gate(LEAD, cwd, 'ared-1', 'redactor-login', `REVISAR: ${PLAN} ronda 1`).pass).toBe(false);
+    seedBase(['mobile', 'backend']);
+    expect(gate(LEAD, cwd, 'ared-1', 'redactor-login', `REVISAR: ${PLAN} ronda 1`).pass).toBe(true);
+    writeFileSync(file, `# Plan\n\n${'x'.repeat(2500)}\n`);
+    expect(gate(LEAD, cwd, 'ared-1', 'redactor-login', `REVISAR: ${PLAN} ronda 1`).reason).toContain('el tope es 2 KB, para 2 plantas');
+    writeFileSync(file, `# Análisis\n> Tipo: análisis\n\n${'x'.repeat(1700)}\n`);
+    h.db.query('DELETE FROM sync_worktrees').run();
+    expect(gate(LEAD, cwd, 'ared-1', 'redactor-login', `REVISAR: ${PLAN} ronda 1`).pass).toBe(true);
+    writeFileSync(file, `# Plan\n\n${'x'.repeat(9000)}\n`);
+    h.config.review.maxPlanBytes = 0;
+    expect(gate(LEAD, cwd, 'ared-1', 'redactor-login', `REVISAR: ${PLAN} ronda 1`).pass).toBe(true);
+    expect(gate(LEAD, cwd, 'ared-1', 'redactor-login', `REVISAR: redaccion/planes/no-existe.md ronda 1`).pass).toBe(true);
+  });
+});
+
 describe('plan reviewers', () => {
   const verdictRows = () =>
     h.db.query<{ kind: string; score: number | null; agent_key: string }, []>("SELECT kind, score, agent_key FROM verdicts WHERE kind != 'tests' ORDER BY id").all();

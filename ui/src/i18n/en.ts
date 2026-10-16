@@ -646,6 +646,8 @@ export const en: Messages = {
 
   'hub.act.reviewBlockedOverMax': 'gate: blocks round {round} of {path}, over the cap of {max}',
   'hub.act.reviewIgnoredOverMax': 'round {round} of {path} ignored: the cap is {max}',
+  'hub.act.reviewBlockedTooLong': 'gate: blocks the REVISAR of {path}, {kb} KB against a cap of {max} KB',
+  'hub.act.reviewIgnoredTooLong': 'REVISAR of {path} ignored: {kb} KB against a cap of {max} KB',
   'hub.act.chatPost': '{who} writes in #{channel}: {text}',
   'hub.act.chatClaim': '{who} claims {files} in #{channel}',
   'hub.act.chatRelease': '{who} releases {files} in #{channel}',

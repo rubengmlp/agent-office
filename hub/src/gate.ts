@@ -59,12 +59,37 @@ export function planByteLimit(maxBytes: number, floors: number, analysis: boolea
   return Math.round(maxBytes * Math.min(2, 1 + 0.5 * (Math.max(1, floors) - 1)));
 }
 
-export type ReviewGateFacts = { path: string | null; round: number | null; maxRounds: number };
+export function kilobytes(bytes: number): number {
+  return Math.ceil(bytes / 1000);
+}
 
-export function decideReviewGate(f: ReviewGateFacts): GateDecision {
-  if (f.round === null || f.round <= f.maxRounds) return { pass: true, reason: 'ronda dentro del tope' };
+export type ReviewGateFacts = {
+  path: string | null;
+  round: number | null;
+  maxRounds: number;
+  bytes: number | null;
+  maxBytes: number;
+  analysis: boolean;
+  floors: number;
+};
+
+export type ReviewGateDecision = GateDecision & { cause: 'rounds' | 'size' | null };
+
+export function decideReviewGate(f: ReviewGateFacts): ReviewGateDecision {
+  if (f.round !== null && f.round > f.maxRounds) {
+    return {
+      pass: false,
+      cause: 'rounds',
+      reason: `Tope de rondas: ${f.path ?? 'el documento'} ya ha agotado sus ${f.maxRounds} rondas de revisión (review.maxRounds); la ronda ${f.round} no se abre. No repitas el REVISAR: escribe a tu jefe que se ha alcanzado el tope y espera su decisión. Un SIN ACUERDO: no abre más rondas: solo el usuario puede hacerlo, subiendo «Rondas máximas» en Ajustes.`,
+    };
+  }
+  const limit = planByteLimit(f.maxBytes, f.floors, f.analysis);
+  if (f.maxBytes <= 0 || f.bytes === null || f.bytes <= limit) return { pass: true, cause: null, reason: 'dentro de los topes de ronda y tamaño' };
+  const max = kilobytes(limit);
+  const why = f.analysis ? ', el doble por ser un análisis' : f.floors > 1 ? `, para ${f.floors} plantas` : '';
   return {
     pass: false,
-    reason: `Tope de rondas: ${f.path ?? 'el documento'} ya ha agotado sus ${f.maxRounds} rondas de revisión (review.maxRounds); la ronda ${f.round} no se abre. No repitas el REVISAR: escribe a tu jefe que se ha alcanzado el tope y espera su decisión. Un SIN ACUERDO: no abre más rondas: solo el usuario puede hacerlo, subiendo «Rondas máximas» en Ajustes.`,
+    cause: 'size',
+    reason: `Plan demasiado largo: ${f.path ?? 'el plan'} ocupa ${kilobytes(f.bytes)} KB y el tope es ${max} KB${why} (review.maxPlanBytes). Condénsalo a ${max} KB como mucho: quita lo que repite el código o tu exploración, cita símbolos en vez de ruta:línea fuera de Diseño y deja el historial en redaccion/historial/. Si tiene fases que se ejecutan por separado, pide a tu jefe partirlo con PARTIR:. Después repite el mismo REVISAR, con la misma ronda.`,
   };
 }

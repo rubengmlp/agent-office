@@ -1,12 +1,12 @@
 import type { Database } from 'bun:sqlite';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
 import { CHAT_SCRIPT, managedFloors } from './agents';
 import { ChatDesk, GLOBAL_CHANNEL, READ_LIMIT, SNAPSHOT_LIMIT, USER_NAME, isChatKind, normalizeChatPath, type ChatAuthor, type ChatError, type ChatUnread } from './chat';
 import { CHAT_PREFIX, chatInboxText, deliver, encodeInbox, ORDER_LEAD, ORDER_PREFIX, orderText } from './courier';
 import { commitDocument } from './docs-repo';
-import { DocumentDesk } from './documents';
+import { DocumentDesk, docTypeOf, headBytes } from './documents';
 import { FloorInUseError, purgeFloorData } from './floor-data';
 import {
   DIRECCION,
@@ -20,7 +20,7 @@ import {
   type GitRootFn,
   type ResolvedFloor,
 } from './floors';
-import { decideDocumentGate, decideGate, decideReviewGate, type GateDecision } from './gate';
+import { decideDocumentGate, decideGate, decideReviewGate, kilobytes, planByteLimit, type GateDecision, type ReviewGateFacts } from './gate';
 import { GitQueue, runGit, type GitRunner } from './git';
 import { GUARDED_TOOLS, GuardWatch, guardDecision, tokenize, zonesFor, type GuardContext, type GuardFinding } from './guard';
 import { captureLesson, cleanLesson, deleteLesson, isRoleId, listLessons, memoryContext } from './memory';
@@ -1165,25 +1165,51 @@ export class Office {
     return canonicalRole(resolved);
   }
 
-  // REVISAR: over the round cap. Only a block is recorded: a REVISAR: that passes already shows in the
-  // activity when ingest processes it.
+  // REVISAR: over the round cap or of a plan over its size cap. Only a block is recorded: a REVISAR: that passes
+  // already shows in the activity when ingest processes it.
   private gateReview(e: HookEvent, review: { target: string | null; round: number | null }, session: SessionRuntime, now: number): GateDecision {
     // session.cwd, as handleProtocol: touchSession has already taken the cwd of this event.
     const ref = docRef(review.target, this.docsRoot(), session.cwd);
     if (!ref) return { pass: true, reason: 'sin documento: handleProtocol tampoco lo cuenta' };
-    const max = this.config.review.maxRounds;
-    const decision = decideReviewGate({ path: ref.path, round: review.round, maxRounds: max });
-    if (decision.pass || review.round === null) return decision;
+    const { decision, summary } = this.reviewBlock(ref, review.round, 'gate');
+    if (decision.pass || !summary) return decision;
     this.sql.insertGate.run(now, teamOfSession(session.sessionId), ref.path, 'block', decision.reason);
-    this.pushActivity({
-      ts: now,
-      agentKey: e.agent_id ?? session.sessionId,
-      event: 'GateMessage',
-      tool: 'SendMessage',
-      state: null,
-      summary: { key: 'hub.act.reviewBlockedOverMax', params: { path: ref.path, round: review.round, max } },
-    });
+    this.pushActivity({ ts: now, agentKey: e.agent_id ?? session.sessionId, event: 'GateMessage', tool: 'SendMessage', state: null, summary });
     return decision;
+  }
+
+  // The same decision for gate.sh and for ingest, which sees the REVISAR: in the same PreToolUse even when blocked.
+  private reviewBlock(ref: DocRef, round: number | null, from: 'gate' | 'ingest'): { decision: GateDecision; summary: HubText | null } {
+    const file = join(this.docsRoot(), ref.path);
+    let bytes: number | null = null;
+    if (ref.kind === 'plan') {
+      try {
+        bytes = statSync(file).size;
+      } catch {
+        bytes = null;
+      }
+    }
+    const facts: ReviewGateFacts = {
+      path: ref.path,
+      round,
+      maxRounds: this.config.review.maxRounds,
+      bytes,
+      maxBytes: this.config.review.maxPlanBytes,
+      analysis: bytes !== null && docTypeOf('plan', headBytes(file)) === 'analisis',
+      floors: Math.max(1, this.sync.base(ref.slug).length),
+    };
+    const decision = decideReviewGate(facts);
+    if (decision.pass) return { decision, summary: null };
+    if (decision.cause === 'rounds' && round !== null) {
+      const key = from === 'gate' ? 'hub.act.reviewBlockedOverMax' : 'hub.act.reviewIgnoredOverMax';
+      return { decision, summary: { key, params: { path: ref.path, round, max: facts.maxRounds } } };
+    }
+    const params = {
+      path: ref.path,
+      kb: kilobytes(bytes ?? 0),
+      max: kilobytes(planByteLimit(facts.maxBytes, facts.floors, facts.analysis)),
+    };
+    return { decision, summary: { key: from === 'gate' ? 'hub.act.reviewBlockedTooLong' : 'hub.act.reviewIgnoredTooLong', params } };
   }
 
   private gateDocument(e: HookEvent, body: string, role: string | null, session: SessionRuntime, now: number): GateDecision {
@@ -1242,17 +1268,10 @@ export class Office {
     }
     const round = parsed.round;
     if (parsed.kind === 'review' && isAuthorRole(from.role)) {
-      // gate.sh blocks it, but emit.sh runs in the same PreToolUse: no round opens over the cap.
-      const max = this.config.review.maxRounds;
-      if (round !== null && round > max) {
-        this.pushActivity({
-          ts: now,
-          agentKey: from.key,
-          event: 'Review',
-          tool: 'SendMessage',
-          state: null,
-          summary: { key: 'hub.act.reviewIgnoredOverMax', params: { path: ref.path, round, max } },
-        });
+      // gate.sh blocks it, but emit.sh runs in the same PreToolUse: no round opens and nothing is committed.
+      const { decision, summary } = this.reviewBlock(ref, round, 'ingest');
+      if (!decision.pass) {
+        if (summary) this.pushActivity({ ts: now, agentKey: from.key, event: 'Review', tool: 'SendMessage', state: null, summary });
         return;
       }
       this.docs.markRequested(ref, round, now);

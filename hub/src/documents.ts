@@ -1,5 +1,5 @@
 import type { Database } from 'bun:sqlite';
-import { existsSync, readdirSync, readFileSync, statSync, watch, type Dirent, type FSWatcher } from 'node:fs';
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync, watch, type Dirent, type FSWatcher } from 'node:fs';
 import { join } from 'node:path';
 import type { DocRef } from './protocol';
 import type { DocumentAhead, DocumentBase, DocumentContent, DocumentKind, DocumentStatus, DocumentType, DocumentView, PlanDecision } from './types';
@@ -63,6 +63,20 @@ function readHead(file: string): string | null {
     return readFileSync(file, 'utf8').slice(0, 4000);
   } catch {
     return null;
+  }
+}
+
+export function headBytes(file: string, bytes = 4000): string | null {
+  let fd: number | null = null;
+  try {
+    fd = openSync(file, 'r');
+    const buf = Buffer.alloc(bytes);
+    const read = readSync(fd, buf, 0, bytes, 0);
+    return buf.subarray(0, read).toString('utf8');
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) closeSync(fd);
   }
 }
 
