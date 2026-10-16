@@ -46,6 +46,8 @@ bun run floor remove mobile                     # vuelve a observada y borra sus
 bun run floor list
 ```
 
+También se dan de alta y se borran desde **Ajustes → Proyectos**, sin reiniciar el hub. El panel exige la carpeta raíz de un repositorio git; `bun run floor add` es más permisivo y acepta cualquier carpeta. Borrar desde el panel elimina la planta de `config.json`, sus agentes y su lanzador, todo lo que la oficina guarda de ella en `office.db` y sus fotos de Redacción; el repositorio no se toca. Se rechaza mientras haya sesiones abiertas en la planta.
+
 Los perfiles por stack (skill, comandos de test y de revisión) están en `plugin/profiles/` y las plantillas de los agentes en `plugin/templates/`. Cada planta gestionada tiene una rama base (`baseBranch`, por defecto `develop` si existe en `origin`) que es la que lee Redacción.
 
 ## Ajustes: modelo y esfuerzo por rol
