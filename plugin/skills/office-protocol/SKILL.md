@@ -47,7 +47,7 @@ Todos empiezan por la palabra clave y dos puntos. En los de revisión, la ruta d
 
 ## Chat interno
 
-Cada planta gestionada tiene un canal de chat con su slug y la oficina uno común, `#global`. Jefe, desarrollador y tester lo usan con Bash mediante el script del chat que indica su plantilla; los compañeros firman con `--de <su nombre>`.
+Cada planta gestionada tiene un canal de chat con su slug y la oficina uno común, `#global`. Jefe, desarrollador y tester lo usan con Bash mediante el script del chat que indica su plantilla; los compañeros firman con `--de <su nombre>`, el nombre de compañero que les dio su jefe al lanzarlos (no el de su tipo de agente). El jefe no lleva `--de`: el hub lo reconoce por su sesión.
 
 - `toca <ruta>…`: antes de editar, anuncia los ficheros. Si otro los anunció, se acuerda en el canal antes de tocarlos.
 - `listo <ruta>… -- "<nota>"`: al terminar con ellos, los libera.
