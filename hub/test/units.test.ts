@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { CONFIG_VERSION, DEFAULT_ROLES, PROFILES_DIR, createKeyIfMissing, defaultConfig, loadConfig, migrateConfig, normalizeConfig, roleSettingsFor, saveConfig } from '../src/config';
+import { CONFIG_VERSION, DEFAULT_ROLES, PROFILES_DIR, createIdIfMissing, createKeyIfMissing, defaultConfig, loadConfig, migrateConfig, normalizeConfig, roleSettingsFor, saveConfig } from '../src/config';
 import { configTargets, watchTargets } from '../src/config-watch';
 import { openDb } from '../src/db';
 import { roundCap } from '../src/documents';
@@ -114,6 +114,17 @@ describe('config', () => {
     expect(statSync(p.key).mode & 0o777).toBe(0o600);
     saveConfig(p, loadConfig(p));
     expect(statSync(p.config).mode & 0o777).toBe(0o600);
+    cleanup();
+  });
+
+  test('the hub id is created once with private permissions', () => {
+    const { dir, cleanup } = tempDir();
+    const p = fakePaths(dir);
+    const first = createIdIfMissing(p);
+    expect(first.created).toBe(true);
+    expect(first.id).toMatch(/^[0-9a-f]{16}$/);
+    expect(createIdIfMissing(p)).toEqual({ id: first.id, created: false });
+    expect(statSync(p.id).mode & 0o777).toBe(0o600);
     cleanup();
   });
 

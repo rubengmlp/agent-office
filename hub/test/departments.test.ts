@@ -771,6 +771,12 @@ describe('guard through the hub', () => {
       );
     expect(write(LEAD, cwd, 'ared-1', 'redactor-login', join(docs, PLAN)).pass).toBe(true);
     expect(write(LEAD, cwd, 'ared-1', 'redactor-login', join(docs, 'redaccion', '.fuentes', 'login', 'mobile', 'a.dart')).pass).toBe(false);
+    const otherOrder = write(LEAD, cwd, 'ared-1', 'redactor-login', join(docs, 'redaccion', 'planes', 'otro.md'));
+    expect(otherOrder.pass).toBe(false);
+    expect(otherOrder.reason).toContain('redactor-login');
+    expect(write(LEAD, cwd, 'ared-1', 'redactor-login', join(docs, 'redaccion', 'historial', 'login.md')).pass).toBe(true);
+    // A writer the hub does not know yet by name keeps the department zone.
+    expect(write(LEAD, cwd, 'ared-9', 'redactor-otro', join(docs, 'redaccion', 'planes', 'otro.md')).pass).toBe(true);
     const blocked = write(LEAD, cwd, null, null, join(repo, 'lib', 'main.dart'));
     expect(blocked.pass).toBe(false);
     expect(h.office.snapshot().activity.at(-1)?.summary).toMatchObject({ key: 'hub.act.guardBlocked' });

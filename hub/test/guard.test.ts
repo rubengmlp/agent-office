@@ -41,6 +41,33 @@ describe('write guard', () => {
     expect(write('office-lead-mantenimiento', '/uhome/u/.claude/settings.json', '/docs/taller').pass).toBe(false);
   });
 
+  test('the writer of an order only writes its two files, the lead keeps the department', () => {
+    const named = (role: string, name: string | null, file: string) =>
+      guardDecision({ tool: 'Write', input: { file_path: file }, cwd: '/docs/redaccion', role, name }, ctx);
+    const other = named('office-redactor', 'redactor-a', 'planes/b.md');
+    expect(other.pass).toBe(false);
+    expect(other.reason).toContain('redactor-a');
+    expect(other.reason).toContain('/docs/redaccion/planes/a.md');
+    expect(other.target).toBe('/docs/redaccion/planes/b.md');
+    expect(named('office-redactor', 'redactor-a', 'planes/a.md').pass).toBe(true);
+    expect(named('office-redactor', 'redactor-a', '/docs/redaccion/historial/a.md').pass).toBe(true);
+    expect(named('office-redactor', 'redactor-a', '/docs/redaccion/planes/a.md.bak').pass).toBe(false);
+    expect(named('office-lead-redaccion', 'lead-redaccion', 'planes/b.md').pass).toBe(true);
+    expect(named('office-redactor', null, 'planes/b.md').pass).toBe(true);
+    expect(named('office-redactor', 'redactor-Mal Slug', 'planes/b.md').pass).toBe(true);
+  });
+
+  test('the skillwright of an order writes its skill folder with Edit and Write; Bash keeps the department', () => {
+    const named = (tool: string, input: Record<string, unknown>) =>
+      guardDecision({ tool, input, cwd: '/docs/taller', role: 'office-artesano', name: 'artesano-pdf' }, ctx);
+    expect(named('Write', { file_path: '/docs/taller/skills/pdf/SKILL.md' }).pass).toBe(true);
+    const other = named('Write', { file_path: '/docs/taller/skills/otra/SKILL.md' });
+    expect(other.pass).toBe(false);
+    expect(other.reason).toContain('artesano-pdf');
+    expect(named('Bash', { command: 'python3 ~/.claude/skills/synced/abc/skill-creator/scripts/init_skill.py pdf --path /docs/taller/skills' }).pass).toBe(true);
+    expect(named('Bash', { command: 'echo x > /docs/taller/skills/otra/notas.md' }).pass).toBe(true);
+  });
+
   test('roles outside the departments and unknown roles are never blocked', () => {
     expect(write('office-dev-mobile', '/p/backend/app/x.php').pass).toBe(true);
     expect(write('office-lead-mobile', '/anywhere').pass).toBe(true);
