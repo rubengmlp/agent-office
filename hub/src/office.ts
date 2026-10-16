@@ -23,7 +23,7 @@ import {
 } from './floors';
 import { decideDocumentGate, decideGate, decideReadCap, decideReviewGate, kilobytes, planByteLimit, type GateDecision, type ReviewGateFacts } from './gate';
 import { GitQueue, runGit, type GitRunner } from './git';
-import { GUARDED_TOOLS, GuardWatch, guardDecision, tokenize, zonesFor, type GuardContext, type GuardFinding } from './guard';
+import { GUARDED_TOOLS, GuardWatch, fingerprint, gitIgnored, guardDecision, shellWrites, tokenize, zonesFor, type GuardContext, type GuardFinding } from './guard';
 import { captureLesson, cleanLesson, deleteLesson, isRoleId, listLessons, memoryContext } from './memory';
 import { isPrivate, publicDetail, publicSummary, publicText, storedPayload } from './privacy';
 import { detectStack, profileFor, type Profiles } from './profiles';
@@ -234,6 +234,9 @@ const FILE_TOOLS: ReadonlySet<string> = new Set([...EDIT_TOOLS, 'Read', 'Noteboo
 const READ_CAP_TOOLS: ReadonlySet<string> = new Set(['Read', 'Grep', 'Glob', 'Bash']);
 const LEAD_BUSY: ReadonlySet<AgentState> = new Set<AgentState>(['working', 'reading', 'testing', 'checking', 'talking']);
 const TASK_MAX = 120;
+const LISTED_EDITS = 20;
+const FINGERPRINT_ACTIVITY = 10;
+const GIT_ROOT_LABEL = '. (git)';
 const METER_SWEEP_MS = 60_000;
 const RULES_MAX_CHARS = 12_000;
 const LAUNCH_CHECK_MS = 30_000;
@@ -306,6 +309,9 @@ export class Office {
   private readonly docs: DocumentDesk;
   private readonly sync: SyncDesk;
   private readonly watch: GuardWatch;
+  private readonly changes: GuardWatch;
+  private readonly pendingWrites = new Map<string, { root: string; paths: Map<string, string>; gitTree: boolean }>();
+  private readonly fingerprintEdits = new Map<string, true>();
   private readonly usage: UsageDesk;
   private readonly meter: TokenMeter;
   private meterSweptAt: number;
@@ -376,7 +382,7 @@ export class Office {
       git: this.git,
       floors: () => this.guardFloors(),
       now: this.now,
-      attributed: (floor, from, to) => this.attributedFiles(floor, from, to),
+      attributed: (floor, from, to) => this.attributedFiles(floor, from, to, false),
       active: (floor, from, to) => this.sql.floorActive.get(floor, from, to) !== null,
       exempt: (agentKey) => {
         const agent = this.agents.get(agentKey);
@@ -384,6 +390,16 @@ export class Office {
         return [...own, ...this.installTargets().map((target) => realPath(target.dir))];
       },
       report: (finding) => this.recordAlert(finding),
+    });
+    this.changes = new GuardWatch({
+      git: this.git,
+      headDiff: true,
+      floors: () => this.guardFloors(),
+      now: this.now,
+      attributed: (floor, from, to) => this.attributedFiles(floor, from, to, true),
+      active: () => false,
+      exempt: () => this.installTargets().map((target) => realPath(target.dir)),
+      report: (finding) => this.recordBashChanges(finding),
     });
     this.usage = new UsageDesk(this.now, (view) => this.emit({ type: 'usage', data: view }));
     this.meter = new TokenMeter({
@@ -540,6 +556,7 @@ export class Office {
     agent.updatedAt = now;
 
     if (c.edit !== null) this.sql.insertEdit.run(now, agent.key, session.floor, publicText(c.edit, kind) ?? '');
+    this.bashWrites(e, c, agent, session, kind, matchers, now);
     if (c.test === 'pass' || c.test === 'fail') {
       const ok = c.test === 'pass';
       const command = publicText(c.command, kind) ?? '';
@@ -564,6 +581,7 @@ export class Office {
     if (c.message) this.recordMessage(c.message, agent, session, now);
     this.pushActivity({ ts: now, agentKey: agent.key, event: c.event, tool: c.tool, state: nextState, summary: publicSummary(c, kind) });
     this.trackDepartment(agent, c.event, ended);
+    this.trackChanges(agent, c.event, ended);
     this.settlePermissions(agent.key, c.event, c.tool, e.tool_input);
     if (c.event === 'SubagentStop' || c.event === 'Stop' || c.event === 'SessionEnd') this.storeReport(agent, now);
 
@@ -674,12 +692,17 @@ export class Office {
     const task = taskId ? this.sql.getTask.get(scope, taskId) : null;
     const owner = task?.owner ?? text(e.teammate_name);
     const keys = this.ownerKeys(owner, scope, lead);
+    const lastTesterGreen = this.sql.lastTesterGreen.get(lead.floor)?.ts ?? null;
+    const edits = this.ownerEdits(lead.floor, keys, lastTesterGreen);
     const decision = decideGate({
       officeTeam: isLeadRole(leadRole),
       floorManaged: lead.floorKind === 'managed',
       owner,
-      lastOwnerEdit: this.lastEdit(lead.floor, keys),
-      lastTesterGreen: this.sql.lastTesterGreen.get(lead.floor)?.ts ?? null,
+      lastOwnerEdit: edits.last,
+      lastTesterGreen,
+      changed: edits.files,
+      changedTotal: edits.total,
+      fingerprintPending: this.changes.busy(lead.floor),
     });
     this.sql.insertGate.run(now, scope, taskId, decision.pass ? 'pass' : 'block', decision.reason);
     if (taskId) {
@@ -716,12 +739,17 @@ export class Office {
     }
     if (!isLeadRole(senderRole)) return { pass: true, reason: 'solo cuenta el aviso de un jefe de planta' };
     const team = teamOfSession(session.sessionId);
+    const lastTesterGreen = this.sql.lastTesterGreen.get(session.floor)?.ts ?? null;
+    const edits = this.ownerEdits(session.floor, this.ownerKeys(null, team, session), lastTesterGreen);
     const decision = decideGate({
       officeTeam: true,
       floorManaged: session.floorKind === 'managed',
       owner: null,
-      lastOwnerEdit: this.lastEdit(session.floor, this.ownerKeys(null, team, session)),
-      lastTesterGreen: this.sql.lastTesterGreen.get(session.floor)?.ts ?? null,
+      lastOwnerEdit: edits.last,
+      lastTesterGreen,
+      changed: edits.files,
+      changedTotal: edits.total,
+      fingerprintPending: this.changes.busy(session.floor),
     });
     this.sql.insertGate.run(now, team, null, decision.pass ? 'pass' : 'block', decision.reason);
     this.pushActivity({
@@ -1395,10 +1423,82 @@ export class Office {
     ];
   }
 
-  private attributedFiles(floor: string, from: number, to: number): Set<string> {
+  // Files changed with Edit, Bash or a turn fingerprint between from and to. The department guard leaves the
+  // fingerprint rows out: a file a writer changed during a developer turn is not the developer's.
+  private attributedFiles(floor: string, from: number, to: number, includeFingerprints: boolean): Set<string> {
     const out = new Set<string>();
-    for (const row of this.sql.editsBetween.all(floor, from, to)) if (row.path) out.add(realPath(row.path));
+    for (const row of this.sql.editsBetween.all(floor, from, to)) {
+      if (!row.path) continue;
+      const path = realPath(row.path);
+      if (!includeFingerprints && this.fingerprintEdits.has(fingerprintKey(floor, row.ts, path))) continue;
+      out.add(path);
+    }
     return out;
+  }
+
+  private recordBashChanges(finding: GuardFinding): void {
+    for (const file of finding.files) {
+      const path = realPath(file);
+      this.sql.insertEdit.run(finding.ts, finding.agentKey, finding.floor, path);
+      remember(this.fingerprintEdits, fingerprintKey(finding.floor, finding.ts, path), true);
+    }
+    for (const file of finding.files.slice(0, FINGERPRINT_ACTIVITY)) {
+      this.pushActivity({
+        ts: finding.ts,
+        agentKey: finding.agentKey,
+        event: 'Fingerprint',
+        tool: null,
+        state: null,
+        summary: { key: 'hub.act.edited', params: { name: basename(file) } },
+      });
+    }
+  }
+
+  // Bash writes of a managed floor: the fingerprints of the candidate files before the command, compared after it.
+  private bashWrites(e: HookEvent, c: Classified, agent: AgentRuntime, session: SessionRuntime, kind: FloorKind, matchers: Matchers, now: number): void {
+    const id = text(e.tool_use_id);
+    if (c.tool !== 'Bash' || !id) return;
+    if (c.event === 'PostToolUse' || c.event === 'PostToolUseFailure') {
+      const entry = this.pendingWrites.get(id);
+      if (!entry) return;
+      this.pendingWrites.delete(id);
+      if (e.is_interrupt === true) return;
+      let changed = [...entry.paths].filter(([path, before]) => fingerprint(path) !== before).map(([path]) => path);
+      if (changed.length > 0 && this.changes.watching(agent.key)) {
+        const ignored = gitIgnored(entry.root, changed.map((path) => relative(entry.root, path)));
+        changed = changed.filter((path) => !ignored.has(path));
+      }
+      for (const path of changed) this.sql.insertEdit.run(now, agent.key, session.floor, path);
+      if (entry.gitTree) this.sql.insertEdit.run(now, agent.key, session.floor, entry.root);
+      return;
+    }
+    if (c.event !== 'PreToolUse' || kind !== 'managed' || c.test !== null) return;
+    const input = record(e.tool_input);
+    const raw = text(input.command);
+    if (!raw || input.run_in_background === true) return;
+    const command = chatFreeCommand(raw) ?? raw;
+    const floorPath = this.config.floors[session.floor]?.path;
+    if (!command.trim() || matchers.check.test(command) || !floorPath) return;
+    const root = realPath(floorPath);
+    const writes = shellWrites(command, text(e.cwd) ?? session.cwd, root);
+    if (writes.paths.length === 0 && !writes.gitTree) return;
+    remember(this.pendingWrites, id, { root, gitTree: writes.gitTree, paths: new Map(writes.paths.map((path) => [path, fingerprint(path)])) });
+  }
+
+  // The turn of a developer (or of the subagents it launches) on a managed floor: a git status fingerprint before
+  // and after, for what neither Edit nor Bash declared.
+  private trackChanges(agent: AgentRuntime, event: string, ended: boolean): void {
+    const kind = roleKind(agent.role);
+    if (agent.floorKind !== 'managed' || (kind !== 'dev' && kind !== 'intern') || agent.key === agent.sessionId) return;
+    if (TURN_OVER.has(event)) {
+      if (this.changes.watching(agent.key)) this.background(this.changes.finish(agent.key));
+      return;
+    }
+    if (event === 'SessionStart' || event === 'Notification' || ended || agent.endedAt !== null || this.changes.watching(agent.key)) return;
+    const floors = this.guardFloors().filter((f) => f.slug === agent.floor);
+    if (floors.length === 0) return;
+    this.changes.start(agent.key, floors);
+    this.background(this.changes.ready(agent.key));
   }
 
   private recordAlert(finding: GuardFinding): void {
@@ -1780,6 +1880,7 @@ export class Office {
     if (agent.endedAt === null) agent.endedAt = now;
     agent.updatedAt = now;
     if (this.watch.watching(agent.key)) this.background(this.watch.finish(agent.key));
+    if (this.changes.watching(agent.key)) this.background(this.changes.finish(agent.key));
     this.persistAgent(agent);
     this.emitAgent(agent, now);
     this.storeReport(agent, now);
@@ -2294,13 +2395,22 @@ export class Office {
     return type && type !== 'team-lead' ? type : null;
   }
 
-  private lastEdit(floor: string, keys: string[]): number | null {
-    if (keys.length === 0) return null;
+  // last: the latest change of the owners; files and total: what they changed since the last green of a tester.
+  private ownerEdits(floor: string, keys: string[], since: number | null): { last: number | null; files: string[]; total: number } {
+    if (keys.length === 0) return { last: null, files: [], total: 0 };
     const marks = keys.map(() => '?').join(', ');
-    const row = this.opts.db
-      .query<{ ts: number | null }, string[]>(`SELECT MAX(ts) AS ts FROM edits WHERE floor = ? AND agent_key IN (${marks})`)
-      .get(floor, ...keys);
-    return row?.ts ?? null;
+    const where = `floor = ? AND agent_key IN (${marks})`;
+    const last = this.opts.db.query<{ ts: number | null }, string[]>(`SELECT MAX(ts) AS ts FROM edits WHERE ${where}`).get(floor, ...keys)?.ts ?? null;
+    const recent = `${where} AND ts >= ? AND path != ''`;
+    const args: (string | number)[] = [floor, ...keys, since ?? 0];
+    const rows = this.opts.db
+      .query<{ path: string }, (string | number)[]>(`SELECT path, MAX(ts) AS ts FROM edits WHERE ${recent} GROUP BY path ORDER BY ts DESC LIMIT ${LISTED_EDITS}`)
+      .all(...args);
+    const total = this.opts.db.query<{ n: number }, (string | number)[]>(`SELECT COUNT(DISTINCT path) AS n FROM edits WHERE ${recent}`).get(...args)?.n ?? 0;
+    const floorPath = this.config.floors[floor]?.path;
+    const root = floorPath ? realPath(floorPath) : null;
+    const files = [...new Set(rows.map((row) => editLabel(row.path, root)))];
+    return { last, files, total };
   }
 
   private endSession(session: SessionRuntime, now: number): void {
@@ -2322,6 +2432,7 @@ export class Office {
       this.storeReport(agent, now);
       this.meterLater(agent);
       if (this.watch.watching(agent.key)) this.background(this.watch.finish(agent.key));
+      if (this.changes.watching(agent.key)) this.background(this.changes.finish(agent.key));
     }
     for (const q of this.desk.list()) if (q.sessionId === session.sessionId) this.desk.release(q.id);
   }
@@ -2773,6 +2884,17 @@ export function permissionDetail(tool: string, input: Record<string, unknown>): 
   return short(value ?? `${tool} ${JSON.stringify(input)}`, 600);
 }
 
+function fingerprintKey(floor: string, ts: number, path: string): string {
+  return `${floor}\0${ts}\0${path}`;
+}
+
+function editLabel(path: string, root: string | null): string {
+  if (!root) return path;
+  const rel = relative(root, realPath(path));
+  if (rel === '') return GIT_ROOT_LABEL;
+  return rel.startsWith('..') ? path : rel;
+}
+
 function remember<V>(map: Map<string, V>, key: string, value: V): void {
   map.delete(key);
   map.set(key, value);
@@ -2827,7 +2949,7 @@ function prepare(db: Database) {
     ),
     endSession: db.query('UPDATE sessions SET ended_at = ? WHERE session_id = ?'),
     insertEdit: db.query('INSERT INTO edits (ts, agent_key, floor, path) VALUES (?, ?, ?, ?)'),
-    editsBetween: db.query<{ path: string | null }, [string, number, number]>('SELECT path FROM edits WHERE floor = ? AND ts BETWEEN ? AND ?'),
+    editsBetween: db.query<{ path: string | null; ts: number }, [string, number, number]>('SELECT path, ts FROM edits WHERE floor = ? AND ts BETWEEN ? AND ?'),
     floorActive: db.query<{ one: number }, [string, number, number]>('SELECT 1 AS one FROM events WHERE floor = ? AND ts BETWEEN ? AND ? LIMIT 1'),
     insertVerdict: db.query(
       'INSERT INTO verdicts (ts, agent_key, role, floor, kind, ok, command, path, round, score) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
