@@ -27,6 +27,53 @@ import { GUARDED_TOOLS, GuardWatch, fingerprint, gitIgnored, guardDecision, shel
 import type { Log } from './log';
 import { keyMatches } from './security';
 import { captureLesson, cleanLesson, deleteLesson, isRoleId, listLessons, memoryContext } from './memory';
+import {
+  ANSWERS_QUESTION,
+  DECISION_FROM,
+  EMPTY_META,
+  FILE_TOOLS,
+  FINGERPRINT_ACTIVITY,
+  FORGET_ENDED_MS,
+  GHOST_MS,
+  GHOST_TOOL_MS,
+  HOLDS_QUESTION,
+  LAUNCH_CHECK_MS,
+  LEAD_BUSY,
+  MAX_ACTIVITY,
+  MAX_ALERTS,
+  MAX_MESSAGES,
+  METER_SWEEP_MS,
+  NEW_TURN,
+  NOT_DISCARDABLE,
+  NOT_PERMISSIONS,
+  NO_TESTS,
+  PERSIST_EVERY_MS,
+  READ_CAP_TOOLS,
+  RESTORE_WINDOW_MS,
+  RULES_MAX_CHARS,
+  SAFE_ID,
+  SAFE_NAME,
+  TASK_MAX,
+  TEAM_CACHE_MS,
+  TURN_OVER,
+  UNDO_MS,
+  DAY_MS,
+  isHookEvent,
+  recentDocuments,
+  remember,
+  teamOfSession,
+  type AgentRuntime,
+  type DecideResult,
+  type DiscardResult,
+  type LaunchPaths,
+  type LessonResult,
+  type OrderResult,
+  type RelaunchResult,
+  type RestoreResult,
+  type SessionRuntime,
+  type TmuxFn,
+} from './office-state';
+import { ownerEdits, prepare, type AlertRow, type Sql } from './office-sql';
 import { isPrivate, publicDetail, publicSummary, publicText, storedPayload, visibleKind } from './privacy';
 import { detectStack, profileFor, type Profiles } from './profiles';
 import { BRIEF_PREFIX, docRef, parseProtocol, parseWaiting, type DocRef } from './protocol';
@@ -69,21 +116,18 @@ import { planSlugIn, planSlugOf, SWEEP_BUDGET, TokenMeter, type MeterAgent, type
 import { UsageDesk } from './usage';
 import type {
   ActivityView,
-  AgentState,
   AgentView,
   ChatMessageView,
   ChatPostRequest,
   ChatPostResult,
   ChatUserResult,
   DocumentContent,
-  DocumentStatus,
   DocumentView,
   FloorKind,
   GuardAlert,
   HookEvent,
   HookMeta,
   HubText,
-  LessonView,
   MemoryView,
   MessageView,
   OfficeConfig,
@@ -96,111 +140,35 @@ import type {
   SessionView,
   Snapshot,
   Stack,
-  TestResult,
   UsageRange,
   UsageSummary,
   VerdictKind,
 } from './types';
 
-type AgentRuntime = {
-  key: string;
-  sessionId: string;
-  parentKey: string | null;
-  name: string | null;
-  role: string | null;
-  spawnType: string | null;
-  teammate: boolean;
-  team: string | null;
-  floor: string;
-  floorKind: FloorKind;
-  touchedFloor: string | null;
-  state: AgentState;
-  stateSince: number;
-  detail: HubText;
-  tool: string | null;
-  blockedReason: HubText | null;
-  lastTest: TestResult | null;
-  startedAt: number;
-  closing: string | null;
-  updatedAt: number;
-  endedAt: number | null;
-  sentState: AgentState | null;
-  retiredAt: number | null;
-  retiredAwake: boolean;
-  awaitingAnswer: boolean;
-  file: string | null;
-  task: string | null;
-  away: boolean;
-  planSlug: string | null;
-  waiting: { who: string; what: string; since: number } | null;
-  taskOpenSince: number | null;
-  stalledSince: number | null;
-};
 
-type SessionRuntime = {
-  sessionId: string;
-  cwd: string | null;
-  floor: string;
-  floorKind: FloorKind;
-  stack: Stack;
-  role: string | null;
-  name: string | null;
-  socket: string | null;
-  token: string | null;
-  team: string | null;
-  startedAt: number;
-  updatedAt: number;
-  endedAt: number | null;
-  rulesHash: string | null;
-  launchHash: string | null;
-  needsRelaunch: boolean;
-  persistedAt: number;
-  ghost: boolean;
-  openTools: Map<string, { agentKey: string; since: number }>;
-};
 
-type SessionRow = {
-  session_id: string;
-  cwd: string | null;
-  role: string | null;
-  name: string | null;
-  socket: string | null;
-  token: string | null;
-  team: string | null;
-  started_at: number;
-  updated_at: number;
-  rules_hash: string | null;
-  launch_hash: string | null;
-  task_open_since: number | null;
-};
 
-type TaskRow = { owner: string | null; status: string | null };
 
-type AlertRow = { id: number; ts: number; level: string; floor: string; agent_key: string; files: string };
 
-export type OrderResult = 'ok' | 'not-found' | 'not-office' | 'unreachable' | 'failed';
 
-export type LessonResult = { ok: true; lesson: LessonView } | { ok: false; status: number; error: HubText };
-
-export type RelaunchResult = 'ok' | 'not-found' | 'not-office' | 'busy' | 'no-script' | 'no-tmux' | 'no-window' | 'failed';
-
-export type DiscardResult = 'ok' | 'not-found' | 'closed';
-
-export type DecideResult = 'ok' | 'not-found' | 'invalid-state' | 'busy' | 'no-director' | 'unreachable' | 'failed';
-
-export type RestoreResult = 'ok' | 'not-found' | 'not-discarded';
-
-const DECISION_FROM: Record<PlanDecision, readonly DocumentStatus[]> = {
-  aparcar: ['entregado', 'ejecutando'],
-  ejecutar: ['entregado', 'aparcado'],
-  cerrar: ['ejecutando'],
-};
-
-const NOT_DISCARDABLE: ReadonlySet<DocumentStatus> = new Set<DocumentStatus>(['ejecutando', 'cerrado', 'descartado']);
-
-export type LaunchPaths = { agentsDir: string; sessionsDir: string; directorFloors: string };
-
-export type TmuxFn = (args: string[]) => Promise<{ code: number; stdout: string }>;
+export {
+  GHOST_MS,
+  GHOST_TOOL_MS,
+  PERSIST_EVERY_MS,
+  SNAPSHOT_CLOSED_DOCS,
+  UNDO_MS,
+  isHookEvent,
+  recentDocuments,
+  teamOfSession,
+  type DecideResult,
+  type DiscardResult,
+  type LaunchPaths,
+  type LessonResult,
+  type OrderResult,
+  type RelaunchResult,
+  type RestoreResult,
+  type TmuxFn,
+} from './office-state';
 
 export type OfficeOptions = {
   db: Database;
@@ -226,39 +194,6 @@ export type OfficeOptions = {
   undoMs?: number;
 };
 
-const MAX_ACTIVITY = 300;
-const MAX_MESSAGES = 200;
-const MAX_ALERTS = 50;
-const FORGET_ENDED_MS = 10 * 60_000;
-const RESTORE_WINDOW_MS = 24 * 60 * 60_000;
-const MAX_SPAWNS = 500;
-const TEAM_CACHE_MS = 5000;
-const DAY_MS = 86_400_000;
-const EMPTY_META: HookMeta = { socket: null, token: null, role: null, name: null };
-const NO_TESTS: Matchers = { test: /(?!)/, check: /(?!)/ };
-const NOT_PERMISSIONS: ReadonlySet<string> = new Set(['AskUserQuestion', 'ExitPlanMode']);
-const TURN_OVER: ReadonlySet<string> = new Set(['SubagentStop', 'Stop', 'TeammateIdle', 'SessionEnd']);
-const HOLDS_QUESTION: ReadonlySet<string> = new Set(['SubagentStop', 'Stop', 'TeammateIdle', 'Notification', 'PostToolUse', 'PostToolUseFailure']);
-const ANSWERS_QUESTION: ReadonlySet<string> = new Set(['PreToolUse', 'UserPromptSubmit', 'SubagentStart']);
-const NEW_TURN: ReadonlySet<string> = new Set(['UserPromptSubmit', 'SubagentStart']);
-const FILE_TOOLS: ReadonlySet<string> = new Set([...EDIT_TOOLS, 'Read', 'NotebookRead']);
-const READ_CAP_TOOLS: ReadonlySet<string> = new Set(['Read', 'Grep', 'Glob', 'Bash']);
-const LEAD_BUSY: ReadonlySet<AgentState> = new Set<AgentState>(['working', 'reading', 'testing', 'checking', 'talking']);
-const TASK_MAX = 120;
-const LISTED_EDITS = 20;
-const FINGERPRINT_ACTIVITY = 10;
-const GIT_ROOT_LABEL = '. (git)';
-const METER_SWEEP_MS = 60_000;
-const RULES_MAX_CHARS = 12_000;
-const LAUNCH_CHECK_MS = 30_000;
-export const GHOST_MS = 30 * 60_000;
-export const GHOST_TOOL_MS = 4 * 60 * 60_000;
-export const PERSIST_EVERY_MS = 60_000;
-export const UNDO_MS = 10_000;
-export const SNAPSHOT_CLOSED_DOCS = 100;
-const CLOSED_DOCS: ReadonlySet<DocumentStatus> = new Set<DocumentStatus>(['cerrado', 'descartado']);
-const SAFE_NAME = /^[a-z0-9][a-z0-9-]*$/;
-const SAFE_ID = /^[A-Za-z0-9_-]+$/;
 const RULES_NOTE = 'Las reglas de tu puesto cambiaron. Estas son las nuevas y mandan sobre las que recibiste al arrancar:';
 export const STATUS_REQUEST = '¿En qué estado está el encargo? Si esperas algo, escribe ESPERO: <a quién> — <qué>.';
 const STATUS_QUESTION = '¿En qué estado está el encargo?';
@@ -276,10 +211,6 @@ export function withoutDiscardMark(content: string): string {
   return end < 0 ? '' : content.slice(end + 2);
 }
 
-export function recentDocuments(docs: DocumentView[], closedLimit = SNAPSHOT_CLOSED_DOCS): DocumentView[] {
-  let closed = 0;
-  return docs.filter((doc) => !CLOSED_DOCS.has(doc.status) || ++closed <= closedLimit);
-}
 
 export const ROLE_LABELS: Record<RoleId, string> = {
   director: 'director',
@@ -293,14 +224,7 @@ export const ROLE_LABELS: Record<RoleId, string> = {
   'revisor-skills': 'revisor de skills',
 };
 
-export function isHookEvent(value: unknown): value is HookEvent {
-  const r = record(value);
-  return typeof r.session_id === 'string' && r.session_id.length > 0 && typeof r.hook_event_name === 'string';
-}
 
-export function teamOfSession(sessionId: string): string {
-  return `session-${sessionId.slice(0, 8)}`;
-}
 
 export function floorLabel(slug: string): string {
   if (slug === DIRECCION) return 'Dirección';
@@ -334,7 +258,7 @@ export class Office {
   private readonly now: () => number;
   private readonly deliverFn: typeof deliver;
   private readonly git: GitRunner;
-  private readonly sql: ReturnType<typeof prepare>;
+  private readonly sql: Sql;
   private readonly docs: DocumentDesk;
   private readonly sync: SyncDesk;
   private readonly watch: GuardWatch;
@@ -753,7 +677,7 @@ export class Office {
     const owner = task?.owner ?? text(e.teammate_name);
     const keys = this.ownerKeys(owner, scope, lead);
     const lastTesterGreen = this.sql.lastTesterGreen.get(lead.floor)?.ts ?? null;
-    const edits = this.ownerEdits(lead.floor, keys, lastTesterGreen);
+    const edits = ownerEdits(this.opts.db, this.config.floors, lead.floor, keys, lastTesterGreen);
     const decision = decideGate({
       officeTeam: isLeadRole(leadRole),
       floorManaged: lead.floorKind === 'managed',
@@ -800,7 +724,7 @@ export class Office {
     if (!isLeadRole(senderRole)) return { pass: true, reason: 'solo cuenta el aviso de un jefe de planta' };
     const team = teamOfSession(session.sessionId);
     const lastTesterGreen = this.sql.lastTesterGreen.get(session.floor)?.ts ?? null;
-    const edits = this.ownerEdits(session.floor, this.ownerKeys(null, team, session), lastTesterGreen);
+    const edits = ownerEdits(this.opts.db, this.config.floors, session.floor, this.ownerKeys(null, team, session), lastTesterGreen);
     const decision = decideGate({
       officeTeam: true,
       floorManaged: session.floorKind === 'managed',
@@ -2568,23 +2492,6 @@ export class Office {
     return type && type !== 'team-lead' ? type : null;
   }
 
-  // last: the latest change of the owners; files and total: what they changed since the last green of a tester.
-  private ownerEdits(floor: string, keys: string[], since: number | null): { last: number | null; files: string[]; total: number } {
-    if (keys.length === 0) return { last: null, files: [], total: 0 };
-    const marks = keys.map(() => '?').join(', ');
-    const where = `floor = ? AND agent_key IN (${marks})`;
-    const last = this.opts.db.query<{ ts: number | null }, string[]>(`SELECT MAX(ts) AS ts FROM edits WHERE ${where}`).get(floor, ...keys)?.ts ?? null;
-    const recent = `${where} AND ts >= ? AND path != ''`;
-    const args: (string | number)[] = [floor, ...keys, since ?? 0];
-    const rows = this.opts.db
-      .query<{ path: string }, (string | number)[]>(`SELECT path, MAX(ts) AS ts FROM edits WHERE ${recent} GROUP BY path ORDER BY ts DESC LIMIT ${LISTED_EDITS}`)
-      .all(...args);
-    const total = this.opts.db.query<{ n: number }, (string | number)[]>(`SELECT COUNT(DISTINCT path) AS n FROM edits WHERE ${recent}`).get(...args)?.n ?? 0;
-    const floorPath = this.config.floors[floor]?.path;
-    const root = floorPath ? realPath(floorPath) : null;
-    const files = [...new Set(rows.map((row) => editLabel(row.path, root)))];
-    return { last, files, total };
-  }
 
   private endSession(session: SessionRuntime, now: number, ghost = false): void {
     const silent = now - session.updatedAt;
@@ -3079,22 +2986,7 @@ function fingerprintKey(floor: string, ts: number, path: string): string {
   return `${floor}\0${ts}\0${path}`;
 }
 
-function editLabel(path: string, root: string | null): string {
-  if (!root) return path;
-  const rel = relative(root, realPath(path));
-  if (rel === '') return GIT_ROOT_LABEL;
-  return rel.startsWith('..') ? path : rel;
-}
 
-function remember<V>(map: Map<string, V>, key: string, value: V): void {
-  map.delete(key);
-  map.set(key, value);
-  while (map.size > MAX_SPAWNS) {
-    const oldest = map.keys().next().value;
-    if (oldest === undefined) break;
-    map.delete(oldest);
-  }
-}
 
 function parseList(raw: string): string[] {
   try {
@@ -3105,74 +2997,3 @@ function parseList(raw: string): string[] {
   }
 }
 
-function prepare(db: Database) {
-  return {
-    insertEvent: db.query(
-      'INSERT INTO events (ts, session_id, agent_key, floor, event, tool, state, path, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    ),
-    upsertSession: db.query(
-      `INSERT INTO sessions (session_id, cwd, floor, role, name, socket, token, team, started_at, updated_at, ended_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(session_id) DO UPDATE SET cwd = excluded.cwd, floor = excluded.floor, role = excluded.role,
-         name = excluded.name, socket = excluded.socket, token = excluded.token, team = excluded.team,
-         updated_at = excluded.updated_at, ended_at = excluded.ended_at`,
-    ),
-    upsertAgent: db.query(
-      `INSERT INTO agents (agent_key, session_id, parent_key, name, role, floor, team, started_at, updated_at, ended_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(agent_key) DO UPDATE SET session_id = excluded.session_id, parent_key = excluded.parent_key,
-         name = excluded.name, role = excluded.role, floor = excluded.floor, team = excluded.team,
-         updated_at = excluded.updated_at, ended_at = excluded.ended_at`,
-    ),
-    openSessions: db.query<SessionRow, [number]>(
-      'SELECT session_id, cwd, role, name, socket, token, team, started_at, updated_at, rules_hash, launch_hash, task_open_since FROM sessions WHERE ended_at IS NULL AND updated_at > ?',
-    ),
-    updateHashes: db.query('UPDATE sessions SET rules_hash = ?, launch_hash = ? WHERE session_id = ?'),
-    updateTaskOpen: db.query('UPDATE sessions SET task_open_since = ? WHERE session_id = ?'),
-    countBriefs: db.query<{ n: number }, [string, number]>(
-      "SELECT COUNT(*) AS n FROM gate_decisions WHERE scope = ? AND decision = 'pass' AND ts > ?",
-    ),
-    recentPrompts: db.query<{ ts: number; prompt: string | null }, [string]>(
-      "SELECT ts, json_extract(payload, '$.prompt') AS prompt FROM events WHERE agent_key = ? AND event = 'UserPromptSubmit' ORDER BY ts DESC LIMIT 50",
-    ),
-    lastAsk: db.query<{ ts: number | null }, [string]>(
-      "SELECT MAX(ts) AS ts FROM events WHERE agent_key = ? AND event = 'PostToolUse' AND tool = 'AskUserQuestion'",
-    ),
-    endSession: db.query('UPDATE sessions SET ended_at = ? WHERE session_id = ?'),
-    insertEdit: db.query('INSERT INTO edits (ts, agent_key, floor, path) VALUES (?, ?, ?, ?)'),
-    editsBetween: db.query<{ path: string | null; ts: number }, [string, number, number]>('SELECT path, ts FROM edits WHERE floor = ? AND ts BETWEEN ? AND ?'),
-    floorActive: db.query<{ one: number }, [string, number, number]>('SELECT 1 AS one FROM events WHERE floor = ? AND ts BETWEEN ? AND ? LIMIT 1'),
-    insertVerdict: db.query(
-      'INSERT INTO verdicts (ts, agent_key, role, floor, kind, ok, command, path, round, score) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    ),
-    agentVerdict: db.query<{ id: number }, [string, string]>(
-      "SELECT id FROM verdicts WHERE agent_key = ? AND path = ? AND kind IN ('approved', 'improve', 'no-agreement') LIMIT 1",
-    ),
-    countReads: db.query<{ n: number }, [string]>(
-      "SELECT COUNT(*) AS n FROM events WHERE agent_key = ? AND event = 'PostToolUse' AND tool IN ('Read', 'Grep', 'Glob', 'Bash')",
-    ),
-    firstVerdictOf: db.query<{ ts: number | null }, [string]>(
-      "SELECT MIN(ts) AS ts FROM verdicts WHERE agent_key = ? AND kind IN ('approved', 'improve', 'no-agreement')",
-    ),
-    lastTesterGreen: db.query<{ ts: number | null }, [string]>(
-      "SELECT MAX(ts) AS ts FROM verdicts WHERE floor = ? AND kind = 'tests' AND ok = 1 AND role LIKE 'office-tester-%'",
-    ),
-    lastApproved: db.query<{ ts: number | null }, [string]>("SELECT MAX(ts) AS ts FROM verdicts WHERE path = ? AND kind = 'approved'"),
-    insertMessage: db.query('INSERT INTO messages (ts, from_key, to_name, to_key, text, floor) VALUES (?, ?, ?, ?, ?, ?)'),
-    upsertTask: db.query(
-      `INSERT INTO tasks (scope, task_id, subject, owner, status, updated_at) VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(scope, task_id) DO UPDATE SET subject = COALESCE(excluded.subject, tasks.subject),
-         owner = COALESCE(excluded.owner, tasks.owner), status = COALESCE(excluded.status, tasks.status),
-         updated_at = excluded.updated_at`,
-    ),
-    getTask: db.query<TaskRow, [string, string]>('SELECT owner, status FROM tasks WHERE scope = ? AND task_id = ?'),
-    insertGate: db.query('INSERT INTO gate_decisions (ts, scope, task_id, decision, reason) VALUES (?, ?, ?, ?, ?)'),
-    insertQuestion: db.query(
-      'INSERT OR REPLACE INTO questions (id, session_id, agent_key, floor, payload, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    ),
-    closeQuestion: db.query('UPDATE questions SET status = ?, resolved_at = ? WHERE id = ?'),
-    releaseStalePending: db.query("UPDATE questions SET status = 'released', resolved_at = ? WHERE status = 'pending'"),
-    insertAlert: db.query('INSERT INTO alerts (ts, level, floor, agent_key, files) VALUES (?, ?, ?, ?, ?)'),
-    recentAlerts: db.query<AlertRow, [number]>('SELECT id, ts, level, floor, agent_key, files FROM alerts ORDER BY ts DESC, id DESC LIMIT ?'),
-  };
-}
