@@ -1,10 +1,11 @@
-import { el, setStateColor } from '../dom';
+import { append, el, setStateColor } from '../dom';
 import { t } from '../i18n';
 import { hubText } from '../i18n/hub';
 import { AWAY_ICON, doingPhrase, isAway, STATE_COLORS, STATE_ICONS } from '../labels';
 import type { Store } from '../store';
 import { clockTime, relativeTime } from '../time';
 import type { ActivityView, AgentView } from '../types';
+import { panelSection } from './section';
 
 const STEP_LIMIT = 5;
 
@@ -47,6 +48,7 @@ function chips(agent: AgentView, now: number, times: TimeNode[]): HTMLElement | 
 
 export function mountNow(host: HTMLElement, store: Store): void {
   let times: TimeNode[] = [];
+  const section = panelSection({ id: 'now', title: () => t('now.title'), defaultOpen: true, host });
 
   store.watch(['selection', 'agents', 'activity', 'lang'], () => {
     times = [];
@@ -54,7 +56,8 @@ export function mountNow(host: HTMLElement, store: Store): void {
     const agent = key === null ? undefined : store.agents.get(key);
     if (key === null || !agent) {
       host.hidden = true;
-      host.replaceChildren();
+      section.body.replaceChildren();
+      section.setMeta(null);
       return;
     }
     host.hidden = false;
@@ -68,17 +71,18 @@ export function mountNow(host: HTMLElement, store: Store): void {
     const since = el('p', 'now-since muted', format(relativeTime(sinceTs, now)));
     times.push({ node: since, ts: sinceTs, format });
     const steps = lastSteps(store, key);
-    host.replaceChildren(
-      el(
-        'section',
-        `panel-card now-card${away ? ' now-away' : ''}`,
-        el('div', 'now-head', icon, el('div', 'now-headline', el('p', 'now-title', doingPhrase(agent, state)), since)),
-        chips(agent, now, times),
-        agent.task ? el('p', 'now-task', el('span', 'muted', `${t('now.task')} `), agent.task) : null,
-        el('h4', 'now-steps-title section-title', t('now.steps')),
-        steps.length > 0 ? el('ul', 'now-steps', ...steps.map(stepItem)) : el('p', 'muted hint', t('now.noActivity')),
-      ),
-    );
+    const doing = doingPhrase(agent, state);
+    section.setTitle();
+    section.setMeta(doing);
+    section.root.classList.toggle('now-away', away);
+    section.body.replaceChildren();
+    append(section.body, [
+      el('div', 'now-head', icon, el('div', 'now-headline', el('p', 'now-title', doing), since)),
+      chips(agent, now, times),
+      agent.task ? el('p', 'now-task', el('span', 'muted', `${t('now.task')} `), agent.task) : null,
+      el('h4', 'now-steps-title section-title', t('now.steps')),
+      steps.length > 0 ? el('ul', 'now-steps', ...steps.map(stepItem)) : el('p', 'muted hint', t('now.noActivity')),
+    ]);
   });
 
   store.watch(['tick'], () => {

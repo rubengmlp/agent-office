@@ -6,6 +6,7 @@ import { scoreText, verdictLabel } from '../labels';
 import type { Store } from '../store';
 import { clockTime, relativeTime } from '../time';
 import type { ReportView } from '../types';
+import { panelSection } from './section';
 
 const REFRESH_MS = 10_000;
 const FILE_LIMIT = 20;
@@ -165,13 +166,8 @@ export function mountReport(host: HTMLElement, store: Store, api: OfficeApi | nu
 
   const client = api;
   const chip = el('span', 'chip');
-  chip.hidden = true;
-  const body = el('div', 'panel-card-body');
-  const title = el('span', 'section-title');
-  const summary = el('summary', 'panel-summary', title, chip);
-  const details = el('details', 'panel-card', summary, body);
-  details.open = true;
-  host.append(details);
+  const section = panelSection({ id: 'report', title: () => t('report.title'), defaultOpen: false, host });
+  const { body } = section;
 
   let currentKey: string | null = null;
   let ended = false;
@@ -193,7 +189,7 @@ export function mountReport(host: HTMLElement, store: Store, api: OfficeApi | nu
     if (signature === rendered) return;
     rendered = signature;
     times = [];
-    chip.hidden = report === null;
+    section.setMeta(report === null ? null : chip);
     if (report === null) {
       const notice = missing
         ? el('p', 'muted hint', t('report.missing'))
@@ -263,7 +259,7 @@ export function mountReport(host: HTMLElement, store: Store, api: OfficeApi | nu
   };
 
   store.watch(['lang'], () => {
-    title.textContent = t('report.title');
+    section.setTitle();
     if (currentKey === null) return;
     rendered = '';
     render();

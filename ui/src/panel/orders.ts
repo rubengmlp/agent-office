@@ -4,6 +4,7 @@ import { t } from '../i18n';
 import { agentName, floorLabel } from '../labels';
 import type { Store } from '../store';
 import type { SessionView } from '../types';
+import { panelSection } from './section';
 
 const DIRECTOR_ROLES: ReadonlySet<string> = new Set(['office-director', 'office:director']);
 
@@ -24,15 +25,10 @@ export function mountOrders(host: HTMLElement, store: Store, actions: Actions): 
   textarea.rows = 3;
   const send = button('', 'primary');
   const status = el('p', 'orders-status');
-  const title = el('h3', 'section-title');
   const targetLabel = el('span', 'field-label muted');
 
-  host.replaceChildren(
-    title,
-    el('label', 'field', targetLabel, select),
-    textarea,
-    el('div', 'orders-actions', send, status),
-  );
+  const section = panelSection({ id: 'orders', title: () => t('orders.title'), defaultOpen: true, host });
+  section.body.append(el('label', 'field', targetLabel, select), textarea, el('div', 'orders-actions', send, status));
 
   let busy = false;
   let manualChoice = false;
@@ -51,6 +47,7 @@ export function mountOrders(host: HTMLElement, store: Store, actions: Actions): 
     select.disabled = !enabled || busy || select.options.length === 0;
     send.disabled = !enabled || busy || textarea.value.trim() === '' || select.value === '';
     send.textContent = busy ? t('panel.sending') : t('orders.send');
+    section.setMeta(select.selectedOptions[0]?.textContent ?? null);
   };
 
   const syncSessions = (): void => {
@@ -86,7 +83,9 @@ export function mountOrders(host: HTMLElement, store: Store, actions: Actions): 
 
   const syncBlockedAssist = (): void => {
     const agent = store.selectedKey === null ? undefined : store.agents.get(store.selectedKey);
-    if (!agent || store.shownState(agent) !== 'blocked') {
+    const blocked = agent !== undefined && store.shownState(agent) === 'blocked';
+    section.setForced(blocked);
+    if (!agent || !blocked) {
       if (assistKey !== null) endAssist();
       return;
     }
@@ -144,7 +143,7 @@ export function mountOrders(host: HTMLElement, store: Store, actions: Actions): 
   send.addEventListener('click', () => void submit());
 
   const relabel = (): void => {
-    title.textContent = t('orders.title');
+    section.setTitle();
     targetLabel.textContent = t('orders.target');
     textarea.placeholder = actions.ordersEnabled ? t('orders.placeholder') : t('orders.disabled');
     if (sent) status.textContent = t('toast.orderSent');

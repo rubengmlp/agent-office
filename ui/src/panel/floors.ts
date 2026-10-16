@@ -1,10 +1,11 @@
 import { orderRows, type Row } from '../agents-order';
 import { el, setStateColor } from '../dom';
-import { t } from '../i18n';
+import { plural, t } from '../i18n';
 import { agentName, doingPhrase, floorLabel, isAway, roleLabel, STATE_COLORS } from '../labels';
 import type { Store } from '../store';
 import { relativeTime } from '../time';
 import type { AgentView, FloorView } from '../types';
+import { panelSection } from './section';
 
 type TimeNode = { node: HTMLElement; ts: number };
 
@@ -63,7 +64,22 @@ function floorCard(store: Store, floor: FloorView, agents: readonly AgentView[],
   return details;
 }
 
+function floorsMeta(groups: readonly (readonly AgentView[])[]): string | null {
+  let inside = 0;
+  let outside = 0;
+  for (const agents of groups) {
+    for (const agent of agents) {
+      if (isAway(agent)) outside += 1;
+      else inside += 1;
+    }
+  }
+  if (inside + outside === 0) return null;
+  const count = plural('panel.sectionMeta.agents', inside);
+  return outside > 0 ? t('panel.sectionMeta.away', { agents: count, n: outside }) : count;
+}
+
 export function mountFloors(host: HTMLElement, store: Store): void {
+  const section = panelSection({ id: 'floors', title: () => t('floors.title'), defaultOpen: true, host });
   const open = new Set<string>();
   let touched = false;
   let selectedFloor: string | null = null;
@@ -87,8 +103,10 @@ export function mountFloors(host: HTMLElement, store: Store): void {
     }
     const floors = store.floorList();
     times = [];
+    section.setTitle();
+    section.setMeta(floorsMeta(floors.map((floor) => byFloor.get(floor.slug) ?? [])));
     if (floors.length === 0) {
-      host.replaceChildren(el('p', 'floors-empty muted', t('table.waiting')));
+      section.body.replaceChildren(el('p', 'floors-empty muted', t('table.waiting')));
       return;
     }
     if (!touched && !selected) {
@@ -96,7 +114,7 @@ export function mountFloors(host: HTMLElement, store: Store): void {
         if ((byFloor.get(floor.slug) ?? []).some((agent) => !isAway(agent))) open.add(floor.slug);
       }
     }
-    host.replaceChildren(...floors.map((floor) => floorCard(store, floor, byFloor.get(floor.slug) ?? [], open.has(floor.slug), times, now)));
+    section.body.replaceChildren(...floors.map((floor) => floorCard(store, floor, byFloor.get(floor.slug) ?? [], open.has(floor.slug), times, now)));
   };
 
   const schedule = (): void => {

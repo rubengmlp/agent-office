@@ -6,6 +6,7 @@ import { hubText } from '../i18n/hub';
 import type { Store } from '../store';
 import { countdown } from '../time';
 import type { AskQuestion, QuestionView } from '../types';
+import { panelSection } from './section';
 
 const OTHER = '__other__';
 // Protocol values the hub expects, whatever the panel language: only the button text is translated.
@@ -36,8 +37,7 @@ class QuestionForm {
   private readonly respond = button('', 'primary');
   private readonly release = button('');
   private readonly status = el('p', 'question-status');
-  private readonly countdownLabel = el('span', 'countdown');
-  private readonly title = el('h3', 'section-title');
+  readonly countdownLabel = el('span', 'countdown');
   private readonly permissionHint = el('p', 'muted permission-hint');
   private readonly prompt = el('p', 'ask-text');
   private readonly otherTexts: HTMLInputElement[] = [];
@@ -62,7 +62,6 @@ class QuestionForm {
       ? el(
           'section',
           'question-card permission-card',
-          el('div', 'question-title', this.title, this.countdownLabel),
           ask ? this.prompt : null,
           question.detail ? el('pre', 'permission-detail', question.detail) : null,
           el('div', 'question-actions', this.allow, this.deny, this.release),
@@ -72,7 +71,6 @@ class QuestionForm {
       : el(
           'section',
           'question-card',
-          el('div', 'question-title', this.title, this.countdownLabel),
           ...question.questions.map((item, index) => this.block(item, index)),
           el('div', 'question-actions', this.respond, this.release),
           this.status,
@@ -81,7 +79,6 @@ class QuestionForm {
   }
 
   relabel(): void {
-    this.title.textContent = this.question.kind === 'permission' ? t('question.permissionTitle') : t('question.title');
     this.permissionHint.textContent = t('question.permissionHint');
     const ask = this.question.questions[0];
     this.prompt.textContent = this.question.prompt ? hubText(this.question.prompt) : (ask?.question ?? '');
@@ -215,23 +212,52 @@ class QuestionForm {
   }
 }
 
+function reveal(node: HTMLElement): void {
+  const scroller = node.closest<HTMLElement>('.panel-scroll');
+  if (!scroller) return;
+  const box = node.getBoundingClientRect();
+  const view = scroller.getBoundingClientRect();
+  if (box.top < view.top) scroller.scrollTop += box.top - view.top;
+  else if (box.bottom > view.bottom) scroller.scrollTop += Math.min(box.top - view.top, box.bottom - view.bottom);
+}
+
 export function mountQuestion(host: HTMLElement, store: Store, actions: Actions): void {
   let form: QuestionForm | null = null;
-  store.watch(['lang'], () => form?.relabel());
+  const section = panelSection({
+    id: 'question',
+    title: () => (form?.question.kind === 'permission' ? t('question.permissionTitle') : t('question.title')),
+    defaultOpen: true,
+    host,
+  });
+  section.root.classList.add('question-section');
+  host.hidden = true;
+  store.watch(['lang'], () => {
+    section.setTitle();
+    form?.relabel();
+  });
   store.watch(['selection', 'questions', 'tick'], () => {
     const key = store.selectedKey;
     const question = key === null ? undefined : store.questionFor(key);
     if (!question) {
       if (form) {
         form = null;
-        host.replaceChildren();
+        section.body.replaceChildren();
+        section.setMeta(null);
       }
+      section.setForced(false);
+      host.hidden = true;
       return;
     }
     if (!form || form.question.id !== question.id) {
       form = new QuestionForm(question, actions);
-      host.replaceChildren(form.root);
+      section.body.replaceChildren(form.root);
+      section.setMeta(form.countdownLabel);
+      section.setTitle();
+      section.root.classList.toggle('permission-section', question.kind === 'permission');
+      requestAnimationFrame(() => reveal(section.root));
     }
+    host.hidden = false;
+    section.setForced(true);
     form.updateCountdown(store.now());
   });
 }
