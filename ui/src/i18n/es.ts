@@ -602,7 +602,7 @@ export const es = {
   'hub.act.order': 'orden desde el panel: {text}',
   'hub.act.planDiscarded': 'plan descartado desde el panel: {path}',
   'hub.act.sourcesReady': 'fuentes preparadas para {slug}: {floors}',
-  'hub.act.sourcesForeign': 'fotos de otro hub o sin marcador en redaccion/.fuentes, sin tocar ({n}): {dirs}',
+  'hub.act.sourcesForeign': 'fotos de redaccion/.fuentes que el hub no retira (de otro hub, sin marcador o sin registro en su base de datos), sin tocar ({n}): {dirs}',
   'hub.act.guardAlert.one': '{level}: {n} fichero de {floor} cambió sin atribuir mientras trabajaba {who}',
   'hub.act.guardAlert.other': '{level}: {n} ficheros de {floor} cambiaron sin atribuir mientras trabajaba {who}',
   'hub.act.memoryDelivered': 'memoria entregada: {lessons} lecciones y {reports} informes',

@@ -1,5 +1,5 @@
 import type { Database } from 'bun:sqlite';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { validBranch } from './config';
 import { isInside, realPath } from './floors';
@@ -214,8 +214,8 @@ export class SyncDesk {
 
   // Retires finished plans and orphan snapshots, but only snapshots marked with this hub's id: those of
   // another hub, or unmarked ones outside this database, are reported and left alone. Unmarked folders that
-  // are in the database are adopted. With an empty database and foreign snapshots nothing is touched: the
-  // newcomer is most likely this hub.
+  // are in the database are adopted. With an empty database nothing is touched, not even snapshots with this
+  // id: either this hub is the newcomer or its office.db was recreated, and its plans in progress are still there.
   async cleanup(finished: Set<string>): Promise<string[]> {
     const removed: string[] = [];
     for (const slug of this.slugs()) {
@@ -231,20 +231,21 @@ export class SyncDesk {
       const slugDir = join(this.fuentes(), slug);
       const floors = visible(safeList(slugDir));
       let owner = readMarker(slugDir);
-      if (owner === null && floors.some((floor) => known.has(join(slugDir, floor)))) {
-        writeMarker(slugDir, this.opts.id);
+      if (owner === null && floors.some((floor) => known.has(join(slugDir, floor))) && writeMarker(slugDir, this.opts.id)) {
         owner = this.opts.id;
       }
       for (const floor of floors) {
         const dir = join(slugDir, floor);
         if (known.has(dir)) continue;
-        if (owner === this.opts.id) orphans.push({ slug, floor, dir });
+        // A link, or a folder that resolves outside .fuentes, is never removed: it is not a snapshot.
+        if (owner === this.opts.id && !linkedOut(dir, this.fuentes())) orphans.push({ slug, floor, dir });
         else foreign.push(`${slug}/${floor}`);
       }
       if (owner === this.opts.id || owner === null) ownSlugs.push(slug);
     }
-    if (known.size === 0 && foreign.length > 0) {
-      this.opts.onForeign?.(foreign);
+    if (known.size === 0) {
+      const untouched = [...foreign, ...orphans.map((o) => `${o.slug}/${o.floor}`)];
+      if (untouched.length > 0) this.opts.onForeign?.(untouched);
       return removed;
     }
     for (const { slug, floor, dir } of orphans) {
@@ -407,10 +408,23 @@ function readMarker(slugDir: string): string | null {
   }
 }
 
-function writeMarker(slugDir: string, id: string): void {
+// wx: never follows a link nor overwrites a marker; false when the marker could not be written.
+function writeMarker(slugDir: string, id: string): boolean {
   try {
-    writeFileSync(join(slugDir, MARKER), `${id}\n`);
-  } catch {}
+    writeFileSync(join(slugDir, MARKER), `${id}\n`, { flag: 'wx' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function linkedOut(dir: string, fuentes: string): boolean {
+  try {
+    if (lstatSync(dir).isSymbolicLink()) return true;
+  } catch {
+    return true;
+  }
+  return !isInside(realPath(dir), realPath(fuentes));
 }
 
 function safeList(dir: string): string[] {
