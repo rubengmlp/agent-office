@@ -2,7 +2,7 @@ import { button, el } from './dom';
 import { LANG_NAMES, LANGS, plural, t, type Lang, type MessageKey } from './i18n';
 import type { ConnectionStatus, Store } from './store';
 
-export type Tab = 'office' | 'table' | 'plans' | 'settings';
+export type Tab = 'office' | 'table' | 'plans' | 'chat' | 'settings';
 
 export type Topbar = {
   root: HTMLElement;
@@ -23,6 +23,7 @@ const TABS: readonly { tab: Tab; labelKey: MessageKey }[] = [
   { tab: 'office', labelKey: 'topbar.tab.office' },
   { tab: 'table', labelKey: 'topbar.tab.table' },
   { tab: 'plans', labelKey: 'topbar.tab.plans' },
+  { tab: 'chat', labelKey: 'topbar.tab.chat' },
   { tab: 'settings', labelKey: 'topbar.tab.settings' },
 ];
 
@@ -37,6 +38,8 @@ export function mountTopbar(store: Store, onTab: (tab: Tab) => void): Topbar {
   const tabs = el('nav', 'tabs');
   const plansCount = el('b', 'tab-count');
   plansCount.hidden = true;
+  const chatCount = el('b', 'tab-count');
+  chatCount.hidden = true;
   for (const { tab } of TABS) {
     const tabButton = button('', 'tab');
     tabButton.addEventListener('click', () => onTab(tab));
@@ -73,7 +76,7 @@ export function mountTopbar(store: Store, onTab: (tab: Tab) => void): Topbar {
     pending.replaceChildren(t('topbar.pending'), ' ', pendingCount);
     for (const { tab, labelKey } of TABS) {
       const tabButton = tabButtons.get(tab);
-      if (tabButton) tabButton.replaceChildren(t(labelKey), ...(tab === 'plans' ? [plansCount] : []));
+      if (tabButton) tabButton.replaceChildren(t(labelKey), ...(tab === 'plans' ? [plansCount] : tab === 'chat' ? [chatCount] : []));
     }
     langSelect.setAttribute('aria-label', t('topbar.lang'));
     langSelect.value = store.lang;
@@ -90,6 +93,13 @@ export function mountTopbar(store: Store, onTab: (tab: Tab) => void): Topbar {
     plansCount.textContent = String(count);
     plansCount.hidden = count === 0;
     tabButtons.get('plans')?.setAttribute('title', count > 0 ? plural('topbar.plansPending', count) : '');
+  });
+
+  store.watch(['chat', 'lang'], () => {
+    const count = store.unreadChat();
+    chatCount.textContent = String(count);
+    chatCount.hidden = count === 0;
+    tabButtons.get('chat')?.setAttribute('title', count > 0 ? plural('topbar.chatUnread', count) : '');
   });
 
   store.watch(['questions'], () => {

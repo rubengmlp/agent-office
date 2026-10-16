@@ -12,6 +12,7 @@ import { mountPanel } from './panel/panel';
 import { mountPlans } from './plans/plans';
 import { loadRecording, mountReplayControls, ReplayPlayer } from './replay';
 import { Store } from './store';
+import { mountChat, type ChatHandle } from './chat/chat';
 import { mountTable } from './table/table';
 import { mountToasts } from './toasts';
 import { mountTopbar, type Tab } from './topbar';
@@ -31,10 +32,12 @@ function boot(): void {
 
   let tab: Tab = 'office';
   let office: OfficeHandle | null = null;
+  let chat: ChatHandle | null = null;
 
   const officeHost = el('div', 'view office-view active');
   const tableHost = el('div', 'view table-view');
   const plansHost = el('div', 'view plans-view');
+  const chatHost = el('div', 'view chat-view');
   const settingsHost = el('div', 'view settings-view');
   const view = new URLSearchParams(location.search).get('view') === '3d' ? '3d' : '2d';
   const notice = el('div', 'notice');
@@ -59,12 +62,14 @@ function boot(): void {
     officeHost.classList.toggle('active', next === 'office');
     tableHost.classList.toggle('active', next === 'table');
     plansHost.classList.toggle('active', next === 'plans');
+    chatHost.classList.toggle('active', next === 'chat');
     settingsHost.classList.toggle('active', next === 'settings');
     office?.setActive(next === 'office');
+    chat?.setActive(next === 'chat');
   };
 
   const topbar = mountTopbar(store, showTab);
-  root.replaceChildren(topbar.root, el('main', 'main', officeHost, tableHost, plansHost, settingsHost, notice), panelHost, toastHost);
+  root.replaceChildren(topbar.root, el('main', 'main', officeHost, tableHost, plansHost, chatHost, settingsHost, notice), panelHost, toastHost);
 
   const api = replayUrl || !key ? null : new OfficeApi(key);
   const actions: Actions = api ? liveActions(store, api) : replayActions(store);
@@ -72,6 +77,7 @@ function boot(): void {
   mountTable(tableHost, store);
   mountPanel(panelHost, store, actions, api);
   mountPlans(plansHost, store, api);
+  chat = mountChat(chatHost, store, api);
   const notifier = api ? new Notifier(store) : null;
   mountSettings(settingsHost, store, api, notifier);
   mountToasts(toastHost, store);
