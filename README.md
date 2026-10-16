@@ -48,7 +48,7 @@ bun run floor list
 
 Los perfiles por stack (skill, comandos de test y de revisión) están en `plugin/profiles/` y las plantillas de los agentes en `plugin/templates/`. Cada planta gestionada tiene una rama base (`baseBranch`, por defecto `develop` si existe en `origin`) que es la que lee Redacción.
 
-## Ajustes: modelo y esfuerzo por rol
+## Ajustes: modelo y esfuerzo por rol y por planta
 
 La pestaña **Ajustes** edita `config.json`: el modelo (`opus`, `sonnet`, `haiku`, `fable`, `inherit` o un id completo) y el esfuerzo (`low` a `max`) de cada rol, los departamentos activos, el número máximo de rondas de revisión, los topes de la memoria y la rama base de cada planta. Al guardar, el hub regenera los agentes de `~/.claude/agents/` y los lanzadores; vale para las sesiones y los equipos nuevos, y las sesiones abiertas siguen igual hasta que las reinicias con `bun run office`.
 
@@ -66,7 +66,18 @@ La pestaña **Ajustes** edita `config.json`: el modelo (`opus`, `sonnet`, `haiku
 
 El esfuerzo sigue el que tienes por modelo en `~/.claude/settings.json` (xhigh para Fable, high para Opus, medium para el resto), salvo el revisor de planes, que va con esfuerzo medio para ser rápido. Fable va solo donde una mala decisión se propaga a todo lo demás: el director y los redactores. Haiku no es el valor por defecto de ningún rol. Todo se puede cambiar en Ajustes.
 
-Los lanzadores pasan además `--model` y `--effort` al director y a los jefes, y los jefes no nombran modelo al lanzar compañeros: manda el agente generado.
+Esa tabla son los valores por defecto (sección «Modelos por defecto»). Debajo, Ajustes tiene una sección por planta gestionada, por Redacción y por Mantenimiento con los roles de ese destino (planta: jefe, desarrollador y tester; Redacción: jefe, redactor y revisor de planes; Mantenimiento: jefe, artesano y revisor de skills). «Por defecto» hereda el valor global; al elegir un modelo o un esfuerzo se crea una anulación solo para ese destino, con el otro valor copiado, y volver a «Por defecto» la borra. En `config.json` son un mapa disperso, y lo que no está en él hereda de `roles`:
+
+```json
+"floorRoles": {
+  "mobile":    { "dev": { "model": "fable", "effort": "xhigh" } },
+  "redaccion": { "revisor-planes": { "model": "sonnet", "effort": "medium" } }
+}
+```
+
+El director y el revisor de código siguen siendo globales.
+
+Los lanzadores pasan además `--model` y `--effort` al director y a los jefes (cada jefe con el de su planta o departamento), y los jefes no nombran modelo al lanzar compañeros: manda el agente generado.
 
 ## Departamentos
 
