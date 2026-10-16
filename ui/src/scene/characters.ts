@@ -1,8 +1,10 @@
 import { Color, Group, Mesh, MeshStandardMaterial, SRGBColorSpace, Vector3, type Material } from 'three';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
+import type { LiftService } from '../lift';
 import type { AgentState, RoleKind, TestResult } from '../types';
 import { buildMannequin, type AssetLibrary, type LoadedModel, type LogicalClip } from './assets';
 import {
+  AISLE_Z,
   BADGE_VISIBLE_S,
   DONE_HOLD_S,
   ENDED_ALPHA,
@@ -12,7 +14,9 @@ import {
   LABEL_FAR,
   LABEL_NEAR,
   LIFT_SPEED,
+  LIFT_W,
   SPAWN_FADE_S,
+  STEP_DOWN,
   TALK_VISIBLE_S,
   TURN_SPEED,
   WALK_SPEED,
@@ -20,7 +24,7 @@ import {
 import { buildProps, type Props } from './effects';
 import type { Desk } from './furniture';
 import { AgentLabel, type BadgeKind, type LabelIcon, type LabelLod } from './labels';
-import { planPath, type Nav, type Target, type Waypoint } from './layout';
+import { liftLeg, planPath, STREET, type LiftLeg, type LiftStops, type Nav, type Target, type Waypoint } from './layout';
 import { hashString, mute } from './materials';
 import { createProxy, createRings, type Rings } from './picking';
 import { findBones, GltfRig, MannequinRig, type Rig } from './rig';
@@ -36,6 +40,7 @@ export type FrameInput = {
   pending: boolean;
   ended: boolean;
   away: boolean;
+  hold: boolean;
   lastTest: TestResult | null;
   name: string;
   following: boolean;
@@ -45,6 +50,12 @@ export type FrameInput = {
 export type Resolver = (floor: string) => Vector3 | null;
 
 export type Occlusion = (point: Vector3) => boolean;
+
+export type SceneLift = LiftService<{ x: number; z: number }> & { stops(): LiftStops };
+
+type Ride = { leg: LiftLeg; phase: 'approach' | 'waiting' | 'boarding' | 'riding' };
+
+const STEP_REACH = LIFT_W / 2 + 0.3;
 
 type Activity = {
   clip: LogicalClip;
@@ -127,8 +138,11 @@ export class Character {
   private readonly rings: Rings;
   private at: Waypoint = { floor: '', x: 0, z: 0, lane: null };
   private path: Waypoint[] = [];
-  private transfer: { progress: number; vertical: boolean } | null = null;
+  private transfer: { progress: number; vertical: boolean; bridge: boolean } | null = null;
   private pendingReplan = false;
+  private lift: SceneLift | null = null;
+  private ride: Ride | null = null;
+  private viaBridge = false;
   private placed = false;
   private nav: Nav | null = null;
   private heading = 0;
@@ -166,7 +180,7 @@ export class Character {
   }
 
   get moving(): boolean {
-    return this.path.length > 0 || this.transfer !== null;
+    return this.path.length > 0 || this.transfer !== null || this.ride !== null;
   }
 
   get floor(): string {
@@ -200,6 +214,7 @@ export class Character {
 
   placeAt(point: Waypoint, nav: Nav): void {
     this.nav = nav;
+    this.cancelRide();
     this.at = { ...point };
     this.path = [];
     this.transfer = null;
@@ -227,8 +242,9 @@ export class Character {
     });
   }
 
-  setTarget(target: Target, nav: Nav): void {
+  setTarget(target: Target, nav: Nav, lift: SceneLift | null): void {
     this.nav = nav;
+    this.lift = lift;
     const previous = this.target;
     this.target = target;
     if (!this.placed || !nav.floors.has(this.at.floor)) {
@@ -301,7 +317,7 @@ export class Character {
     this.pickable = fade > 0.05;
     this.rings.select.visible = input.selected && fade > 0.05;
     this.rings.ask.visible = input.pending && fade > 0.05;
-    this.props.pad.visible = this.transfer !== null && this.transfer.vertical;
+    this.props.pad.visible = false;
 
     const distance = input.camera.distanceTo(this.root.position);
     const lod: LabelLod = input.selected || input.following || distance < LABEL_NEAR ? 'near' : distance < LABEL_FAR ? 'mid' : 'far';
@@ -321,6 +337,7 @@ export class Character {
 
   dispose(): void {
     this.disposed = true;
+    this.cancelRide();
     this.detach();
     this.label.dispose();
     this.root.removeFromParent();
@@ -456,7 +473,14 @@ export class Character {
     this.badgeUntil = this.seconds + BADGE_VISIBLE_S;
   }
 
+  private cancelRide(): void {
+    if (this.ride) this.lift?.cancel(this.key);
+    this.ride = null;
+    this.viaBridge = false;
+  }
+
   private snapToTarget(): void {
+    this.cancelRide();
     const target = this.target;
     if (!target) return;
     this.at = { floor: target.floor, x: target.x, z: target.z, lane: target.lane };
@@ -469,10 +493,11 @@ export class Character {
 
   private replan(): void {
     if (!this.target || !this.nav) return;
-    if (this.transfer) {
+    if (this.transfer || this.ride?.phase === 'boarding' || this.ride?.phase === 'riding') {
       this.pendingReplan = true;
       return;
     }
+    this.cancelRide();
     const path = planPath({ ...this.at }, this.target, this.nav);
     if (path === null) {
       this.snapToTarget();
@@ -481,29 +506,96 @@ export class Character {
     this.path = path;
   }
 
+  private walkTo(point: { x: number; z: number }, budget: number): number {
+    const dx = point.x - this.at.x;
+    const dz = point.z - this.at.z;
+    const distance = Math.hypot(dx, dz);
+    const reach = WALK_SPEED * budget;
+    if (distance > 1e-4) this.desiredHeading = Math.atan2(dx, dz);
+    if (distance <= reach) {
+      this.at.x = point.x;
+      this.at.z = point.z;
+      return budget - distance / WALK_SPEED;
+    }
+    this.at.x += (dx / distance) * reach;
+    this.at.z += (dz / distance) * reach;
+    return -1;
+  }
+
+  private stepRide(ride: Ride, lift: SceneLift, budget: number): number {
+    const { leg } = ride;
+    if (ride.phase === 'approach' || ride.phase === 'boarding') {
+      const point = ride.phase === 'approach' ? lift.landing(leg.from, leg.fromFace) : lift.cabin(leg.from);
+      const left = this.walkTo(point, budget);
+      if (left < 0) return -1;
+      if (ride.phase === 'approach') {
+        lift.request({ key: this.key, from: leg.from, to: leg.to, fromFace: leg.fromFace, toFace: leg.toFace });
+        ride.phase = 'waiting';
+      } else {
+        lift.aboard(this.key);
+        ride.phase = 'riding';
+      }
+      return left;
+    }
+    const event = lift.take(this.key);
+    if (!event) return -1;
+    if (event.type === 'cancelled') {
+      this.snapToTarget();
+      return -1;
+    }
+    if (event.type === 'boarded' && ride.phase === 'waiting') {
+      ride.phase = 'boarding';
+    } else if (event.type === 'arrived' && ride.phase === 'riding') {
+      const exit = lift.cabin(leg.to);
+      this.at = { floor: leg.to, x: exit.x, z: exit.z, lane: null };
+      this.path.splice(0, leg.approach ? 2 : 1);
+      this.ride = null;
+      this.viaBridge = false;
+      if (this.pendingReplan) {
+        this.pendingReplan = false;
+        this.replan();
+      }
+    }
+    return budget;
+  }
+
+  private bridgeLanding(next: Waypoint): Waypoint | null {
+    const lift = this.lift;
+    const nav = this.nav;
+    if (!lift || !nav) return null;
+    const leg = liftLeg(next, this.path.slice(1), nav, lift.stops(), true);
+    if (!leg || leg.approach) return null;
+    const landing = lift.landing(next.floor, 'bridge');
+    return { floor: next.floor, x: landing.x, z: landing.z, lane: null };
+  }
+
   private advance(dt: number, resolve: Resolver): void {
     let budget = dt;
     let guard = 0;
-    while (budget > 1e-6 && this.path.length > 0 && guard < 24) {
+    while (budget > 1e-6 && guard < 24) {
       guard += 1;
+      const lift = this.lift;
+      if (!this.ride && lift && this.nav && this.transfer === null && this.path.length > 0) {
+        const leg = liftLeg(this.at, this.path, this.nav, lift.stops(), this.viaBridge);
+        if (leg) this.ride = { leg, phase: leg.approach ? 'approach' : 'boarding' };
+        if (leg && !leg.approach) {
+          lift.request({ key: this.key, from: leg.from, to: leg.to, fromFace: leg.fromFace, toFace: leg.toFace });
+          this.ride!.phase = 'waiting';
+        }
+      }
+      if (this.ride && lift) {
+        budget = this.stepRide(this.ride, lift, budget);
+        if (budget < 0) break;
+        continue;
+      }
+      if (this.path.length === 0) break;
       const next = this.path[0];
       if (next.floor === this.at.floor && this.transfer === null) {
-        const dx = next.x - this.at.x;
-        const dz = next.z - this.at.z;
-        const distance = Math.hypot(dx, dz);
-        const reach = WALK_SPEED * budget;
         this.at.lane = next.lane;
-        if (distance > 1e-4) this.desiredHeading = Math.atan2(dx, dz);
-        if (distance <= reach) {
-          this.at.x = next.x;
-          this.at.z = next.z;
-          this.path.shift();
-          budget -= distance / WALK_SPEED;
-        } else {
-          this.at.x += (dx / distance) * reach;
-          this.at.z += (dz / distance) * reach;
-          budget = 0;
-        }
+        const left = this.walkTo(next, budget);
+        if (left < 0) break;
+        this.path.shift();
+        budget = left;
         continue;
       }
       const from = resolve(this.at.floor);
@@ -514,18 +606,24 @@ export class Character {
         this.transfer = null;
         continue;
       }
+      if (!this.transfer) {
+        const vertical = Math.abs(from.y - to.y) > 0.05;
+        const landing = vertical ? null : this.bridgeLanding(next);
+        if (landing) this.path[0] = landing;
+        this.transfer = { progress: 0, vertical, bridge: landing !== null };
+      }
+      const target = this.path[0];
       _a.set(from.x + this.at.x, from.y, from.z + this.at.z);
-      _b.set(to.x + next.x, to.y, to.z + next.z);
+      _b.set(to.x + target.x, to.y, to.z + target.z);
       const length = Math.max(0.001, _a.distanceTo(_b));
-      const vertical = Math.abs(_a.y - _b.y) > 0.05;
-      if (!this.transfer) this.transfer = { progress: 0, vertical };
-      const speed = vertical ? LIFT_SPEED : WALK_SPEED;
-      if (!vertical) this.desiredHeading = Math.atan2(_b.x - _a.x, _b.z - _a.z);
+      const speed = this.transfer.vertical ? LIFT_SPEED : WALK_SPEED;
+      if (!this.transfer.vertical) this.desiredHeading = Math.atan2(_b.x - _a.x, _b.z - _a.z);
       this.transfer.progress += (speed * budget) / length;
       if (this.transfer.progress >= 1) {
         budget = ((this.transfer.progress - 1) * length) / speed;
-        this.at = { floor: next.floor, x: next.x, z: next.z, lane: next.lane };
+        this.at = { floor: target.floor, x: target.x, z: target.z, lane: target.lane };
         this.path.shift();
+        this.viaBridge = this.transfer.bridge;
         this.transfer = null;
         if (this.pendingReplan) {
           this.pendingReplan = false;
@@ -537,10 +635,23 @@ export class Character {
     }
   }
 
+  private stepDown(): number {
+    if (this.at.floor !== STREET || !this.nav || this.nav.mainGround === null) return 0;
+    const street = this.nav.floors.get(STREET);
+    if (!street) return 0;
+    const distance = Math.hypot(this.at.x - street.exitX, this.at.z - AISLE_Z);
+    return STEP_DOWN * Math.max(0, 1 - distance / STEP_REACH);
+  }
+
   private worldPosition(resolve: Resolver, out: Vector3): Vector3 | null {
     const origin = resolve(this.at.floor);
     if (!origin) return null;
-    out.set(origin.x + this.at.x, origin.y, origin.z + this.at.z);
+    if (this.ride?.phase === 'riding' && this.lift) {
+      const cabin = this.lift.cabin(this.ride.leg.from);
+      const from = resolve(this.ride.leg.from) ?? origin;
+      return out.set(from.x + cabin.x, this.lift.position(), from.z + cabin.z);
+    }
+    out.set(origin.x + this.at.x, origin.y + this.stepDown(), origin.z + this.at.z);
     if (this.transfer && this.path.length > 0) {
       const next = this.path[0];
       const to = resolve(next.floor);
@@ -556,7 +667,7 @@ export class Character {
     const rig = this.rig;
     const has = (clip: LogicalClip): boolean => rig !== null && rig.has(clip);
     const pick = (...clips: LogicalClip[]): LogicalClip => clips.find(has) ?? 'idle';
-    if (moving) return { ...BASE, clip: this.transfer?.vertical ? pick('idle') : pick('walk', 'run') };
+    if (moving) return { ...BASE, clip: this.ride?.phase === 'waiting' || this.ride?.phase === 'riding' ? pick('idle') : pick('walk', 'run') };
     const atDesk = this.target?.kind === 'desk';
     switch (state) {
       case 'done':
@@ -672,7 +783,7 @@ export class Character {
 
   private fadeAlpha(input: FrameInput, t: number): number {
     if (this.leaving) {
-      if (this.moving) {
+      if (this.moving || input.hold) {
         this.exitAt = null;
         return 1;
       }
