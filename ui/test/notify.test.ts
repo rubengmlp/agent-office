@@ -50,10 +50,10 @@ const DEV = 'dev-1';
 
 function fakeStore(selected: string[]): Store {
   const agents = new Map<string, Partial<AgentView>>([
-    [LEAD, { key: LEAD, name: 'lead-mobile', role: 'office-lead-mobile', roleKind: 'lead' }],
+    [LEAD, { key: LEAD, name: 'lead-mobile', role: 'office-lead-mobile', roleKind: 'lead', floor: 'mobile' }],
     [DEV, { key: DEV, name: 'dev-mobile', role: 'office-dev-mobile', roleKind: 'dev' }],
   ]);
-  return { agents, documents: [], select: (key: string) => selected.push(key), floorBySlug: () => undefined } as unknown as Store;
+  return { agents, documents: [], orders: [], select: (key: string) => selected.push(key), floorBySlug: () => undefined } as unknown as Store;
 }
 
 function allOn(): NotifyPrefs {

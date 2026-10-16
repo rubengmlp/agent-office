@@ -2,7 +2,8 @@ import { plural, t } from './i18n';
 import { agentName, floorLabel } from './labels';
 import { openDocument } from './panel/deliverables';
 import type { Store } from './store';
-import type { AgentView, DocumentView, GuardAlert, MessageView, QuestionView, ServerMessage } from './types';
+import { finishedNotice, readFinishedMode, wantsDesktop } from './panel/finished';
+import type { AgentView, DocumentView, FinishedView, GuardAlert, MessageView, QuestionView, ServerMessage } from './types';
 
 export type NotifyEvent = 'permission' | 'question' | 'blocked' | 'done' | 'document' | 'alert' | 'stalled';
 
@@ -51,6 +52,8 @@ export class Notifier {
   private readonly shown = new Map<string, Notification>();
   private documents: Map<string, DocumentView['status']> | null = null;
   private readonly stalled = new Map<string, number | null>();
+  // Where the notification of a finished order takes the user when it is clicked.
+  openFinished: ((view: FinishedView) => void) | null = null;
 
   constructor(private readonly store: Store) {}
 
@@ -105,6 +108,9 @@ export class Notifier {
       case 'alert':
         this.alert(message.data);
         break;
+      case 'finished':
+        this.finished(message.data);
+        break;
     }
   }
 
@@ -137,9 +143,21 @@ export class Notifier {
     const agent = this.name(message.fromKey);
     if (BLOCK_PREFIX.test(message.text)) {
       this.show('blocked', `message:${message.id}`, t('notify.blocked.title', { agent }), t('notify.openPanel'), this.select(message.fromKey));
-    } else if (DONE_PREFIX.test(message.text) && this.store.agents.get(message.fromKey)?.roleKind === 'lead') {
+    } else if (DONE_PREFIX.test(message.text) && this.store.agents.get(message.fromKey)?.roleKind === 'lead' && !this.tracked(message.fromKey)) {
       this.show('done', `message:${message.id}`, t('notify.done.title', { agent }), t('notify.openPanel'), this.select(message.fromKey));
     }
+  }
+
+  // A floor that works with orders says its ends through the alert of the order, which only an accepted HECHO makes.
+  private tracked(agentKey: string): boolean {
+    const floor = this.store.agents.get(agentKey)?.floor;
+    return floor !== undefined && this.store.orders.some((order) => order.floor === floor && order.worktree !== null);
+  }
+
+  private finished(view: FinishedView): void {
+    if (!wantsDesktop(readFinishedMode())) return;
+    const notice = finishedNotice(view);
+    this.show('done', `finished:${view.id}`, t(notice.key, notice.params), t('notify.openPanel'), () => this.openFinished?.(view));
   }
 
   private agent(agent: AgentView): void {

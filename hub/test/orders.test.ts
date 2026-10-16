@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { FloorDirtyError } from '../src/floor-data';
-import { BOARD_COLUMNS, leavesDone, manualTarget, nextStatus, orderSlug, randomSuffix, splitBrief } from '../src/orders';
+import { BOARD_COLUMNS, doneSummary, leavesDone, manualTarget, nextStatus, orderSlug, randomSuffix, splitBrief } from '../src/orders';
 import { BRIEF_PREFIX } from '../src/protocol';
 import { planSlugIn } from '../src/tokens';
 import type { ActivityView, FinishedView, OrderStatus } from '../src/types';
@@ -66,6 +66,14 @@ describe('transitions', () => {
     const long = splitBrief(`ENCARGO: ${'a'.repeat(150)}`, BRIEF_PREFIX);
     expect(long.title).toHaveLength(100);
     expect(long.description).toBe('a'.repeat(150));
+  });
+
+  test('the summary of a HECHO drops its prefix and the encargo it names', () => {
+    expect(doneSummary('HECHO: encargo/login-a1b2 — login listo — pendiente: Android')).toBe('login listo — pendiente: Android');
+    expect(doneSummary('HECHO: `encargo/login-a1b2`: listo')).toBe('listo');
+    expect(doneSummary('hecho: encargo/login-a1b2')).toBe('');
+    expect(doneSummary('HECHO: pantalla de viajes — validado')).toBe('pantalla de viajes — validado');
+    expect(doneSummary(`HECHO: ${'x'.repeat(700)}`)).toHaveLength(600);
   });
 
   test('encargo/<slug> labels the tokens of an order and never collides with a plan', () => {

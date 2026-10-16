@@ -1,6 +1,7 @@
 import { button, el } from '../dom';
 import { t, type MessageKey } from '../i18n';
 import { NOTIFY_EVENTS, notificationsSupported, type Notifier } from '../notify';
+import { FINISHED_MODES, readFinishedMode, writeFinishedMode, type FinishedMode } from '../panel/finished';
 import { toggleRow } from './settings';
 
 const HOLD_EVENTS: ReadonlySet<string> = new Set(['permission', 'question']);
@@ -18,6 +19,18 @@ export function mountNotifySection(notifier: Notifier): HTMLElement {
   const generalHint = general.root.querySelector('.switch-hint');
   const test = button(t('settings.notifications.test'));
   test.addEventListener('click', () => notifier.test());
+
+  const finishedMode = el('select', 'setting-mode');
+  finishedMode.setAttribute('aria-label', t('settings.notifications.finished.label'));
+  for (const mode of FINISHED_MODES) finishedMode.append(new Option(t(`settings.notifications.finished.${mode}`), mode));
+  finishedMode.value = readFinishedMode();
+  finishedMode.addEventListener('change', () => writeFinishedMode(finishedMode.value as FinishedMode));
+  const finishedRow = el(
+    'label',
+    'setting-row',
+    el('span', 'setting-text', el('span', 'setting-label', t('settings.notifications.finished.label')), el('span', 'setting-hint muted', t('settings.notifications.finished.hint'))),
+    finishedMode,
+  );
 
   const events = NOTIFY_EVENTS.map((event) => {
     const row = toggleRow(t(`settings.notifications.event.${event}`), HOLD_EVENTS.has(event) ? t('settings.notifications.holdHint') : '');
@@ -62,6 +75,7 @@ export function mountNotifySection(notifier: Notifier): HTMLElement {
     el('h2', 'settings-title', t('settings.notifications.title')),
     el('p', 'settings-hint muted', t('settings.notifications.hint')),
     general.root,
+    finishedRow,
     el('div', 'notify-events', ...events.map((row) => row.root)),
     el('div', 'notify-actions', test),
   );

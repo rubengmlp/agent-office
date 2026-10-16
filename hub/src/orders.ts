@@ -67,7 +67,11 @@ export function splitBrief(text: string, prefix: RegExp): { title: string; descr
   return { title: title || 'Encargo', description: rest.slice(0, BRIEF_DESCRIPTION_MAX) };
 }
 
-// What the lead is told to type for the finished text of an accepted HECHO.
+// The text of an accepted HECHO without its prefix and the encargo it names: what the popup shows.
 export function doneSummary(body: string): string {
-  return body.replace(/^\s*HECHO\s*:\s*/i, '').trim().slice(0, 600);
+  return body
+    .replace(/^\s*HECHO\s*:\s*/i, '')
+    .replace(/^`?encargo\/[a-z0-9-]+`?\s*(?:[—–:-]\s*)?/i, '')
+    .trim()
+    .slice(0, 600);
 }

@@ -2885,3 +2885,78 @@ button.order-tab-button.active {
   justify-content: flex-end;
   gap: 8px;
 }
+
+.finished {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(480px, 100%);
+  max-height: 100%;
+  padding: 18px;
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--ok) 50%, var(--border));
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.finished-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.finished-heading {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ok);
+}
+
+.finished-title {
+  font-size: 18px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.finished-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.finished-summary {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+
+.finished-note {
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  font-size: 12px;
+}
+
+.finished-warning {
+  border: 1px solid color-mix(in srgb, var(--danger) 55%, var(--border));
+}
+
+.finished-pr {
+  color: var(--accent);
+}
+
+.finished-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.finished-backdrop {
+  z-index: 60;
+}

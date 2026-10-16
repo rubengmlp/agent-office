@@ -132,6 +132,7 @@ describe('the HECHO of a lead with checks', () => {
     await rig.h.office.idle();
     expect(done(rig, `HECHO: encargo/${second.slug} — ya está`, rig.repo).pass).toBe(true);
     expect(orderOf(rig, second.slug).status).toBe('hecho');
+    expect(finished(rig)[0]?.summary).toBe('ya está');
     expect(orderOf(rig, first.slug).status).toBe('en-curso');
 
     expect(done(rig, 'HECHO: ya está', wt1).pass).toBe(false);

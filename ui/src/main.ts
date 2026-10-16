@@ -9,6 +9,7 @@ import { LiveConnection } from './live';
 import { Notifier } from './notify';
 import type { OfficeHandle } from './office/office';
 import { mountSettings } from './settings/settings';
+import { mountFinished } from './panel/finished';
 import { mountPanel } from './panel/panel';
 import { mountPlans } from './plans/plans';
 import { loadRecording, mountReplayControls, ReplayPlayer } from './replay';
@@ -18,6 +19,7 @@ import { mountChat, type ChatHandle } from './chat/chat';
 import { mountTable } from './table/table';
 import { mountToasts } from './toasts';
 import { mountTopbar, type Tab } from './topbar';
+import type { FinishedView } from './types';
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -48,6 +50,7 @@ async function boot(): Promise<void> {
   notice.hidden = true;
   const panelHost = el('aside', 'panel');
   const toastHost = el('div', 'toasts');
+  const finishedHost = el('div', 'finished-host');
 
   let noticeText: { key: MessageKey; params?: Params } | null = null;
   const paintNotice = (): void => {
@@ -74,7 +77,7 @@ async function boot(): Promise<void> {
   };
 
   const topbar = mountTopbar(store, showTab);
-  root.replaceChildren(topbar.root, el('main', 'main', officeHost, tableHost, boardHost, plansHost, chatHost, settingsHost, notice), panelHost, toastHost);
+  root.replaceChildren(topbar.root, el('main', 'main', officeHost, tableHost, boardHost, plansHost, chatHost, settingsHost, notice), panelHost, toastHost, finishedHost);
 
   let live: LiveConnection | null = null;
   let expired = false;
@@ -92,10 +95,16 @@ async function boot(): Promise<void> {
 
   mountTable(tableHost, store, api);
   mountPanel(panelHost, store, actions, api);
-  mountBoard(boardHost, store, api);
+  const board = mountBoard(boardHost, store, api);
   mountPlans(plansHost, store, api);
   chat = mountChat(chatHost, store, api);
   const notifier = api ? new Notifier(store) : null;
+  const showFinished = (view: FinishedView): void => {
+    showTab('board');
+    board.show(view.floors.length === 1 ? (view.floors[0] ?? null) : null, view.kind === 'order' ? view.slug : undefined);
+  };
+  if (notifier) notifier.openFinished = showFinished;
+  mountFinished(finishedHost, store, api, { openBoard: showFinished });
   mountSettings(settingsHost, store, api, notifier);
   mountToasts(toastHost, store);
 
