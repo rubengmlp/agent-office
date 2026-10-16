@@ -25,7 +25,7 @@ export const es = {
   'role.hint.director':
     'Reparte encargos entre los jefes de planta y los departamentos, fija los contratos que comparten y resuelve bloqueos entre plantas. Es una sola sesión larga y nunca edita código.',
   'role.hint.lead':
-    'Jefe de una planta o de un departamento. Recibe los encargos del director, los reparte entre su equipo y exige tests en verde de un tester antes de avisar con HECHO:.',
+    'Jefe de una planta o de un departamento: recibe los encargos del director y los reparte entre su equipo. En una planta exige tests en verde de un tester antes de avisar con HECHO:; en Redacción y Mantenimiento no hay tester y necesita un APROBADO: del revisor posterior al último cambio.',
   'role.hint.dev': 'Lo lanza el jefe de planta. Implementa las tareas en el repositorio de la planta y entrega los ficheros cambiados.',
   'role.hint.tester': 'Lo lanza el jefe de planta. Ejecuta los tests de lo que cambió y dice si pasan; no arregla nada.',
   'role.hint.reviewer': 'Revisa el diff de un cambio y devuelve una línea por hallazgo, de más a menos grave. No edita nada.',
@@ -230,7 +230,7 @@ export const es = {
   'table.col.detail': 'Detalle',
   'table.col.lastTest': 'Último test',
   'table.col.since': 'Desde',
-  'table.col.hint.agent': 'Nombre del agente; ↳ indica que lo lanzó el agente de la fila de arriba.',
+  'table.col.hint.agent': 'Nombre del agente; ↳ y la sangría indican que lo lanzó el agente bajo el que aparece.',
   'table.col.hint.role': 'Su puesto en la oficina.',
   'table.col.hint.state': 'Qué está haciendo ahora; abajo, cada estado.',
   'table.col.hint.detail': 'La herramienta que usa y sobre qué: fichero, comando, destinatario o pregunta.',
@@ -240,7 +240,7 @@ export const es = {
   'table.askFlag.hint': 'El agente espera tu respuesta en el panel.',
   'table.round': 'ronda {n}',
   'table.round.hint': 'Ronda de revisión en curso o la última.',
-  'table.score.hint': 'Nota del último APROBADO.',
+  'table.score.hint': 'Nota del último veredicto (MEJORAR, APROBADO o SIN ACUERDO).',
   'table.docs.plans': 'Planes',
   'table.docs.skills': 'Skills',
   'table.docs.noPlans': 'Sin planes todavía.',

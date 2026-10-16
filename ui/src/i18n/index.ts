@@ -26,7 +26,7 @@ export function interpolate(text: string, params?: Params): string {
 }
 
 export function createTranslator(dict: Messages): Translator {
-  const t = (key: MessageKey, params?: Params): string => interpolate(dict[key], params);
+  const t = (key: MessageKey, params?: Params): string => interpolate(dict[key] ?? key, params);
   const plural = (key: PluralKey, n: number, params?: Params): string =>
     t(`${key}.${n === 1 ? 'one' : 'other'}` as MessageKey, { n, ...params });
   return { t, plural };

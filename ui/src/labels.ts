@@ -57,7 +57,9 @@ export function roleHint(kind: RoleKind): string {
 }
 
 export function stateLabel(state: AgentState): string {
-  return t(`state.${state}`);
+  const key = `state.${state}` as const;
+  const text = t(key);
+  return text === key ? state : text;
 }
 
 export function stateHint(state: AgentState): string {
@@ -65,7 +67,9 @@ export function stateHint(state: AgentState): string {
 }
 
 export function stackLabel(stack: Stack): string {
-  return t(`stack.${stack}`);
+  const key = `stack.${stack}` as const;
+  const text = t(key);
+  return text === key ? stack : text;
 }
 
 export function floorKindLabel(kind: FloorKind): string {

@@ -69,6 +69,10 @@ describe('translator', () => {
     expect(english.plural('table.files', 1)).toBe('1 file');
     expect(english.plural('table.files', 0)).toBe('0 files');
   });
+
+  test('t falls back to the key when it is missing', () => {
+    expect(createTranslator(es).t('stack.unknown' as MessageKey)).toBe('stack.unknown');
+  });
 });
 
 describe('source scan', () => {
