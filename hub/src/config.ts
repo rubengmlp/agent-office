@@ -8,6 +8,7 @@ import type {
   FloorConfig,
   MemoryConfig,
   OfficeConfig,
+  PermissionMode,
   ReviewConfig,
   RoleId,
   RoleSettings,
@@ -85,6 +86,10 @@ export const DEFAULT_ROLES: Record<RoleId, RoleSettings> = {
 
 export const DEFAULT_BASE_BRANCH = 'develop';
 
+export const PERMISSION_MODES: readonly PermissionMode[] = ['auto', 'manual', 'acceptEdits', 'plan', 'dontAsk'];
+
+export const DEFAULT_PERMISSION_MODE: PermissionMode = 'auto';
+
 export const LIMITS = {
   maxRounds: { min: 1, max: 10 },
   maxLessons: { min: 1, max: 200 },
@@ -99,6 +104,7 @@ export const DEFAULT_CONFIG: OfficeConfig = {
   departments: { redaccion: true, mantenimiento: true },
   review: { maxRounds: 4 },
   memory: { maxLessons: 30, maxLessonsPerSession: 3, maxContextChars: 4000 },
+  permissionModes: {},
   blockedAfterMinutes: 5,
   retentionDays: 14,
   port: 4747,
@@ -125,6 +131,14 @@ export function validBranch(value: unknown): value is string {
     !value.endsWith('/') &&
     !value.endsWith('.lock')
   );
+}
+
+export function validPermissionMode(value: unknown): value is PermissionMode {
+  return typeof value === 'string' && (PERMISSION_MODES as readonly string[]).includes(value);
+}
+
+export function permissionModeFor(config: OfficeConfig, slug: string): PermissionMode {
+  return config.permissionModes[slug] ?? DEFAULT_PERMISSION_MODE;
 }
 
 export function validInt(value: unknown, limit: { min: number; max: number }): value is number {
@@ -201,6 +215,10 @@ export function normalizeConfig(raw: unknown): OfficeConfig {
     maxLessonsPerSession: int(memory.maxLessonsPerSession, LIMITS.maxLessonsPerSession, d.memory.maxLessonsPerSession),
     maxContextChars: int(memory.maxContextChars, LIMITS.maxContextChars, d.memory.maxContextChars),
   };
+  const permissionModes: Record<string, PermissionMode> = {};
+  for (const [slug, mode] of Object.entries(obj(src.permissionModes))) {
+    if (/^[a-z0-9][a-z0-9-]*$/.test(slug) && validPermissionMode(mode)) permissionModes[slug] = mode;
+  }
   return {
     floors: normalizeFloors(src.floors),
     roles: normalizeRoles(src.roles),
@@ -208,6 +226,7 @@ export function normalizeConfig(raw: unknown): OfficeConfig {
     departments: normalizedDepartments,
     review: normalizedReview,
     memory: normalizedMemory,
+    permissionModes,
     blockedAfterMinutes: positive(src.blockedAfterMinutes, d.blockedAfterMinutes),
     retentionDays: positive(src.retentionDays, d.retentionDays),
     port: positive(src.port, d.port),

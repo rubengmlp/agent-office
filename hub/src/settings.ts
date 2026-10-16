@@ -3,11 +3,13 @@ import {
   ROLE_IDS,
   docsRepoPath,
   loadConfig,
+  permissionModeFor,
   saveConfig,
   validBranch,
   validEffort,
   validInt,
   validModel,
+  validPermissionMode,
   type Paths,
 } from './config';
 import { ensureDocsRepo } from './docs-repo';
@@ -19,7 +21,19 @@ import type { OfficeConfig, SettingsResult, SettingsView } from './types';
 export const SETTINGS_NOTE =
   'Guardado. Los agentes y los lanzadores se han regenerado: los cambios valen para las sesiones y los equipos nuevos. Las sesiones abiertas siguen con su configuración hasta que las reinicies (bun run office).';
 
+export function permissionTargets(config: OfficeConfig): string[] {
+  const targets = ['direccion'];
+  if (config.departments.redaccion) targets.push('redaccion');
+  if (config.departments.mantenimiento) targets.push('mantenimiento');
+  for (const [slug, floor] of Object.entries(config.floors).sort(([a], [b]) => a.localeCompare(b))) {
+    if (floor.managed) targets.push(slug);
+  }
+  return targets;
+}
+
 export function settingsView(config: OfficeConfig): SettingsView {
+  const permissionModes: SettingsView['permissionModes'] = {};
+  for (const slug of permissionTargets(config)) permissionModes[slug] = permissionModeFor(config, slug);
   return {
     roles: structuredClone(config.roles),
     departments: { ...config.departments },
@@ -27,6 +41,7 @@ export function settingsView(config: OfficeConfig): SettingsView {
     memory: { ...config.memory },
     docsRepo: config.docsRepo,
     port: config.port,
+    permissionModes,
     floors: Object.entries(config.floors)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([slug, f]) => ({ slug, path: f.path, stack: f.stack, managed: f.managed, baseBranch: f.baseBranch })),
@@ -84,6 +99,16 @@ export function applySettings(config: OfficeConfig, raw: unknown): { config: Off
     if (branch === undefined) continue;
     if (validBranch(branch)) floor.baseBranch = branch;
     else errors.push(`"${String(branch)}" no vale como rama base de ${slug}.`);
+  }
+  const modes = record(update.permissionModes);
+  const allowedTargets = new Set(['direccion', 'redaccion', 'mantenimiento', ...Object.keys(next.floors)]);
+  for (const [slug, mode] of Object.entries(modes)) {
+    if (!allowedTargets.has(slug)) {
+      errors.push(`No hay ninguna sesión de la oficina para "${slug}".`);
+      continue;
+    }
+    if (validPermissionMode(mode)) next.permissionModes[slug] = mode;
+    else errors.push(`Modo de permisos no válido para ${slug}: auto, manual, acceptEdits, plan o dontAsk.`);
   }
   if (errors.length > 0) return { error: errors.join(' ') };
   return { config: next, changed: JSON.stringify(next) !== JSON.stringify(config) };

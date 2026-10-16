@@ -31,4 +31,7 @@ Los cambios vuelven, tras revisarlos, con `git -C ~/Projects/agent-office pull ~
 
 ## Cómo se hace cumplir
 
-`.claude/settings.json` deniega en Claude Code los comandos de la regla 3 y las escrituras de la regla 4, en esta copia y en cualquier clon. Las reglas 1, 2 y 5 dependen de que leas este fichero.
+- **Reglas 3 y 4:** el lanzador del jefe de una planta que sea un clon de Agent Office le pasa esos comandos y esas escrituras como reglas `ask`. La lista está en `plugin/settings/clone-permissions.json`. Claude Code pregunta antes de ejecutarlos, también en modo automático. Si el panel de la oficina está abierto, la pregunta sale allí y el usuario la permite o la deniega. Sus desarrolladores y testers trabajan dentro de esa sesión.
+- **Reglas 1, 2 y 5:** dependen de que leas este fichero.
+- **La copia en vivo no puede ser una planta:** `bun run floor add` la rechaza.
+- **Las sesiones normales del usuario no llevan estas reglas.** Fuera de la oficina, Claude puede arrancar el hub o regenerar agentes.

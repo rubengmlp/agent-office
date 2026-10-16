@@ -8,7 +8,9 @@ port=$(cat "$dir/port" 2>/dev/null)
 [ -n "$port" ] || port=4747
 endpoint="${1:-events}"
 max=2
-[ "$endpoint" = ask ] && max=890
+case "$endpoint" in
+  ask|permission) max=890 ;;
+esac
 out=$(curl -sf -m "$max" -X POST "http://127.0.0.1:$port/$endpoint" \
   -H "Content-Type: application/json" \
   -H "X-Office-Key: $(cat "$dir/key")" \

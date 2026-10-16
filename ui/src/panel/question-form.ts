@@ -6,6 +6,8 @@ import { countdown } from '../time';
 import type { AskQuestion, QuestionView } from '../types';
 
 const OTHER = '__other__';
+const PERMISSION_ALLOW = 'Permitir';
+const PERMISSION_DENY = 'Denegar';
 
 type Draft = {
   choice: string | null;
@@ -34,6 +36,9 @@ class QuestionForm {
   private readonly countdownLabel = el('span', 'countdown');
   private busy = false;
 
+  private readonly allow = button(PERMISSION_ALLOW, 'primary');
+  private readonly deny = button(PERMISSION_DENY);
+
   constructor(
     readonly question: QuestionView,
     private readonly actions: Actions,
@@ -41,15 +46,36 @@ class QuestionForm {
     this.drafts = question.questions.map(() => ({ choice: null, picked: new Set<string>(), otherOn: false, other: '' }));
     this.respond.addEventListener('click', () => void this.submit());
     this.release.addEventListener('click', () => void this.giveBack());
-    this.root = el(
-      'section',
-      'question-card',
-      el('div', 'question-title', el('h3', 'section-title', 'Pregunta pendiente'), this.countdownLabel),
-      ...question.questions.map((ask, index) => this.block(ask, index)),
-      el('div', 'question-actions', this.respond, this.release),
-      this.status,
-    );
+    this.allow.addEventListener('click', () => void this.decide(PERMISSION_ALLOW));
+    this.deny.addEventListener('click', () => void this.decide(PERMISSION_DENY));
+    const permission = question.kind === 'permission';
+    const ask = question.questions[0];
+    this.root = permission
+      ? el(
+          'section',
+          'question-card permission-card',
+          el('div', 'question-title', el('h3', 'section-title', 'Permiso pendiente'), this.countdownLabel),
+          ask ? el('p', 'ask-text', ask.question) : null,
+          question.detail ? el('pre', 'permission-detail', question.detail) : null,
+          el('div', 'question-actions', this.allow, this.deny, this.release),
+          el('p', 'muted permission-hint', 'También puedes contestar en la terminal de la sesión: vale la primera respuesta.'),
+          this.status,
+        )
+      : el(
+          'section',
+          'question-card',
+          el('div', 'question-title', el('h3', 'section-title', 'Pregunta pendiente'), this.countdownLabel),
+          ...question.questions.map((item, index) => this.block(item, index)),
+          el('div', 'question-actions', this.respond, this.release),
+          this.status,
+        );
     this.refresh();
+  }
+
+  private async decide(choice: string): Promise<void> {
+    const ask = this.question.questions[0];
+    if (this.busy || !ask) return;
+    await this.run(() => this.actions.answer(this.question, { [ask.question]: choice }));
   }
 
   updateCountdown(now: number): void {
@@ -135,6 +161,8 @@ class QuestionForm {
   private refresh(): void {
     this.respond.disabled = this.busy || !this.complete();
     this.release.disabled = this.busy;
+    this.allow.disabled = this.busy;
+    this.deny.disabled = this.busy;
     this.respond.textContent = this.busy ? 'Enviando…' : 'Responder';
   }
 

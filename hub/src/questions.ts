@@ -2,6 +2,8 @@ import type { AskQuestion, QuestionOutcome, QuestionView } from './types';
 import { record, text } from './state-machine';
 
 export const VISIBLE_WINDOW_MS = 30_000;
+export const PERMISSION_ALLOW = 'Permitir';
+export const PERMISSION_DENY = 'Denegar';
 export const HOLD_MS = 880_000;
 
 type Pending = {
@@ -48,6 +50,12 @@ export class QuestionDesk {
     if (!pending) return 'closed';
     const clean = validateAnswers(pending.view.questions, answers);
     if (!clean) return 'invalid';
+    if (pending.view.kind === 'permission') {
+      const choice = Object.values(clean)[0];
+      if (choice !== PERMISSION_ALLOW && choice !== PERMISSION_DENY) return 'invalid';
+      this.close(id, 'answered', permissionBody(choice === PERMISSION_ALLOW));
+      return 'ok';
+    }
     this.close(id, 'answered', decisionBody(pending.toolInput, clean));
     return 'ok';
   }
@@ -112,6 +120,17 @@ export function validateAnswers(questions: AskQuestion[], answers: unknown): Rec
     out[q.question] = value.trim();
   }
   return out;
+}
+
+export function permissionBody(allow: boolean): string {
+  return JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: 'PermissionRequest',
+      decision: allow
+        ? { behavior: 'allow' }
+        : { behavior: 'deny', message: 'El usuario lo ha denegado desde el panel de Agent Office.', interrupt: false },
+    },
+  });
 }
 
 export function decisionBody(toolInput: Record<string, unknown>, answers: Record<string, string>): string {

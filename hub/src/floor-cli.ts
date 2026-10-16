@@ -11,7 +11,7 @@ import {
   writeFixedAgents,
   type FloorRole,
 } from './agents';
-import { DEFAULT_BASE_BRANCH, PROFILES_DIR, TEMPLATES_DIR, expandHome, loadConfig, paths, saveConfig, type Paths } from './config';
+import { DEFAULT_BASE_BRANCH, PROFILES_DIR, REPO_ROOT, TEMPLATES_DIR, expandHome, loadConfig, paths, saveConfig, type Paths } from './config';
 import { RESERVED_SLUGS, realPath, slugify } from './floors';
 import { writeOfficeScripts } from './office-sh';
 import { detectStack, loadProfiles, profileFor, type CompiledProfile, type Profiles } from './profiles';
@@ -82,6 +82,11 @@ export function planFloor(
   templatesDir = TEMPLATES_DIR,
 ): FloorPlan {
   const path = resolveDir(target);
+  if (path === realPath(REPO_ROOT)) {
+    throw new FloorError(
+      `${path} es la copia de la que corre la oficina y no puede ser una planta. Trabaja en un clon: git clone ${path} ${path}-dev y añade ese clon.`,
+    );
+  }
   const slug = checkSlug(slugOverride ?? slugify(basename(path)));
   const config = loadConfig(p);
   const taken = config.floors[slug];

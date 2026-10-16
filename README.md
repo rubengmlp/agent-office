@@ -98,6 +98,8 @@ Los lanzadores de los departamentos comprueban `GET /health` y no abren la sesi�
 - **Preguntas**: con la pestaña visible, las `AskUserQuestion` de las sesiones de la oficina se retienen en el panel en vez de salir en la terminal. "Devolver al terminal" las suelta al momento. Con la pestaña oculta o cerrada salen en la terminal como siempre.
 - **Órdenes**: el cuadro de órdenes escribe en el inbox de la sesión elegida (por defecto el director). Llegan con el prefijo `[Agent Office]`.
 - **Puerta de tests**: el jefe de planta avisa al director con un mensaje que empieza por `HECHO:`. Si el desarrollador cambió ficheros y no hay tests en verde de un tester de la planta posteriores, el mensaje no sale y el jefe recibe el motivo. Con herramientas de tareas, completar una tarea pasa por la misma comprobación.
+- **Permisos**: con la pestaña visible, las peticiones de permiso de las sesiones de la oficina también salen en el panel, con Permitir, Denegar y Devolver al terminal. La terminal sigue mostrando el diálogo: vale la primera respuesta.
+- **Modo de permisos**: en Ajustes eliges con qué modo se abre cada sesión: el director, cada planta y cada departamento. Los modos son automático, manual, aceptar ediciones, plan o no preguntar, y su equipo lo hereda.
 - **Bloqueos**: un agente que envía `BLOQUEADO: <qué falta> — necesito <qué> de <quién>` se pinta bloqueado hasta que vuelve a trabajar. Una pregunta sin respuesta durante 5 minutos también.
 - **Demo sin sesiones**: <http://127.0.0.1:4747/?replay=/replays/demo.json> (añade `&view=3d` para la 3D).
 
@@ -140,7 +142,7 @@ La v1 se probó el 2026-10-15, con Claude Code 2.1.292, en una planta de pruebas
 
 ## Desarrollo
 
-Para que la oficina trabaje sobre su propio código, sigue [CLAUDE.md](CLAUDE.md). El trabajo se hace en un clon, nunca en la copia de la que corre la oficina, y sin los comandos que administran la oficina real. `.claude/settings.json` deniega esos comandos en Claude Code dentro de este repositorio, también en tus propias sesiones: arranca la oficina desde tu terminal.
+Para que la oficina trabaje sobre su propio código, sigue [CLAUDE.md](CLAUDE.md). El trabajo se hace en un clon, nunca en la copia de la que corre la oficina, y sin los comandos que administran la oficina real. El jefe de una planta que sea un clon de Agent Office se abre con esos comandos como reglas `ask` (`plugin/settings/clone-permissions.json`), y la pregunta de permiso sale en el panel para que la permitas o la deniegues. Tus sesiones normales de Claude no llevan esas reglas.
 
 ```sh
 bun run test                         # tests del hub

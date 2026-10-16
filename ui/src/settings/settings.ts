@@ -2,7 +2,7 @@ import type { OfficeApi } from '../api';
 import { button, el, type Child } from '../dom';
 import { STACK_LABELS } from '../labels';
 import type { Store } from '../store';
-import type { DepartmentsConfig, Effort, RoleId, SettingsView } from '../types';
+import type { DepartmentsConfig, Effort, PermissionMode, RoleId, SettingsView } from '../types';
 import {
   applyUpdate,
   branchProblemKey,
@@ -25,6 +25,8 @@ import {
   OTHER_MODEL,
   REVIEW_FIELDS,
   ROLE_ROWS,
+  PERMISSION_MODE_OPTIONS,
+  permissionTargetLabel,
   type NumberField,
   type NumberKey,
 } from './options';
@@ -40,6 +42,7 @@ type Controls = {
   departments: Map<keyof DepartmentsConfig, HTMLInputElement>;
   numbers: Map<NumberKey, HTMLInputElement>;
   branches: Map<string, HTMLInputElement>;
+  modes: Map<string, HTMLSelectElement>;
 };
 
 function option(value: string, label: string): HTMLOptionElement {
@@ -199,7 +202,7 @@ class SettingsPage {
 
     this.actions.hidden = false;
     const floors = managedFloors(view).map((floor) => [floor.slug, floor.path, floor.stack]);
-    const signature = JSON.stringify([view.docsRepo, view.port, floors]);
+    const signature = JSON.stringify([view.docsRepo, view.port, floors, Object.keys(view.permissionModes)]);
     if (this.controls === null || signature !== this.signature) {
       this.signature = signature;
       this.controls = this.buildControls(view);
@@ -225,6 +228,7 @@ class SettingsPage {
     const departments = new Map<keyof DepartmentsConfig, HTMLInputElement>();
     const numbers = new Map<NumberKey, HTMLInputElement>();
     const branches = new Map<string, HTMLInputElement>();
+    const modes = new Map<string, HTMLSelectElement>();
 
     const roleGrid = el(
       'div',
@@ -307,6 +311,20 @@ class SettingsPage {
       );
     });
 
+    const modeRows = Object.keys(view.permissionModes).map((slug) => {
+      const label = permissionTargetLabel(slug);
+      const select = el('select', 'setting-mode');
+      select.setAttribute('aria-label', `Modo de permisos de ${label}`);
+      select.append(...PERMISSION_MODE_OPTIONS.map((entry) => option(entry.value, entry.label)));
+      select.addEventListener('change', () => {
+        this.edit((draft) => {
+          draft.modes[slug] = select.value as PermissionMode;
+        });
+      });
+      modes.set(slug, select);
+      return el('label', 'setting-row', el('span', 'setting-text', el('span', 'setting-label', label)), select);
+    });
+
     const fieldset = el(
       'fieldset',
       'settings-fieldset',
@@ -316,6 +334,11 @@ class SettingsPage {
         roleGrid,
       ),
       section('Departamentos', 'Activa o desactiva las plantas de Redacción y Mantenimiento.', ...departmentRows),
+      section(
+        'Permisos',
+        'Modo de permisos con el que se abre cada sesión; su equipo lo hereda. Se aplica cuando la sesión se reinicia. En modo plan el equipo no puede escribir.',
+        ...modeRows,
+      ),
       section(
         'Revisión',
         'Rondas de revisión de planes y skills antes de declarar sin acuerdo.',
@@ -339,7 +362,7 @@ class SettingsPage {
       readonlyRow('Puerto', String(view.port)),
     );
 
-    return { root: el('div', 'settings-form', fieldset, hub), fieldset, roles, departments, numbers, branches };
+    return { root: el('div', 'settings-form', fieldset, hub), fieldset, roles, departments, numbers, branches, modes };
   }
 
   private syncControls(): void {
@@ -354,6 +377,7 @@ class SettingsPage {
     for (const [key, input] of controls.departments) input.checked = draft.departments[key];
     for (const [key, input] of controls.numbers) setValue(input, draft.numbers[key]);
     for (const [slug, input] of controls.branches) setValue(input, draft.branches[slug] ?? '');
+    for (const [slug, select] of controls.modes) setValue(select, draft.modes[slug] ?? 'auto');
   }
 
   private edit(change: (draft: SettingsDraft) => void): void {

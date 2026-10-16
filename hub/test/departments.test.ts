@@ -279,6 +279,36 @@ describe('Mantenimiento skills', () => {
   });
 });
 
+describe('guard alerts', () => {
+  test('a skill installed in a floor while another department agent works raises no alert', async () => {
+    office();
+    const repo = realPath(join(h.root, 'sandbox'));
+    mkdirSync(repo, { recursive: true });
+    git(repo, 'init', '-q');
+    writeFileSync(join(repo, 'a.ts'), 'a');
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-q', '-m', 'inicio');
+    h.config.floors.sandbox = floor(repo, true, 'node');
+    const cwd = join(docs, 'redaccion');
+    h.office.ingest(ev(LEAD, cwd, 'SessionStart', {}), leadMeta);
+    spawn(LEAD, cwd, 'redactor-login', 'office-redactor', 'c1');
+    start(LEAD, cwd, 'ared-1', 'redactor-login');
+    await h.office.idle();
+    mkdirSync(join(repo, '.claude', 'skills', 'pdf'), { recursive: true });
+    writeFileSync(join(repo, '.claude', 'skills', 'pdf', 'SKILL.md'), '---\nname: pdf\n---\n');
+    h.office.ingest(ev(LEAD, cwd, 'SubagentStop', { agent_id: 'ared-1', agent_type: 'redactor-login' }));
+    await h.office.idle();
+    expect(h.office.snapshot().alerts).toEqual([]);
+
+    h.office.ingest(ev(LEAD, cwd, 'PreToolUse', { agent_id: 'ared-1', agent_type: 'redactor-login', tool_name: 'Read', tool_input: { file_path: join(docs, PLAN) } }));
+    await h.office.idle();
+    writeFileSync(join(repo, 'a.ts'), 'un cambio que nadie de la planta hizo con Edit');
+    h.office.ingest(ev(LEAD, cwd, 'SubagentStop', { agent_id: 'ared-1', agent_type: 'redactor-login' }));
+    await h.office.idle();
+    expect(h.office.snapshot().alerts.map((a) => [a.level, a.floor, a.files])).toEqual([['alerta', 'sandbox', [join(repo, 'a.ts')]]]);
+  });
+});
+
 describe('department floors have no tests', () => {
   test('a command that mentions "test" in a department is not a test run', () => {
     const cwd = redaccionTeam();

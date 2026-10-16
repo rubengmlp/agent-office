@@ -15,6 +15,8 @@ export type RoleId =
 
 export type RoleSettings = { model: string; effort: Effort };
 
+export type PermissionMode = 'auto' | 'manual' | 'acceptEdits' | 'plan' | 'dontAsk';
+
 export type Profile = {
   label: string;
   skill: string | null;
@@ -38,6 +40,7 @@ export type OfficeConfig = {
   departments: DepartmentsConfig;
   review: ReviewConfig;
   memory: MemoryConfig;
+  permissionModes: Record<string, PermissionMode>;
   blockedAfterMinutes: number;
   retentionDays: number;
   port: number;
@@ -147,8 +150,12 @@ export type AskQuestion = {
   multiSelect?: boolean;
 };
 
+export type QuestionKind = 'ask' | 'permission';
+
 export type QuestionView = {
   id: string;
+  kind?: QuestionKind;
+  detail?: string;
   agentKey: string;
   sessionId: string;
   floor: string;
@@ -263,6 +270,7 @@ export type SettingsView = {
   memory: MemoryConfig;
   docsRepo: string;
   port: number;
+  permissionModes: Record<string, PermissionMode>;
   floors: { slug: string; path: string; stack: Stack; managed: boolean; baseBranch: string }[];
 };
 
@@ -272,6 +280,7 @@ export type SettingsUpdate = {
   review?: Partial<ReviewConfig>;
   memory?: Partial<MemoryConfig>;
   floors?: Record<string, { baseBranch?: string }>;
+  permissionModes?: Record<string, PermissionMode>;
 };
 
 export type SettingsResult = { ok: true; regenerated: number; note: string } | { ok: false; error: string };

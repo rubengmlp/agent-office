@@ -25,7 +25,7 @@ import { captureLesson, cleanLesson, deleteLesson, isRoleId, listLessons, memory
 import { publicDetail, publicSummary, publicText, storedPayload } from './privacy';
 import { detectStack, profileFor, type Profiles } from './profiles';
 import { docRef, parseProtocol, type DocRef } from './protocol';
-import { QuestionDesk, parseQuestions } from './questions';
+import { PERMISSION_ALLOW, PERMISSION_DENY, QuestionDesk, parseQuestions } from './questions';
 import { buildReport, saveReport, savedReport, savedReports } from './reports';
 import {
   canonicalRole,
@@ -209,6 +209,7 @@ export class Office {
   private readonly listeners = new Set<(msg: ServerMessage) => void>();
   private readonly teamCache = new Map<string, { at: number; members: Record<string, unknown>[] }>();
   private readonly pending = new Set<Promise<unknown>>();
+  private readonly permissionHolds = new Map<string, { agentKey: string; match: string }>();
   private readonly docsQueue = new GitQueue();
   private readonly now: () => number;
   private readonly deliverFn: typeof deliver;
@@ -265,7 +266,8 @@ export class Office {
       active: (floor, from, to) => this.sql.floorActive.get(floor, from, to) !== null,
       exempt: (agentKey) => {
         const agent = this.agents.get(agentKey);
-        return agent ? (zonesFor(agent.role, this.guardContext())?.allowed ?? []) : [];
+        const own = agent ? (zonesFor(agent.role, this.guardContext())?.allowed ?? []) : [];
+        return [...own, ...this.installTargets().map((target) => realPath(target.dir))];
       },
       report: (finding) => this.recordAlert(finding),
     });
@@ -370,6 +372,7 @@ export class Office {
     if (c.message) this.recordMessage(c.message, agent, session, now);
     this.pushActivity({ ts: now, agentKey: agent.key, event: c.event, tool: c.tool, state: nextState, summary: publicSummary(c, kind) });
     this.trackDepartment(agent, c.event, ended);
+    this.settlePermissions(agent.key, c.event, c.tool, e.tool_input);
     if (c.event === 'SubagentStop' || c.event === 'Stop' || c.event === 'SessionEnd') this.storeReport(agent, now);
 
     if (c.sessionEnded) this.endSession(session, now);
@@ -389,6 +392,38 @@ export class Office {
     if (this.desk.has(id)) return null;
     return this.desk.hold(
       { id, agentKey: e.agent_id ?? e.session_id, sessionId: e.session_id, floor: session.floor, questions, createdAt: now },
+      input,
+    );
+  }
+
+  async permission(e: HookEvent, meta: HookMeta = EMPTY_META): Promise<string | null> {
+    if (!isHookEvent(e) || e.hook_event_name !== 'PermissionRequest') return null;
+    const now = this.now();
+    const session = this.touchSession(e, meta, now);
+    if (!this.desk.someoneWatching() || !this.inScope(e, session)) return null;
+    const tool = text(e.tool_name) ?? 'una herramienta';
+    const input = record(e.tool_input);
+    const key = e.agent_id ?? e.session_id;
+    const who = this.agents.get(key)?.name ?? (key === e.session_id ? session.name : null) ?? 'un agente de la oficina';
+    const id = `permiso-${randomUUID()}`;
+    this.permissionHolds.set(id, { agentKey: key, match: permissionMatch(tool, input) });
+    return this.desk.hold(
+      {
+        id,
+        kind: 'permission',
+        detail: permissionDetail(tool, input),
+        agentKey: key,
+        sessionId: e.session_id,
+        floor: session.floor,
+        questions: [
+          {
+            question: `¿Permites a ${who} ${permissionVerb(tool)}?`,
+            header: 'Permiso',
+            options: [{ label: PERMISSION_ALLOW }, { label: PERMISSION_DENY }],
+          },
+        ],
+        createdAt: now,
+      },
       input,
     );
   }
@@ -709,7 +744,21 @@ export class Office {
       return;
     }
     if (event === 'SessionStart' || event === 'Notification' || event === 'TeammateIdle') return;
-    if (!ended && agent.endedAt === null) this.watch.start(agent.key);
+    if (!ended && agent.endedAt === null && !this.watch.watching(agent.key)) {
+      this.watch.start(agent.key);
+      this.background(this.watch.ready(agent.key));
+    }
+  }
+
+  private settlePermissions(agentKey: string, event: string, tool: string | null, input: unknown): void {
+    if (this.permissionHolds.size === 0) return;
+    const turnOver = event === 'Stop' || event === 'SubagentStop' || event === 'SessionEnd' || event === 'UserPromptSubmit';
+    const ran = (event === 'PostToolUse' || event === 'PostToolUseFailure') && tool ? permissionMatch(tool, record(input)) : null;
+    if (!turnOver && !ran) return;
+    for (const [id, hold] of [...this.permissionHolds]) {
+      if (hold.agentKey !== agentKey) continue;
+      if (turnOver || hold.match === ran) this.desk.release(id);
+    }
   }
 
   private storeReport(agent: AgentRuntime, now: number): void {
@@ -1201,10 +1250,19 @@ export class Office {
   private questionOpened(view: QuestionView): void {
     this.sql.insertQuestion.run(view.id, view.sessionId, view.agentKey, view.floor, JSON.stringify(view.questions), 'pending', view.createdAt);
     this.emit({ type: 'question', data: view });
-    this.pushActivity({ ts: view.createdAt, agentKey: view.agentKey, event: 'Question', tool: 'AskUserQuestion', state: 'asking', summary: 'pregunta esperando en el panel' });
+    const permission = view.kind === 'permission';
+    this.pushActivity({
+      ts: view.createdAt,
+      agentKey: view.agentKey,
+      event: permission ? 'Permission' : 'Question',
+      tool: permission ? 'PermissionRequest' : 'AskUserQuestion',
+      state: 'asking',
+      summary: permission ? `permiso esperando en el panel: ${short(view.detail ?? '', 60)}` : 'pregunta esperando en el panel',
+    });
   }
 
   private questionClosed(id: string, outcome: QuestionOutcome): void {
+    this.permissionHolds.delete(id);
     this.sql.closeQuestion.run(outcome, this.now(), id);
     this.emit({ type: 'question-closed', id, outcome });
   }
@@ -1321,6 +1379,29 @@ export class Office {
       this.opts.rawDir = null;
     }
   }
+}
+
+export function permissionMatch(tool: string, input: Record<string, unknown>): string {
+  return `${tool}|${JSON.stringify(input)}`;
+}
+
+export function permissionVerb(tool: string): string {
+  if (tool === 'Bash') return 'ejecutar este comando';
+  if (tool === 'Edit' || tool === 'Write' || tool === 'MultiEdit' || tool === 'NotebookEdit') return 'modificar este fichero';
+  if (tool === 'Read' || tool === 'Grep' || tool === 'Glob') return 'leer fuera de su carpeta';
+  if (tool === 'WebFetch' || tool === 'WebSearch') return 'consultar la web';
+  return `usar ${tool}`;
+}
+
+export function permissionDetail(tool: string, input: Record<string, unknown>): string {
+  const value =
+    text(input.command) ??
+    text(input.file_path) ??
+    text(input.notebook_path) ??
+    text(input.url) ??
+    text(input.query) ??
+    (text(input.pattern) ? `${input.pattern as string}${text(input.path) ? ` en ${input.path as string}` : ''}` : null);
+  return short(value ?? `${tool} ${JSON.stringify(input)}`, 600);
 }
 
 function remember<V>(map: Map<string, V>, key: string, value: V): void {

@@ -1,4 +1,4 @@
-import type { DepartmentsConfig, Effort, RoleId } from '../types';
+import type { DepartmentsConfig, Effort, PermissionMode, RoleId } from '../types';
 
 export const OTHER_MODEL = '__other__';
 
@@ -38,6 +38,21 @@ export const MODEL_OPTIONS: readonly { value: string; label: string }[] = [
 ];
 
 export const EFFORTS: readonly Effort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
+
+export const PERMISSION_MODE_OPTIONS: readonly { value: PermissionMode; label: string }[] = [
+  { value: 'auto', label: 'Automático: decide qué es seguro y pregunta el resto' },
+  { value: 'manual', label: 'Manual: pregunta antes de cada acción no permitida' },
+  { value: 'acceptEdits', label: 'Aceptar ediciones: edita sin preguntar' },
+  { value: 'plan', label: 'Plan: solo lee y propone, no edita ni ejecuta' },
+  { value: 'dontAsk', label: 'No preguntar: deniega lo no permitido' },
+];
+
+export function permissionTargetLabel(slug: string): string {
+  if (slug === 'direccion') return 'Dirección (director)';
+  if (slug === 'redaccion') return 'Redacción';
+  if (slug === 'mantenimiento') return 'Mantenimiento';
+  return slug;
+}
 
 export const DEPARTMENT_ROWS: readonly { key: keyof DepartmentsConfig; label: string; hint: string }[] = [
   { key: 'redaccion', label: 'Redacción', hint: 'Redactores y revisores que escriben y revisan planes.' },

@@ -2,6 +2,7 @@ import type {
   DepartmentsConfig,
   Effort,
   MemoryConfig,
+  PermissionMode,
   ReviewConfig,
   RoleId,
   RoleSettings,
@@ -26,6 +27,7 @@ export type SettingsDraft = {
   departments: DepartmentsConfig;
   numbers: Record<NumberKey, string>;
   branches: Record<string, string>;
+  modes: Record<string, PermissionMode>;
 };
 
 export type Problems = Map<string, string>;
@@ -98,13 +100,15 @@ export function draftFrom(view: SettingsView): SettingsDraft {
   const branches: Record<string, string> = {};
   for (const floor of managedFloors(view)) branches[floor.slug] = floor.baseBranch;
 
-  return { roles, departments: { ...view.departments }, numbers, branches };
+  return { roles, departments: { ...view.departments }, numbers, branches, modes: { ...view.permissionModes } };
 }
 
 export function reconcileDraft(draft: SettingsDraft, view: SettingsView): SettingsDraft {
   const branches: Record<string, string> = {};
   for (const floor of managedFloors(view)) branches[floor.slug] = draft.branches[floor.slug] ?? floor.baseBranch;
-  return { ...draft, branches };
+  const modes: Record<string, PermissionMode> = {};
+  for (const [slug, mode] of Object.entries(view.permissionModes)) modes[slug] = draft.modes[slug] ?? mode;
+  return { ...draft, branches, modes };
 }
 
 export function sameDraft(a: SettingsDraft, b: SettingsDraft): boolean {
@@ -180,6 +184,12 @@ export function diffDraft(baseline: SettingsView, draft: SettingsDraft): Setting
   }
   if (Object.keys(floors).length > 0) update.floors = floors;
 
+  const modes: Record<string, PermissionMode> = {};
+  for (const [slug, mode] of Object.entries(draft.modes)) {
+    if (baseline.permissionModes[slug] !== undefined && baseline.permissionModes[slug] !== mode) modes[slug] = mode;
+  }
+  if (Object.keys(modes).length > 0) update.permissionModes = modes;
+
   return update;
 }
 
@@ -199,6 +209,7 @@ export function applyUpdate(view: SettingsView, update: SettingsUpdate): Setting
     departments: { ...view.departments, ...update.departments },
     review: { ...view.review, ...update.review },
     memory: { ...view.memory, ...update.memory },
+    permissionModes: { ...view.permissionModes, ...update.permissionModes },
     floors: view.floors.map((floor) => {
       const baseBranch = update.floors?.[floor.slug]?.baseBranch;
       return baseBranch === undefined ? floor : { ...floor, baseBranch };

@@ -206,6 +206,8 @@ describe('launch scripts', () => {
         agent: 'office-director',
         extraArgs: ['--append-system-prompt-file', p.directorFloors, ...modelArgs({ model: 'opus', effort: 'high' })],
         needsHub: false,
+        permissionMode: 'auto',
+        settings: { subagentPromptCacheTtl: '1h' },
       },
       4747,
     );
@@ -216,7 +218,10 @@ describe('launch scripts', () => {
     expect(script).toContain("'--model' 'opus' '--effort' 'high'");
     expect(script).not.toContain('/health');
     expect(script.trimEnd().endsWith('"$@"')).toBe(true);
-    const office = officeScript([{ name: 'director', cwd: '/r', role: 'r', agent: 'a', extraArgs: [], needsHub: false }], p);
+    const office = officeScript(
+      [{ name: 'director', cwd: '/r', role: 'r', agent: 'a', extraArgs: [], needsHub: false, permissionMode: 'auto', settings: {} }],
+      p,
+    );
     expect(office).toContain('tmux new-session -d -s agent-office');
     expect(office).toContain('tell application \\"Terminal\\" to do script');
     const config = testConfig({ floors: { mobile: floor('/m'), old: floor('/o', false, 'node') }, departments: { redaccion: true, mantenimiento: false } });

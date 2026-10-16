@@ -1,10 +1,10 @@
-import { mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { managedFloors } from './agents';
-import { WORKSPACE_DIR, docsRepoPath, writeAtomic, type Paths } from './config';
-import { REDACCION_DIR, TALLER_DIR } from './floors';
+import { PLUGIN_DIR, REPO_ROOT, WORKSPACE_DIR, docsRepoPath, permissionModeFor, writeAtomic, type Paths } from './config';
+import { MANTENIMIENTO, REDACCION, REDACCION_DIR, TALLER_DIR, realPath } from './floors';
 import { profileFor, type Profiles } from './profiles';
-import type { OfficeConfig, RoleSettings } from './types';
+import type { OfficeConfig, PermissionMode, RoleSettings } from './types';
 
 export type SessionSpec = {
   name: string;
@@ -13,7 +13,33 @@ export type SessionSpec = {
   agent: string;
   extraArgs: string[];
   needsHub: boolean;
+  permissionMode: PermissionMode;
+  settings: Record<string, unknown>;
 };
+
+export const CLONE_PERMISSIONS_FILE = join(PLUGIN_DIR, 'settings', 'clone-permissions.json');
+
+const BASE_SETTINGS = { subagentPromptCacheTtl: '1h' };
+
+export function isOfficeClone(dir: string, liveRoot = REPO_ROOT): boolean {
+  try {
+    const marketplace: unknown = JSON.parse(readFileSync(join(dir, '.claude-plugin', 'marketplace.json'), 'utf8'));
+    const name = marketplace && typeof marketplace === 'object' ? (marketplace as Record<string, unknown>).name : null;
+    return name === 'agent-office' && realPath(dir) !== realPath(liveRoot);
+  } catch {
+    return false;
+  }
+}
+
+export function clonePermissions(file = CLONE_PERMISSIONS_FILE): string[] {
+  try {
+    const raw: unknown = JSON.parse(readFileSync(file, 'utf8'));
+    const ask = raw && typeof raw === 'object' ? (raw as Record<string, unknown>).ask : null;
+    return Array.isArray(ask) ? ask.filter((rule): rule is string => typeof rule === 'string') : [];
+  } catch {
+    return [];
+  }
+}
 
 export function sq(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
@@ -24,19 +50,30 @@ export function modelArgs(settings: RoleSettings): string[] {
   return [...model, '--effort', settings.effort];
 }
 
-export function sessionSpecs(config: OfficeConfig, p: Paths, workspaceDir = WORKSPACE_DIR): SessionSpec[] {
+export function directorReadDirs(config: OfficeConfig, p: Paths): string[] {
+  const dirs = managedFloors(config).map(([, floor]) => floor.path);
+  if (config.departments.redaccion || config.departments.mantenimiento) dirs.push(docsRepoPath(config));
+  dirs.push(p.skillsDir);
+  return dirs.filter((dir, index) => dirs.indexOf(dir) === index && existsSync(dir));
+}
+
+export function sessionSpecs(config: OfficeConfig, p: Paths, workspaceDir = WORKSPACE_DIR, liveRoot = REPO_ROOT): SessionSpec[] {
   const lead = modelArgs(config.roles.lead);
+  const addDirs = directorReadDirs(config, p).flatMap((dir) => ['--add-dir', dir]);
   const specs: SessionSpec[] = [
     {
       name: 'director',
       cwd: workspaceDir,
       role: 'office-director',
       agent: 'office-director',
-      extraArgs: ['--append-system-prompt-file', p.directorFloors, ...modelArgs(config.roles.director)],
+      extraArgs: ['--append-system-prompt-file', p.directorFloors, ...addDirs, ...modelArgs(config.roles.director)],
       needsHub: false,
+      permissionMode: permissionModeFor(config, 'direccion'),
+      settings: BASE_SETTINGS,
     },
   ];
   for (const [slug, floor] of managedFloors(config)) {
+    const ask = isOfficeClone(floor.path, liveRoot) ? clonePermissions() : [];
     specs.push({
       name: `lead-${slug}`,
       cwd: floor.path,
@@ -44,6 +81,8 @@ export function sessionSpecs(config: OfficeConfig, p: Paths, workspaceDir = WORK
       agent: `office-lead-${slug}`,
       extraArgs: lead,
       needsHub: false,
+      permissionMode: permissionModeFor(config, slug),
+      settings: ask.length > 0 ? { ...BASE_SETTINGS, permissions: { ask } } : BASE_SETTINGS,
     });
   }
   const docs = docsRepoPath(config);
@@ -55,6 +94,8 @@ export function sessionSpecs(config: OfficeConfig, p: Paths, workspaceDir = WORK
       agent: 'office-lead-redaccion',
       extraArgs: lead,
       needsHub: true,
+      permissionMode: permissionModeFor(config, REDACCION),
+      settings: BASE_SETTINGS,
     });
   }
   if (config.departments.mantenimiento) {
@@ -65,6 +106,8 @@ export function sessionSpecs(config: OfficeConfig, p: Paths, workspaceDir = WORK
       agent: 'office-lead-mantenimiento',
       extraArgs: ['--add-dir', p.skillsDir, ...lead],
       needsHub: true,
+      permissionMode: permissionModeFor(config, MANTENIMIENTO),
+      settings: BASE_SETTINGS,
     });
   }
   return specs;
@@ -104,8 +147,10 @@ export function sessionScript(spec: SessionSpec, port: number): string {
     spec.name,
     '--teammate-mode',
     'in-process',
+    '--permission-mode',
+    spec.permissionMode,
     '--settings',
-    '{"subagentPromptCacheTtl":"1h"}',
+    JSON.stringify(spec.settings),
     ...spec.extraArgs,
   ];
   const lines = ['#!/bin/sh'];

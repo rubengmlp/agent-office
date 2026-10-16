@@ -66,6 +66,14 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
     return body ? c.body(body, 200, { 'Content-Type': 'application/json' }) : c.body(null, 200);
   });
 
+  app.post('/permission', requireKey, async (c) => {
+    const event = await readJson(c);
+    if (!isHookEvent(event)) return c.body(null, 200);
+    holdRequest(c.req.raw);
+    const body = await office.permission(event, metaOf(c));
+    return body ? c.body(body, 200, { 'Content-Type': 'application/json' }) : c.body(null, 200);
+  });
+
   app.post('/gate', requireKey, async (c) => {
     const event = await readJson(c);
     const decision = isHookEvent(event) ? office.gate(event) : { pass: true, reason: '' };

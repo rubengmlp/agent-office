@@ -46,6 +46,7 @@ describe('hook scripts', () => {
         const body = seen.at(-1)?.body ?? '';
         if (path === '/gate' || path === '/gate-message' || path === '/guard') return new Response(gateAnswer);
         if (path === '/ask') return new Response('{"hookSpecificOutput":{"hookEventName":"PreToolUse"}}');
+        if (path === '/permission') return new Response('{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}');
         if (path === '/events' && body.includes('SubagentStart')) {
           return new Response('{"hookSpecificOutput":{"hookEventName":"SubagentStart","additionalContext":"Lecciones"}}');
         }
@@ -113,6 +114,13 @@ describe('hook scripts', () => {
     expect((await runHook(GUARD, [], home, '{"hook_event_name":"PreToolUse","tool_name":"Write"}')).code).toBe(0);
     expect((await runHook(GUARD, [], downHome, '{"hook_event_name":"PreToolUse","tool_name":"Write"}')).code).toBe(0);
     expect((await runHook(GUARD, [], emptyHome, '{}')).code).toBe(0);
+  });
+
+  test('emit permission prints the decision taken in the panel', async () => {
+    const result = await runHook(EMIT, ['permission'], home, '{"hook_event_name":"PermissionRequest","tool_name":"Bash"}');
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout).hookSpecificOutput.decision.behavior).toBe('allow');
+    expect(seen.at(-1)?.path).toBe('/permission');
   });
 
   test('emit ask prints the hub decision for Claude Code', async () => {
