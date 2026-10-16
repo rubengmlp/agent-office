@@ -31,6 +31,7 @@ export type HubTextParams = {
   'hub.detail.verdictApproved': undefined;
   'hub.detail.verdictImprove': undefined;
   'hub.detail.verdictNoAgreement': undefined;
+  'hub.detail.waitingFor': { who: string; what: string };
 
   'hub.act.sessionStart': { source: string };
   'hub.act.newTurn': undefined;
@@ -107,6 +108,12 @@ export type HubTextParams = {
   'hub.act.reviewIgnoredTooLong': { path: string; kb: number; max: number };
   'hub.act.readCapReached': { who: string; n: number };
   'hub.act.splitRequested': { who: string; path: string };
+  'hub.act.briefsCapped': { n: number; max: number };
+  'hub.act.rulesReloaded': { who: string };
+  'hub.act.relaunched': { who: string };
+  'hub.act.waitingDeclared': { who: string; to: string; what: string };
+  'hub.act.stalled': { who: string; minutes: number };
+  'hub.act.statusRequested': { who: string };
   'hub.act.chatPost': { who: string; channel: string; text: string };
   'hub.act.chatClaim': { who: string; channel: string; files: string };
   'hub.act.chatRelease': { who: string; channel: string; files: string };
@@ -197,6 +204,11 @@ export type HubTextParams = {
   'hub.api.chatChannelUnknown': undefined;
   'hub.api.chatChannelForbidden': undefined;
   'hub.api.chatSessionUnknown': undefined;
+  'hub.api.relaunchBusy': undefined;
+  'hub.api.relaunchNoWindow': undefined;
+  'hub.api.relaunchNoTmux': undefined;
+  'hub.api.relaunchNoScript': undefined;
+  'hub.api.relaunchFailed': undefined;
 
   'hub.doc.tooLarge': undefined;
 
@@ -362,6 +374,8 @@ export type AgentView = {
   file: string | null;
   task: string | null;
   away: boolean;
+  waiting: { who: string; what: string; since: number } | null;
+  stalledSince: number | null;
 };
 
 export type FloorView = {
@@ -446,6 +460,10 @@ export type SessionView = {
   floor: string;
   canReceive: boolean;
   endedAt: number | null;
+  needsRelaunch: boolean;
+  rulesPending: boolean;
+  canRelaunch: boolean;
+  relaunchResumes: boolean;
 };
 
 export type ActivityView = {

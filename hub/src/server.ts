@@ -5,11 +5,11 @@ import { Hono, type Context, type Next } from 'hono';
 import { clampWait, errorTextFor } from './chat';
 import type { FloorAdmin } from './floor-admin';
 import { isRoleId } from './memory';
-import { isHookEvent, type Office } from './office';
+import { isHookEvent, type Office, type RelaunchResult } from './office';
 import { hostAllowed, injectKey, keyMatches, originAllowed } from './security';
 import type { SettingsService } from './settings';
 import { record, text } from './state-machine';
-import type { ChatKind, ChatPostRequest, ClientMessage, HookMeta, HubText, PlanDecision, ServerMessage } from './types';
+import type { ChatKind, ChatPostRequest, ClientMessage, HookMeta, HubText, HubTextKey, PlanDecision, ServerMessage } from './types';
 
 type WsData = { authed: boolean; timer: ReturnType<typeof setTimeout> | null };
 
@@ -28,6 +28,14 @@ export type RunningServer = { server: Server<WsData>; stop: () => void };
 export const AUTH_TIMEOUT_MS = 1000;
 const PLAN_DECISIONS: readonly PlanDecision[] = ['ejecutar', 'aparcar', 'cerrar'];
 const MAX_ORDER_LENGTH = 4000;
+const RELAUNCH_FAILURES: Record<Exclude<RelaunchResult, 'ok'>, { key: HubTextKey; status: 404 | 409 | 501 | 502 }> = {
+  'not-found': { key: 'hub.api.sessionNotFound', status: 404 },
+  busy: { key: 'hub.api.relaunchBusy', status: 409 },
+  'no-script': { key: 'hub.api.relaunchNoScript', status: 404 },
+  'no-tmux': { key: 'hub.api.relaunchNoTmux', status: 501 },
+  'no-window': { key: 'hub.api.relaunchNoWindow', status: 409 },
+  failed: { key: 'hub.api.relaunchFailed', status: 502 },
+};
 const PENDING_MESSAGE: HubText = { key: 'hub.api.questionClosed' };
 
 const MISSING_UI = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Agent Office</title></head>
@@ -138,6 +146,21 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
     if (result === 'ok') return c.json({ ok: true });
     if (result === 'not-found') return c.json({ error: { key: 'hub.api.sessionNotFound' } }, 404);
     return c.json({ error: { key: 'hub.api.orderFailed' } }, 502);
+  });
+
+  app.post('/api/sessions/:id/status', requireKey, async (c) => {
+    const result = await office.requestStatus(c.req.param('id') ?? '');
+    if (result === 'ok') return c.json({ ok: true });
+    if (result === 'not-found') return c.json({ error: { key: 'hub.api.sessionNotFound' } }, 404);
+    return c.json({ error: { key: 'hub.api.orderFailed' } }, 502);
+  });
+
+  app.post('/api/sessions/:id/relaunch', requireKey, async (c) => {
+    const body = record(await readJson(c));
+    const result = await office.relaunch(c.req.param('id') ?? '', typeof body.resume === 'boolean' ? body.resume : undefined);
+    if (result === 'ok') return c.json({ ok: true });
+    const failure = RELAUNCH_FAILURES[result];
+    return c.json({ error: { key: failure.key } }, failure.status);
   });
 
   app.get('/api/settings', requireKey, (c) => {
