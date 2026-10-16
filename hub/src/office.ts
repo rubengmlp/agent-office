@@ -1,8 +1,8 @@
 import type { Database } from 'bun:sqlite';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
-import { CHAT_SCRIPT, managedFloors } from './agents';
-import { ChatDesk, GLOBAL_CHANNEL, READ_LIMIT, SNAPSHOT_LIMIT, USER_NAME, isChatKind, normalizeChatPath, type ChatAuthor, type ChatError, type ChatUnread } from './chat';
+import { managedFloors } from './agents';
+import { ChatDesk, GLOBAL_CHANNEL, READ_LIMIT, SNAPSHOT_LIMIT, USER_NAME, isChatKind, normalizeChatPath, type ChatAuthor, type ChatError } from './chat';
 import { chatInboxText, deliver, encodeInbox, orderText } from './courier';
 import { writeAtomic } from './config';
 import { commitDocument } from './docs-repo';
@@ -22,7 +22,7 @@ import { GitQueue, runGit, type GitRunner } from './git';
 import { GUARDED_TOOLS, guardDecision } from './guard';
 import type { Log } from './log';
 import { keyMatches } from './security';
-import { captureLesson, cleanLesson, deleteLesson, isRoleId, listLessons, memoryContext } from './memory';
+import { captureLesson } from './memory';
 import {
   ANSWERS_QUESTION,
   DECISION_FROM,
@@ -60,14 +60,13 @@ import {
   ROLE_LABELS,
   analysisOrderText,
   executeOrderText,
-  floorLabel,
   historyPath,
   isUserPrompt,
-  isoDate,
   taskLine,
   withoutDiscardMark,
 } from './office-texts';
 import { AskDesk } from './ask-desk';
+import { ContextDesk } from './context-desk';
 import { GuardDesk } from './guard-desk';
 import { MeterDesk } from './meter-desk';
 import { OfficeBus } from './office-bus';
@@ -81,9 +80,7 @@ import { BRIEF_PREFIX, docRef, parseProtocol, type DocRef } from './protocol';
 import { QuestionDesk } from './questions';
 import { buildReport, saveReport, savedReport, savedReports } from './reports';
 import {
-  contextFree,
   departmentOf,
-  inOfficeScope,
   isAuthorRole,
   isDepartmentFloor,
   isLeadRole,
@@ -205,6 +202,7 @@ export class Office {
   private readonly book: SessionBook;
   private readonly rules: RulesDesk;
   private readonly guards: GuardDesk;
+  private readonly context: ContextDesk;
   private readonly asks: AskDesk;
   private readonly stall: StallDesk;
   private readonly now: () => number;
@@ -216,8 +214,6 @@ export class Office {
   private readonly usage: UsageDesk;
   private readonly meter: MeterDesk;
   readonly chat: ChatDesk;
-  private readonly chatNudged = new Set<string>();
-  private readonly chatWarned = new Set<string>();
   private readonly readCounts = new Map<string, number>();
   private readonly readCapNoted = new Set<string>();
   private readonly lastUserInput = new Map<string, number>();
@@ -322,6 +318,16 @@ export class Office {
       },
       onMessage: (message) => this.bus.emit({ type: 'chat', data: message }),
     });
+    this.context = new ContextDesk({
+      db: opts.db,
+      now: this.now,
+      bus: this.bus,
+      book: this.book,
+      config: () => this.config,
+      chat: this.chat,
+      rules: (agent, session) => this.rules.rulesBlock(agent, session),
+      tokens: (key) => this.meter.totals(key),
+    });
     this.book.restoreSessions();
     this.docs.refresh();
   }
@@ -421,7 +427,7 @@ export class Office {
       agent.endedAt = now;
       agent.waiting = null;
       agent.stalledSince = null;
-      this.forgetChatNotes(new Set([agent.key]));
+      this.context.forgetChatNotes(new Set([agent.key]));
     }
     else if (agent.endedAt !== null) agent.endedAt = null;
     if (nextState && nextState !== agent.state) {
@@ -491,12 +497,12 @@ export class Office {
     this.guards.trackDepartment(agent, c.event, ended);
     this.guards.trackChanges(agent, kind, c.event, ended);
     this.asks.settlePermissions(agent.key, c.event, c.tool, e.tool_input);
-    if (c.event === 'SubagentStop' || c.event === 'Stop' || c.event === 'SessionEnd') this.storeReport(agent, now);
+    if (c.event === 'SubagentStop' || c.event === 'Stop' || c.event === 'SessionEnd') this.context.storeReport(agent, now);
 
     if (TURN_OVER.has(c.event)) this.meter.later(agent);
     if (c.sessionEnded) this.endSession(session, now);
-    if (c.event === 'SubagentStart' || c.event === 'SessionStart' || c.event === 'UserPromptSubmit') return this.injection(c.event, agent, session);
-    if (c.event === 'PreToolUse' && c.tool && EDIT_TOOLS.has(c.tool) && c.filePath) return this.chatReminder(agent, session, c.filePath, now);
+    if (c.event === 'SubagentStart' || c.event === 'SessionStart' || c.event === 'UserPromptSubmit') return this.context.injection(c.event, agent, session);
+    if (c.event === 'PreToolUse' && c.tool && EDIT_TOOLS.has(c.tool) && c.filePath) return this.context.chatReminder(agent, session, c.filePath, now);
     return this.readCap(c, agent, session, false, now);
   }
 
@@ -735,7 +741,7 @@ export class Office {
       if (!session.socket || !existsSync(session.socket)) continue;
       const channels = [session.floor, GLOBAL_CHANNEL];
       const pending = this.chat.unread(session.sessionId, channels);
-      const lines = this.chatLines({ messages: pending.messages.filter((m) => m.id !== message.id), hidden: pending.hidden }, session.floor) ?? '';
+      const lines = this.context.chatLines({ messages: pending.messages.filter((m) => m.id !== message.id), hidden: pending.hidden }, session.floor) ?? '';
       // Seen before the delivery: the turn it starts may reach the hub before deliver returns, and must not get
       // these lines again. If it fails, the lead has not seen them.
       const before = this.chat.seenMark(session.sessionId);
@@ -773,43 +779,19 @@ export class Office {
   }
 
   memoryView(floor: string, role: RoleId): MemoryView {
-    return { floor, role, lessons: listLessons(this.opts.db, floor, role), reports: savedReports(this.opts.db, floor, role, 10) };
+    return this.context.memoryView(floor, role);
   }
 
   addLesson(raw: unknown): LessonResult {
-    const body = record(raw);
-    const floor = text(body.floor);
-    const role = body.role;
-    const lessonText = text(body.text);
-    if (!floor || floor.length > 80) return { ok: false, status: 400, error: { key: 'hub.api.floorRequired' } };
-    if (!isRoleId(role)) return { ok: false, status: 400, error: { key: 'hub.api.roleInvalid' } };
-    if (!lessonText || !cleanLesson(lessonText)) return { ok: false, status: 400, error: { key: 'hub.api.lessonEmpty' } };
-    const result = captureLesson(
-      this.opts.db,
-      { floor, role, text: lessonText, origin: 'user', agentKey: null, now: this.now() },
-      this.config.memory,
-    );
-    if (result.status === 'saved') {
-      this.bus.emit({ type: 'memory', floor, role });
-      return { ok: true, lesson: result.lesson };
-    }
-    if (result.status === 'duplicate') return { ok: false, status: 409, error: { key: 'hub.api.lessonDuplicate' } };
-    return { ok: false, status: 400, error: { key: 'hub.api.lessonSaveFailed' } };
+    return this.context.addLesson(raw);
   }
 
   removeLesson(id: number): boolean {
-    const removed = deleteLesson(this.opts.db, id);
-    if (!removed) return false;
-    this.bus.emit({ type: 'memory', floor: removed.floor, role: removed.role });
-    return true;
+    return this.context.removeLesson(id);
   }
 
   report(agentKey: string): ReportView | null {
-    const agent = this.book.agents.get(agentKey);
-    const session = agent ? this.book.sessions.get(agent.sessionId) : undefined;
-    if (session && !this.book.sessionInOffice(session)) return null;
-    const report = agent ? this.buildReportFor(agent) : savedReport(this.opts.db, agentKey);
-    return report ? { ...report, tokens: this.meter.totals(agentKey) } : null;
+    return this.context.report(agentKey);
   }
 
   tokenSummary(range: UsageRange): UsageSummary {
@@ -968,7 +950,7 @@ export class Office {
     this.asks.forget(keys);
     for (const key of keys) this.book.agents.delete(key);
     this.meter.forget(keys);
-    this.forgetChatNotes(keys);
+    this.context.forgetChatNotes(keys);
     for (const id of sessionIds) this.book.sessions.delete(id);
     const keptMessages = this.messages.filter((message) => message.floor !== slug);
     this.messages.splice(0, this.messages.length, ...keptMessages);
@@ -1057,120 +1039,6 @@ export class Office {
 
   refreshDocuments(): void {
     this.docs.refresh();
-  }
-
-  private storeReport(agent: AgentRuntime, now: number): void {
-    if (!remembers(agent.floorKind) || contextFree(roleKind(agent.role))) return;
-    const session = this.book.sessions.get(agent.sessionId);
-    if (session && !this.book.sessionInOffice(session)) return;
-    saveReport(this.opts.db, this.buildReportFor(agent), now);
-  }
-
-  private buildReportFor(agent: AgentRuntime): ReportView {
-    return buildReport(
-      this.opts.db,
-      {
-        key: agent.key,
-        name: agent.name,
-        role: agent.role,
-        roleId: roleIdOf(agent.role),
-        floor: agent.floor,
-        startedAt: agent.startedAt,
-        endedAt: agent.endedAt,
-        closing: agent.closing,
-      },
-      (key) => this.book.agents.get(key)?.name ?? this.book.sessions.get(key)?.name ?? key,
-    );
-  }
-
-  // The rules when they changed, first; memory on start only, and the chat lines the agent has not seen yet on start and on every turn.
-  private injection(event: string, agent: AgentRuntime, session: SessionRuntime): string | null {
-    const blocks = [
-      event === 'UserPromptSubmit' && agent.key === session.sessionId ? this.rules.rulesBlock(agent, session) : null,
-      event === 'UserPromptSubmit' ? null : this.memoryBlock(agent, session),
-      this.chatBlock(agent, session),
-    ].filter((block): block is string => block !== null);
-    if (blocks.length === 0) return null;
-    return JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: blocks.join('\n\n') } });
-  }
-
-  private memoryBlock(agent: AgentRuntime, session: SessionRuntime): string | null {
-    const roleId = roleIdOf(agent.role);
-    if (contextFree(roleKind(agent.role))) return null;
-    if (!roleId || !remembers(session.floorKind) || !inOfficeScope({ floorKind: session.floorKind, sessionRole: agent.role, leadRole: null })) {
-      return null;
-    }
-    const lessons = listLessons(this.opts.db, agent.floor, roleId, { userFirst: true });
-    const reports = savedReports(this.opts.db, agent.floor, roleId, 3, agent.key).map((r) => ({
-      date: isoDate(r.endedAt ?? r.startedAt),
-      name: r.name,
-      summary: r.summary,
-    }));
-    const context = memoryContext({
-      roleLabel: ROLE_LABELS[roleId],
-      floorLabel: floorLabel(agent.floor),
-      lessons,
-      reports,
-      maxChars: this.config.memory.maxContextChars,
-    });
-    if (!context) return null;
-    this.pushActivity({
-      ts: this.now(),
-      agentKey: agent.key,
-      event: 'Memory',
-      tool: null,
-      state: null,
-      summary: { key: 'hub.act.memoryDelivered', params: { lessons: lessons.length, reports: reports.length } },
-    });
-    return context;
-  }
-
-  private chatBlock(agent: AgentRuntime, session: SessionRuntime): string | null {
-    const channels = this.chatChannelsOf(agent, session);
-    if (!channels) return null;
-    const lines = this.chatLines(this.chat.unreadFor(agent.key, channels), channels[0] ?? GLOBAL_CHANNEL);
-    if (!lines) return null;
-    return `Chat de Agent Office. Mensajes nuevos en ${channels.map((channel) => `#${channel}`).join(' y ')}:\n${lines}`;
-  }
-
-  private chatChannelsOf(agent: AgentRuntime, session: SessionRuntime): string[] | null {
-    const roleId = roleIdOf(agent.role);
-    if (session.floorKind === 'managed' && (roleId === 'lead' || roleId === 'dev' || roleId === 'tester') && this.chat.isChannel(agent.floor)) {
-      return [agent.floor, GLOBAL_CHANNEL];
-    }
-    if (session.floorKind === 'direccion' && roleId === 'director') return [GLOBAL_CHANNEL];
-    return null;
-  }
-
-  private chatLines(unread: ChatUnread, channel: string): string | null {
-    if (unread.messages.length === 0) return null;
-    const lines = [this.chat.digest(unread.messages)];
-    if (unread.hidden > 0) lines.push(`Hay ${unread.hidden} anteriores sin mostrar: ${CHAT_SCRIPT} ${channel} leer`);
-    return lines.join('\n');
-  }
-
-  // A developer about to edit a file: a reminder to claim it, once per file, or a warning per claim of someone else.
-  private chatReminder(agent: AgentRuntime, session: SessionRuntime, filePath: string, now: number): string | null {
-    if (session.floorKind !== 'managed' || roleKind(agent.role) !== 'dev' || !this.chat.isChannel(agent.floor)) return null;
-    const slug = agent.floor;
-    const rel = this.book.fileLabel(filePath, session);
-    const from = agent.name ? ` --de ${agent.name}` : '';
-    const claims = this.chat.claimsOn(slug, rel);
-    const others = claims.filter((claim) => claim.authorKey !== agent.key);
-    let context: string;
-    if (others.length > 0) {
-      const fresh = others.find((claim) => !this.chatWarned.has(`${agent.key}|${rel}|${claim.id}`));
-      if (!fresh) return null;
-      this.chatWarned.add(`${agent.key}|${rel}|${fresh.id}`);
-      const minutes = Math.max(0, Math.round((now - fresh.ts) / 60_000));
-      context = `Chat de la planta: ${fresh.authorName} anunció ${fresh.file} hace ${minutes} min (#${fresh.id}). Acordadlo en #${slug} antes de editar: ${CHAT_SCRIPT} ${slug} pregunta "…"${from}`;
-    } else {
-      const nudge = `${agent.key}|${rel}`;
-      if (claims.length > 0 || this.chatNudged.has(nudge)) return null;
-      this.chatNudged.add(nudge);
-      context = `Chat de la planta: no has anunciado ${rel} en #${slug}. Anúncialo antes de seguir: ${CHAT_SCRIPT} ${slug} toca ${rel}${from}`;
-    }
-    return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: context } });
   }
 
   // REVISAR: over the round cap or of a plan over its size cap. Only a block is recorded: a REVISAR: that passes
@@ -1369,7 +1237,7 @@ export class Office {
     this.guards.finish(agent.key);
     this.book.persistAgent(agent);
     this.book.emitAgent(agent, now);
-    this.storeReport(agent, now);
+    this.context.storeReport(agent, now);
     this.meter.later(agent);
   }
 
@@ -1429,12 +1297,6 @@ export class Office {
       [...this.book.sessions.values()].filter((s) => s.name === name && s.floor === slug && s.endedAt === null).sort((a, b) => b.updatedAt - a.updatedAt)[0] ??
       null
     );
-  }
-
-  private forgetChatNotes(keys: ReadonlySet<string>): void {
-    for (const notes of [this.chatNudged, this.chatWarned]) {
-      for (const note of notes) if (keys.has(note.slice(0, note.indexOf('|')))) notes.delete(note);
-    }
   }
 
   // Live leads of managed floors that read the channel: the floor's own, or all of them for #global.
@@ -1641,14 +1503,14 @@ export class Office {
       agent.endedAt = now;
       agent.waiting = null;
       agent.stalledSince = null;
-      this.forgetChatNotes(new Set([agent.key]));
+      this.context.forgetChatNotes(new Set([agent.key]));
       if (agent.state !== 'done') {
         agent.state = 'done';
         agent.stateSince = now;
       }
       this.book.persistAgent(agent);
       this.book.emitAgent(agent, now);
-      this.storeReport(agent, now);
+      this.context.storeReport(agent, now);
       this.meter.later(agent);
       this.guards.finish(agent.key);
     }
