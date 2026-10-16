@@ -10,7 +10,7 @@ import type { SettingsService } from './settings';
 import { record, text } from './state-machine';
 import type { ClientMessage, HookMeta, ServerMessage } from './types';
 
-type WsData = { authed: boolean; timer: ReturnType<typeof setTimeout> | null };
+type WsData = { authed: boolean; notify: boolean; timer: ReturnType<typeof setTimeout> | null };
 
 export type ServerOptions = {
   office: Office;
@@ -193,6 +193,7 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
 export function startServer(opts: ServerOptions): RunningServer {
   const clients = new Set<ServerWebSocket<WsData>>();
   let running: Server<WsData> | null = null;
+  const notifiers = (): number => [...clients].filter((client) => client.data.notify).length;
   const app = createApp(opts, (req) => running?.timeout(req, 0));
 
   const server = Bun.serve({
@@ -205,7 +206,7 @@ export function startServer(opts: ServerOptions): RunningServer {
           hostAllowed(req.headers.get('host'), opts.port) &&
           originAllowed(req.headers.get('origin'), opts.port, !!opts.dev);
         if (!allowed) return new Response('forbidden', { status: 403 });
-        if (srv.upgrade(req, { data: { authed: false, timer: null } })) return undefined;
+        if (srv.upgrade(req, { data: { authed: false, notify: false, timer: null } })) return undefined;
         return new Response('upgrade required', { status: 426 });
       }
       return app.fetch(req);
@@ -231,11 +232,15 @@ export function startServer(opts: ServerOptions): RunningServer {
           }
           return;
         }
-        if (msg?.type === 'heartbeat') opts.office.heartbeat(msg.visible === true);
+        if (msg?.type === 'heartbeat') {
+          ws.data.notify = msg.notify === true;
+          opts.office.heartbeat(msg.visible === true, notifiers());
+        }
       },
       close(ws) {
         clients.delete(ws);
         if (ws.data.timer) clearTimeout(ws.data.timer);
+        if (ws.data.authed) opts.office.heartbeat(false, notifiers());
       },
     },
   });
@@ -323,7 +328,7 @@ function parseClientMessage(raw: string | Buffer): ClientMessage | null {
   try {
     const value = record(JSON.parse(typeof raw === 'string' ? raw : raw.toString('utf8')));
     if (value.type === 'auth' && typeof value.key === 'string') return { type: 'auth', key: value.key };
-    if (value.type === 'heartbeat') return { type: 'heartbeat', visible: value.visible === true };
+    if (value.type === 'heartbeat') return { type: 'heartbeat', visible: value.visible === true, notify: value.notify === true };
     return null;
   } catch {
     return null;

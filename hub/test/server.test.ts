@@ -126,6 +126,20 @@ describe('hub server', () => {
     ws.close();
   });
 
+  test('a hidden panel that can notify keeps the desk watching until its socket closes', async () => {
+    h.clock.advance(31_000);
+    expect(h.office.desk.someoneWatching()).toBe(false);
+    const ws = openSocket(base);
+    await new Promise<void>((resolve) => {
+      ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', key: KEY }));
+      ws.onmessage = () => resolve();
+    });
+    ws.send(JSON.stringify({ type: 'heartbeat', visible: false, notify: true }));
+    await until(() => h.office.desk.someoneWatching());
+    ws.close();
+    await until(() => !h.office.desk.someoneWatching());
+  });
+
   test('/ask holds the hook until the panel answers, and a late answer gets 409', async () => {
     await post(
       '/events',
