@@ -1,6 +1,7 @@
 import { TemplateError } from './agents';
 import { loadConfig, type Paths } from './config';
-import { FloorConflictError, FloorError, planFloor, purgeFloor, writeFloor } from './floor-cli';
+import { FloorConflictError, FloorError, checkSlug, planFloor, purgeFloor, writeFloor } from './floor-cli';
+import { FloorInUseError } from './floor-data';
 import { realPath } from './floors';
 import type { Office } from './office';
 import type { Profiles } from './profiles';
@@ -8,7 +9,6 @@ import { record, text } from './state-machine';
 import type { FloorAddResult, FloorErrorStatus, FloorFailure, FloorRemoveResult } from './types';
 
 const MAX_PATH = 1000;
-const SLUG = /^[a-z0-9][a-z0-9-]*$/;
 
 export type FloorAdmin = {
   add(raw: unknown): FloorAddResult;
@@ -45,6 +45,7 @@ export function createFloorAdmin(
   reload: () => void,
   gitTop: GitTopFn = gitTopLevel,
 ): FloorAdmin {
+  const removing = new Set<string>();
   return {
     add(raw) {
       const body = record(raw);
@@ -78,21 +79,29 @@ export function createFloorAdmin(
     },
 
     async remove(slug) {
-      if (!SLUG.test(slug)) return fail(400, `"${slug}" no es un nombre de planta válido.`);
+      try {
+        checkSlug(slug);
+      } catch (error) {
+        return fail(400, (error as Error).message);
+      }
+      if (removing.has(slug)) return fail(409, `La planta "${slug}" ya se está borrando.`);
       const floor = loadConfig(p).floors[slug];
       if (!floor) return fail(404, `No hay ninguna planta "${slug}".`);
       const open = office.floorInUse(slug);
-      if (open.length > 0) {
-        return fail(409, `Cierra la sesión lead-${slug} (y su equipo) antes de borrar la planta. Sesiones abiertas: ${open.join(', ')}.`);
-      }
+      if (open.length > 0) return fail(409, new FloorInUseError(slug, open).message);
       // Data first, config last: while the floor is still in config.json, a failure halfway is fixed by repeating the DELETE.
+      removing.add(slug);
       try {
         const { rows, worktrees } = await office.forgetFloor(slug, realPath(floor.path));
         const files = purgeFloor(p, profiles(), slug).length;
         reload();
         return { ok: true, slug, removed: { files, rows, worktrees } };
       } catch (error) {
+        if (error instanceof FloorInUseError) return fail(409, error.message);
+        if (error instanceof FloorError) return fail(404, error.message);
         return fail(500, (error as Error).message);
+      } finally {
+        removing.delete(slug);
       }
     },
   };

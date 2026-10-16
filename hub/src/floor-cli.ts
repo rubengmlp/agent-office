@@ -185,14 +185,17 @@ export function removeFloor(p: Paths, profiles: Profiles, slug: string): string[
 }
 
 export function purgeFloor(p: Paths, profiles: Profiles, slug: string): string[] {
+  checkSlug(slug);
   const config = loadConfig(p);
   if (!config.floors[slug]) throw new FloorError(`No hay ninguna planta "${slug}".`);
   const removed = deleteFloorAgents(p, slug);
   delete config.floors[slug];
   delete config.permissionModes[slug];
-  saveConfig(p, config);
+  // config.json is saved last: if regenerating the fixed agents or the launchers fails, the floor is still
+  // there and repeating the purge writes them again.
   writeFixedAgents(p, config, profiles);
   writeOfficeScripts(p, config, profiles);
+  saveConfig(p, config);
   return removed;
 }
 
