@@ -89,3 +89,8 @@ export function automaticGate(draft: Pick<FloorDeliveryDraft, 'checksMode' | 'ch
   const list = draft.checksMode === 'default' ? defaults : draft.checks;
   return list.length > 0 ? 'checks' : 'tester';
 }
+
+// The body that turns the folders and checks per order of one floor on or off.
+export function deliverySwitchBody(slug: string, on: boolean): { floors: Record<string, SettingsFloorUpdate> } {
+  return { floors: { [slug]: { delivery: on } } };
+}

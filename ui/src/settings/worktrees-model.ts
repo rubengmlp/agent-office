@@ -27,3 +27,8 @@ export function sizeText(kb: number | null, decimal: (value: number) => string):
 export function overWarning(totalKb: number, warnKb: number): boolean {
   return warnKb > 0 && totalKb > warnKb;
 }
+
+// The panel has nothing to say when no floor works with folders per order and none is left over.
+export function panelVisible(floors: readonly { delivery: boolean }[], worktrees: number): boolean {
+  return worktrees > 0 || floors.some((floor) => floor.delivery);
+}

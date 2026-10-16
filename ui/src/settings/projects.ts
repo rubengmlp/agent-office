@@ -6,6 +6,7 @@ import { floorKindLabel, stackLabel } from '../labels';
 import type { Store } from '../store';
 import type { DocumentStatus, HubText, SettingsView } from '../types';
 import { deliveryEditor, type DeliveryContext } from './floor-delivery';
+import { deliverySwitch } from './floor-delivery-switch';
 import type { FloorDeliveryDraft } from './floor-delivery-model';
 import { mountWorktreesPanel } from './worktrees-panel';
 
@@ -83,7 +84,14 @@ export function mountProjects(host: HTMLElement, store: Store, api: OfficeApi | 
       ),
       remove,
     );
-    return el('div', 'project-item', header, floor.managed ? deliveryEditor(floor, delivery) : null);
+    if (!floor.managed) return el('div', 'project-item', header);
+    return el(
+      'div',
+      'project-item',
+      header,
+      deliverySwitch(floor, delivery),
+      floor.delivery ? deliveryEditor(floor, delivery) : el('p', 'setting-hint muted delivery-off', t('settings.delivery.off')),
+    );
   };
 
   const renderList = (): void => {

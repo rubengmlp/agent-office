@@ -41,9 +41,14 @@ export function activeOrder(orders: readonly OrderView[], floor: string): OrderV
   return open.find((order) => order.checks !== null) ?? open[0] ?? null;
 }
 
-// The floors that can take a new order: the ones the hub manages.
+// The floors the Tablero lists: the ones the hub manages, whether or not they still take new orders.
 export function orderFloors(floors: readonly { slug: string; kind: string }[]): string[] {
   return floors.filter((floor) => floor.kind === 'managed').map((floor) => floor.slug);
+}
+
+// The floors that can take a new order: the managed ones that work with a folder per order.
+export function deliveryFloors(floors: readonly { slug: string; kind: string; delivery?: boolean }[]): string[] {
+  return floors.filter((floor) => floor.kind === 'managed' && floor.delivery === true).map((floor) => floor.slug);
 }
 
 export function folderBusy(order: OrderView): boolean {

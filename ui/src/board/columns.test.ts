@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { OrderChecksView, OrderStatus, OrderView } from '../types';
-import { COLUMNS, activeOrder, checksBadge, columnsOf, folderBusy, neighbours, orderFloors } from './columns';
+import { COLUMNS, activeOrder, checksBadge, columnsOf, deliveryFloors, folderBusy, neighbours, orderFloors } from './columns';
 
 function order(id: number, status: OrderStatus, over: Partial<OrderView> = {}): OrderView {
   return {
@@ -92,6 +92,18 @@ describe('activeOrder', () => {
 describe('small helpers', () => {
   test('only managed floors take an order', () => {
     expect(orderFloors([{ slug: 'mobile', kind: 'managed' }, { slug: 'direccion', kind: 'direccion' }, { slug: 'x', kind: 'observed' }])).toEqual(['mobile']);
+  });
+
+  test('only managed floors with delivery take a new order, and the others stay in the filter', () => {
+    const floors = [
+      { slug: 'mobile', kind: 'managed', delivery: true },
+      { slug: 'backend', kind: 'managed' },
+      { slug: 'web', kind: 'managed', delivery: false },
+      { slug: 'x', kind: 'observed', delivery: true },
+    ];
+    expect(deliveryFloors(floors)).toEqual(['mobile']);
+    expect(orderFloors(floors)).toEqual(['mobile', 'backend', 'web']);
+    expect(deliveryFloors([{ slug: 'backend', kind: 'managed' }])).toEqual([]);
   });
 
   test('a folder being built is busy', () => {

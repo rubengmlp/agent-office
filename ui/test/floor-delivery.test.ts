@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { applyUpdate, diffDraft, draftFrom } from '../src/settings/draft';
-import { automaticGate, draftOf, problemsOf, splitList, updateOf } from '../src/settings/floor-delivery-model';
-import { groupWorktrees, overWarning, sizeText } from '../src/settings/worktrees-model';
+import { automaticGate, deliverySwitchBody, draftOf, problemsOf, splitList, updateOf } from '../src/settings/floor-delivery-model';
+import { groupWorktrees, overWarning, panelVisible, sizeText } from '../src/settings/worktrees-model';
 import type { SettingsFloor, SettingsView, WorktreeView } from '../src/types';
 
 Object.assign(globalThis, { localStorage: { getItem: () => null, setItem: () => {} }, document: { documentElement: { lang: 'es' } } });
@@ -15,11 +15,27 @@ const floor = (over: Partial<SettingsFloor> = {}): SettingsFloor => ({
   checks: { mode: 'default', list: [{ name: 'analyze', command: 'flutter analyze' }, { name: 'test', command: 'flutter test' }] },
   setup: { mode: 'default', command: 'flutter pub get' },
   linkDirs: [],
+  delivery: true,
   gateMode: null,
   effectiveGateMode: 'checks',
   checkFiles: [],
   profileCheckFiles: ['analysis_options.yaml'],
   ...over,
+});
+
+describe('the delivery switch of a floor', () => {
+  test('is a body of its own and never part of the draft of the editor', () => {
+    expect(deliverySwitchBody('mobile', true)).toEqual({ floors: { mobile: { delivery: true } } });
+    expect(deliverySwitchBody('mobile', false)).toEqual({ floors: { mobile: { delivery: false } } });
+    expect(updateOf(floor({ delivery: false }), draftOf(floor({ delivery: false })))).toBeNull();
+  });
+
+  test('the panel of folders shows when a floor delivers or folders are left over', () => {
+    expect(panelVisible([{ delivery: false }, { delivery: false }], 0)).toBe(false);
+    expect(panelVisible([], 0)).toBe(false);
+    expect(panelVisible([{ delivery: false }, { delivery: true }], 0)).toBe(true);
+    expect(panelVisible([{ delivery: false }], 2)).toBe(true);
+  });
 });
 
 describe('the delivery draft of a floor', () => {

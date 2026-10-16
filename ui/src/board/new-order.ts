@@ -3,7 +3,7 @@ import { button, el } from '../dom';
 import { t } from '../i18n';
 import type { Store } from '../store';
 import type { OrderView } from '../types';
-import { orderFloors } from './columns';
+import { deliveryFloors } from './columns';
 
 const MAX_TITLE = 120;
 const MAX_DESCRIPTION = 2000;
@@ -11,7 +11,7 @@ const MAX_DESCRIPTION = 2000;
 // The form of a new order: the floor, what it is, where to branch from, and whether the lead is briefed
 // straight or through the director.
 export function openNewOrder(host: HTMLElement, store: Store, api: OfficeApi, preset: string | null, onCreated: (order: OrderView) => void): void {
-  const floors = orderFloors(store.floorList());
+  const floors = deliveryFloors(store.floorList());
   const floor = el('select', 'new-order-floor');
   floor.setAttribute('aria-label', t('board.form.floor'));
   for (const slug of floors) floor.append(new Option(slug, slug));

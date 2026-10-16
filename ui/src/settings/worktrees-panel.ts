@@ -4,7 +4,7 @@ import { currentLang, plural, t } from '../i18n';
 import { relativeTime } from '../time';
 import type { Store } from '../store';
 import type { WorktreeView } from '../types';
-import { groupWorktrees, overWarning, sizeText } from './worktrees-model';
+import { groupWorktrees, overWarning, panelVisible, sizeText } from './worktrees-model';
 
 const decimal = (value: number): string => new Intl.NumberFormat(currentLang(), { maximumFractionDigits: 1 }).format(value);
 
@@ -16,7 +16,8 @@ export function mountWorktreesPanel(host: HTMLElement, store: Store, api: Office
   const prune = button('');
   const status = el('p', 'settings-status');
   const list = el('div', 'worktrees-list');
-  host.append(el('section', 'settings-section worktrees', title, hint, el('div', 'worktrees-head', total, prune), status, list));
+  const section = el('section', 'settings-section worktrees', title, hint, el('div', 'worktrees-head', total, prune), status, list);
+  host.append(section);
 
   let views: WorktreeView[] = [];
   let totalKb = 0;
@@ -111,6 +112,7 @@ export function mountWorktreesPanel(host: HTMLElement, store: Store, api: Office
   };
 
   function paint(): void {
+    section.hidden = !panelVisible(store.settings?.floors ?? [], views.length);
     title.textContent = t('settings.worktrees.title');
     hint.textContent = t('settings.worktrees.hint');
     prune.textContent = t('settings.worktrees.prune');
@@ -141,7 +143,7 @@ export function mountWorktreesPanel(host: HTMLElement, store: Store, api: Office
       return result.ok ? { ok: true } : result;
     }, t('settings.worktrees.pruned')),
   );
-  store.watch(['lang'], paint);
+  store.watch(['lang', 'settings'], paint);
   let timer: ReturnType<typeof setTimeout> | null = null;
   store.subscribe((topics) => {
     if (!topics.has('worktrees') && !topics.has('orders')) return;

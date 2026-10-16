@@ -86,7 +86,7 @@ Los lanzadores pasan además `--model` y `--effort` al director y a los jefes (c
 
 ## Encargos, carpetas y comprobaciones
 
-Cada encargo de una planta gestionada es una **tarjeta del Tablero** con su propia rama y su propia carpeta. El flujo:
+Cada encargo de una planta gestionada **con carpetas por encargo** es una **tarjeta del Tablero** con su propia rama y su propia carpeta. Es un interruptor por planta, **desactivado por defecto**: se activa en Ajustes → Proyectos («Carpetas y comprobaciones por encargo») o con `"delivery": true` en la planta de `config.json`, y las plantas que no lo activan siguen trabajando como antes del Tablero (sin tarjeta, sin carpeta, con la puerta del tester). El flujo:
 
 1. Nace una tarjeta cuando el director manda un `ENCARGO: <título corto> — <qué> — criterios — fuera` a `lead-<planta>` y el tope de encargos lo deja pasar, cuando ejecutas un plan (una tarjeta pendiente por planta, que adopta el `ENCARGO:` de esa planta) o desde **Nuevo encargo** (directo al jefe o a través del director). El título es lo que hay antes del primer « — ».
 2. El hub crea la carpeta `<planta>/.claude/worktrees/office-<slug>` con la rama `encargo/<slug>` a partir de `origin/<base>` (tras un `fetch`; si falla, de la rama local y con la marca «base sin actualizar»), prepara las dependencias y manda al jefe `[Agent Office] CARPETA: encargo/<slug> → <ruta> (base …; dependencias: …)`. El jefe entra con `EnterWorktree` antes de lanzar a nadie; sus compañeros nacen ya dentro. Nadie cambia de rama ni hace commit: los puntos de control los hace el hub.

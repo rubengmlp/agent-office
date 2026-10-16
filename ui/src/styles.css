@@ -3064,3 +3064,18 @@ button.order-tab-button.active {
   gap: 6px;
   flex: none;
 }
+
+.delivery-switch {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 4px 0 6px 12px;
+}
+
+.delivery-switch input {
+  margin-top: 3px;
+}
+
+.delivery-off {
+  margin: 0 0 10px 12px;
+}

@@ -7,7 +7,7 @@ import type { Store } from '../store';
 import { relativeTime } from '../time';
 import type { OrderStatus, OrderView } from '../types';
 import { checksBadgeNode, folderBadgeNode } from './badges';
-import { COLUMNS, columnsOf, neighbours, orderFloors } from './columns';
+import { COLUMNS, columnsOf, deliveryFloors, neighbours, orderFloors } from './columns';
 import { mountOrderDetail, type OrderDetail } from './order-detail';
 import { openNewOrder } from './new-order';
 
@@ -189,12 +189,14 @@ export function mountBoard(host: HTMLElement, store: Store, api: OfficeApi | nul
     filterLabel.replaceChildren(t('board.filter.label'), ' ', filter);
     add.textContent = t('board.new');
     add.hidden = api === null;
-    add.disabled = orderFloors(store.floorList()).length === 0;
+    add.disabled = deliveryFloors(store.floorList()).length === 0;
+    add.title = add.disabled ? t('board.new.none') : '';
     relabelFilter();
     const now = store.now();
     const grouped = columnsOf(store.orders, floor);
     const total = grouped.reduce((sum, group) => sum + group.orders.length, 0);
-    notice.textContent = api === null ? t(store.replay ? 'board.replay' : 'board.offline') : total === 0 ? t('board.empty') : '';
+    notice.textContent =
+      api === null ? t(store.replay ? 'board.replay' : 'board.offline') : [total === 0 ? t('board.empty') : '', add.disabled ? t('board.new.none') : ''].filter((part) => part !== '').join(' ');
     notice.hidden = notice.textContent === '';
     columnsHost.replaceChildren(...grouped.map((group) => column(group.status, group.orders, now)));
     if (openId !== null && !store.orders.some((order) => order.id === openId)) closeDetail();
