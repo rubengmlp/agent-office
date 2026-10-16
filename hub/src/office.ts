@@ -31,10 +31,7 @@ import {
   FILE_TOOLS,
   FINGERPRINT_ACTIVITY,
   FORGET_ENDED_MS,
-  GHOST_MS,
-  GHOST_TOOL_MS,
   HOLDS_QUESTION,
-  LEAD_BUSY,
   MAX_ALERTS,
   MAX_MESSAGES,
   METER_SWEEP_MS,
@@ -82,10 +79,11 @@ import {
 import { OfficeBus } from './office-bus';
 import { RulesDesk } from './rules-desk';
 import { SessionBook } from './session-book';
+import { StallDesk } from './stall-desk';
 import { ownerEdits, prepare, type AlertRow, type Sql } from './office-sql';
 import { publicDetail, publicSummary, publicText, storedPayload, visibleKind } from './privacy';
 import { detectStack, profileFor, type Profiles } from './profiles';
-import { BRIEF_PREFIX, docRef, parseProtocol, parseWaiting, type DocRef } from './protocol';
+import { BRIEF_PREFIX, docRef, parseProtocol, type DocRef } from './protocol';
 import { PERMISSION_ALLOW, PERMISSION_DENY, QuestionDesk, parseQuestions } from './questions';
 import { buildReport, saveReport, savedReport, savedReports } from './reports';
 import {
@@ -104,7 +102,6 @@ import {
 import { RELAUNCH_RESUMES, TMUX_SESSION, sq } from './office-sh';
 import { settingsView } from './settings';
 import {
-  BLOCK_PREFIX,
   DONE_PREFIX,
   EDIT_TOOLS,
   classify,
@@ -147,12 +144,6 @@ import type {
   UsageSummary,
   VerdictKind,
 } from './types';
-
-
-
-
-
-
 
 export {
   GHOST_MS,
@@ -214,12 +205,6 @@ export type OfficeOptions = {
   undoMs?: number;
 };
 
-
-
-
-
-
-
 export class Office {
   readonly desk: QuestionDesk;
   private config: OfficeConfig;
@@ -231,6 +216,7 @@ export class Office {
   private readonly bus: OfficeBus;
   private readonly book: SessionBook;
   private readonly rules: RulesDesk;
+  private readonly stall: StallDesk;
   private readonly now: () => number;
   private readonly deliverFn: typeof deliver;
   private readonly git: GitRunner;
@@ -289,7 +275,7 @@ export class Office {
       book: this.book,
       launch: opts.launch,
       tmux: opts.tmux,
-      free: (session, ignoreMain) => this.sessionFree(session, ignoreMain),
+      free: (session, ignoreMain) => this.stall.sessionFree(session, ignoreMain),
     });
     this.desk = new QuestionDesk(
       {
@@ -299,6 +285,7 @@ export class Office {
       opts.holdMs,
       this.now,
     );
+    this.stall = new StallDesk({ now: this.now, bus: this.bus, book: this.book, config: () => this.config, desk: this.desk });
     this.sync = new SyncDesk({
       db: opts.db,
       git: this.git,
@@ -441,7 +428,7 @@ export class Office {
       this.sql.insertEvent.run(now, e.session_id, c.agentKey, session.floor, c.event, null, null, null, storedPayload(e, kind));
       return null;
     }
-    this.trackOpenTools(e, c, session, now);
+    this.stall.trackOpenTools(e, c, session, now);
     this.noteTranscripts(e, c.agentKey);
     const agent = this.book.touchAgent(e, c, session, now);
     if (this.book.isRetired(agent)) {
@@ -495,7 +482,7 @@ export class Office {
       const task = taskLine(publicText(text(e.prompt), kind));
       if (task) {
         agent.task = task;
-        this.openTask(agent, now);
+        this.stall.openTask(agent, now);
       }
       const plan = planSlugIn(text(e.prompt));
       if (plan) this.setPlan(agent, plan);
@@ -510,7 +497,7 @@ export class Office {
     const closing = text(e.last_assistant_message);
     if (closing && remembers(kind) && (c.event === 'SubagentStop' || c.event === 'Stop')) agent.closing = closing;
     const closingProtocol = closing && c.event === 'Stop' && remembers(kind) ? parseProtocol(closing) : null;
-    if (closingProtocol?.kind === 'waiting') this.declareWaiting(agent, closingProtocol.rest, now);
+    if (closingProtocol?.kind === 'waiting') this.stall.declareWaiting(agent, closingProtocol.rest, now);
     agent.updatedAt = now;
 
     if (c.edit !== null) this.sql.insertEdit.run(now, agent.key, session.floor, publicText(c.edit, kind) ?? '');
@@ -548,21 +535,6 @@ export class Office {
     if (c.event === 'SubagentStart' || c.event === 'SessionStart' || c.event === 'UserPromptSubmit') return this.injection(c.event, agent, session);
     if (c.event === 'PreToolUse' && c.tool && EDIT_TOOLS.has(c.tool) && c.filePath) return this.chatReminder(agent, session, c.filePath, now);
     return this.readCap(c, agent, session, false, now);
-  }
-
-  // A PreToolUse with no PostToolUse yet is a tool still running (a long build): such a session is not a ghost for hours.
-  private trackOpenTools(e: HookEvent, c: Classified, session: SessionRuntime, now: number): void {
-    const open = session.openTools;
-    const id = text(e.tool_use_id) ?? `${c.agentKey}:${c.tool ?? ''}`;
-    if (c.event === 'PreToolUse' && c.tool) {
-      open.set(id, { agentKey: c.agentKey, since: now });
-    } else if (c.event === 'PostToolUse' || c.event === 'PostToolUseFailure') {
-      open.delete(id);
-    } else if (c.event === 'UserPromptSubmit' || c.event === 'Stop' || c.event === 'SessionStart' || c.event === 'SessionEnd') {
-      open.clear();
-    } else if (c.event === 'SubagentStop' || c.event === 'TeammateIdle') {
-      for (const [key, tool] of open) if (tool.agentKey === c.agentKey) open.delete(key);
-    }
   }
 
   private readCap(c: Classified, agent: AgentRuntime, session: SessionRuntime, retired: boolean, now: number): string | null {
@@ -798,7 +770,7 @@ export class Office {
     if (main && main.retiredAt === null && task) {
       main.task = task;
       main.away = false;
-      this.openTask(main, this.now());
+      this.stall.openTask(main, this.now());
       this.book.emitAgent(main, this.now());
     }
     return 'ok';
@@ -1037,7 +1009,7 @@ export class Office {
         this.bus.emit({ type: 'agent-gone', key: agent.key });
         continue;
       }
-      if (this.goesHome(agent, now)) {
+      if (this.stall.goesHome(agent, now)) {
         agent.away = true;
         this.book.emitAgent(agent, now);
         continue;
@@ -1047,18 +1019,11 @@ export class Office {
     this.meterSweep(now);
     for (const session of [...this.book.sessions.values()]) {
       if (session.endedAt === null && session.socket && !existsSync(session.socket)) this.endSession(session, now);
-      else if (this.isGhost(session, now)) this.endSession(session, now, true);
+      else if (this.stall.isGhost(session, now)) this.endSession(session, now, true);
       if (session.endedAt !== null && now - session.endedAt > FORGET_ENDED_MS) this.book.sessions.delete(session.sessionId);
     }
-    this.detectStalls(now);
+    this.stall.detectStalls(now);
     this.rules.refreshSessionFlags(now);
-  }
-
-  // No socket and no events: nobody can reach it and nobody is using it. A tool still open keeps it alive for longer.
-  private isGhost(session: SessionRuntime, now: number): boolean {
-    if (session.endedAt !== null || session.socket) return false;
-    const limit = session.openTools.size > 0 ? GHOST_TOOL_MS : GHOST_MS;
-    return now - session.updatedAt > limit;
   }
 
   floorInUse(slug: string): string[] {
@@ -1116,7 +1081,6 @@ export class Office {
     this.refreshDocuments();
   }
 
-
   private gateBrief(e: HookEvent): GateDecision {
     const to = (text(record(e.tool_input).to) ?? '').split('@')[0] ?? '';
     if (!to.startsWith('lead-')) return { pass: true, reason: 'solo cuenta el encargo a un jefe' };
@@ -1156,104 +1120,8 @@ export class Office {
   private userInstructed(sessionId: string, now: number): void {
     this.lastUserInput.set(sessionId, now);
     this.briefAllowance.delete(sessionId);
-    const agent = this.book.agents.get(sessionId);
-    if (agent?.waiting && waitsForUser(agent.waiting.who)) agent.waiting = null;
+    this.stall.userAnswered(sessionId);
   }
-
-  private openTask(agent: AgentRuntime, now: number): void {
-    agent.taskOpenSince = now;
-    agent.waiting = null;
-    agent.stalledSince = null;
-    this.book.persistTaskOpen(agent);
-  }
-
-  private declareWaiting(agent: AgentRuntime, rest: string, now: number): boolean {
-    if (agent.retiredAt !== null) return false;
-    const { who, what } = parseWaiting(rest);
-    if (!who || (agent.waiting?.who === who && agent.waiting.what === what)) return false;
-    agent.waiting = { who, what, since: now };
-    agent.stalledSince = null;
-    this.pushActivity({
-      ts: now,
-      agentKey: agent.key,
-      event: 'Waiting',
-      tool: 'SendMessage',
-      state: null,
-      summary: { key: 'hub.act.waitingDeclared', params: { who: agent.name ?? agent.key, to: who, what } },
-    });
-    return true;
-  }
-
-  private settleWaiting(from: AgentRuntime, recipient: AgentRuntime | undefined, body: string | null, now: number): void {
-    if (from.waiting && body && (DONE_PREFIX.test(body) || BLOCK_PREFIX.test(body))) {
-      from.waiting = null;
-      this.book.emitAgent(from, now);
-    }
-    if (recipient && recipient !== from && recipient.waiting && waitsFor(recipient.waiting.who, from)) {
-      recipient.waiting = null;
-      this.book.emitAgent(recipient, now);
-    }
-  }
-
-  private detectStalls(now: number): void {
-    const minutes = this.config.limits.stalledAfterMinutes;
-    for (const agent of this.book.agents.values()) {
-      if (agent.key !== agent.sessionId || !isLeadRole(agent.role)) continue;
-      const stalled = minutes > 0 && this.isStalled(agent, now, minutes);
-      if (stalled && agent.stalledSince === null) {
-        agent.stalledSince = idleSince(agent);
-        this.pushActivity({
-          ts: now,
-          agentKey: agent.key,
-          event: 'Stalled',
-          tool: null,
-          state: null,
-          summary: { key: 'hub.act.stalled', params: { who: agent.name ?? agent.key, minutes: Math.floor((now - idleSince(agent)) / 60_000) } },
-        });
-        this.book.emitAgent(agent, now);
-      } else if (!stalled && agent.stalledSince !== null) {
-        agent.stalledSince = null;
-        this.book.emitAgent(agent, now);
-      }
-    }
-  }
-
-  private isStalled(agent: AgentRuntime, now: number, minutes: number): boolean {
-    if (agent.taskOpenSince === null || agent.endedAt !== null || agent.retiredAt !== null) return false;
-    if (agent.state !== 'idle' || now - idleSince(agent) <= minutes * 60_000) return false;
-    if (agent.blockedReason !== null || agent.awaitingAnswer || agent.waiting !== null) return false;
-    return this.sessionFree(this.book.sessions.get(agent.sessionId), true);
-  }
-
-  // The lead is idle and nobody of its team is working or asking, and no question of the session waits in the panel.
-  private sessionFree(session: SessionRuntime | undefined, ignoreMain = false): boolean {
-    if (!session) return false;
-    const main = this.book.agents.get(session.sessionId);
-    if (!ignoreMain && main && (main.state !== 'idle' || main.awaitingAnswer)) return false;
-    if (this.desk.list().some((question) => question.sessionId === session.sessionId)) return false;
-    for (const agent of this.book.agents.values()) {
-      if (agent.sessionId !== session.sessionId || agent.key === session.sessionId) continue;
-      if (agent.endedAt !== null || agent.retiredAt !== null || agent.away) continue;
-      if (LEAD_BUSY.has(agent.state) || agent.state === 'asking') return false;
-    }
-    return true;
-  }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
   relaunch(sessionId: string, resume?: boolean): Promise<RelaunchResult> {
     return this.rules.relaunch(sessionId, resume);
@@ -1533,7 +1401,6 @@ export class Office {
     return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: context } });
   }
 
-
   // REVISAR: over the round cap or of a plan over its size cap. Only a block is recorded: a REVISAR: that passes
   // already shows in the activity when ingest processes it.
   private gateReview(e: HookEvent, review: { target: string | null; round: number | null }, session: SessionRuntime, now: number): GateDecision {
@@ -1626,7 +1493,7 @@ export class Office {
       return;
     }
     if (parsed.kind === 'waiting') {
-      if (this.declareWaiting(from, parsed.rest, now)) this.book.emitAgent(from, now);
+      if (this.stall.declareWaiting(from, parsed.rest, now)) this.book.emitAgent(from, now);
       return;
     }
     if (!isDepartmentFloor(session.floorKind)) return;
@@ -1822,7 +1689,6 @@ export class Office {
     this.pushActivity({ ts: message.ts, agentKey: message.authorKey, event: 'Chat', tool: null, state: null, summary });
   }
 
-
   private ingestRetired(e: HookEvent, c: Classified, agent: AgentRuntime, session: SessionRuntime, now: number): void {
     const kind = this.book.privacyKind(session, text(e.team_name));
     this.sql.insertEvent.run(now, e.session_id, agent.key, session.floor, c.event, c.tool, null, c.filePath, storedPayload(e, kind));
@@ -1844,7 +1710,6 @@ export class Office {
     this.settlePermissions(agent.key, c.event, c.tool, e.tool_input);
     if (c.sessionEnded) this.endSession(session, now);
   }
-
 
   private markDiscardedFile(ref: DocRef, now: number): void {
     const file = join(this.docsRoot(), ref.path);
@@ -1918,12 +1783,6 @@ export class Office {
     this.pushActivity({ ts: now, agentKey: agent.key, event: 'Lesson', tool: 'SendMessage', state: null, summary });
   }
 
-
-
-
-
-
-
   private recordTask(e: HookEvent, c: Classified, agent: AgentRuntime, session: SessionRuntime, now: number): void {
     const task = c.task;
     if (!task?.taskId) return;
@@ -1940,7 +1799,7 @@ export class Office {
     if (this.messages.length > MAX_MESSAGES) this.messages.splice(0, this.messages.length - MAX_MESSAGES);
     this.bus.emit({ type: 'message', data: view });
     const recipient = toKey ? this.book.agents.get(toKey) : undefined;
-    this.settleWaiting(from, recipient, body, now);
+    this.stall.settleWaiting(from, recipient, body, now);
     if (recipient && recipient !== from) this.messageReceived(recipient, assigns(from, recipient) ? body : null, now);
     if (recipient && recipient !== from && recipient.awaitingAnswer) this.answerReceived(recipient, now);
     if (body) this.handleProtocol({ to: message.to, toKey, text: body }, from, session, now);
@@ -1954,7 +1813,7 @@ export class Office {
     if (!task && !agent.away) return;
     if (task) {
       agent.task = task;
-      this.openTask(agent, now);
+      this.stall.openTask(agent, now);
     }
     if (agent.away) {
       agent.away = false;
@@ -1962,16 +1821,6 @@ export class Office {
     }
     this.book.emitAgent(agent, now);
   }
-
-  private goesHome(agent: AgentRuntime, now: number): boolean {
-    if (agent.away || !agent.teammate || agent.endedAt !== null || agent.retiredAt !== null) return false;
-    if (agent.state !== 'idle' || agent.blockedReason !== null || agent.awaitingAnswer) return false;
-    if (now - agent.updatedAt < this.config.leaveAfterMinutes * 60_000) return false;
-    const lead = this.book.agents.get(agent.sessionId);
-    if (!lead || lead === agent || lead.endedAt !== null) return true;
-    return !LEAD_BUSY.has(this.book.view(lead, now).state);
-  }
-
 
   private answerReceived(agent: AgentRuntime, now: number): void {
     agent.awaitingAnswer = false;
@@ -1982,12 +1831,6 @@ export class Office {
     this.book.persistAgent(agent);
     this.book.emitAgent(agent, now);
   }
-
-
-
-
-
-
 
   private ownerKeys(owner: string | null, scope: string, lead: SessionRuntime): string[] {
     const inTeam = (a: AgentRuntime) => a.team === scope || a.sessionId === lead.sessionId || a.parentKey === lead.sessionId;
@@ -2004,10 +1847,6 @@ export class Office {
     }
     return [...keys];
   }
-
-
-
-
 
   private endSession(session: SessionRuntime, now: number, ghost = false): void {
     const silent = now - session.updatedAt;
@@ -2066,17 +1905,9 @@ export class Office {
     this.bus.emit({ type: 'question-closed', id, outcome });
   }
 
-
-
-
-
   private pushActivity(entry: ActivityView): void {
     this.bus.pushActivity(entry);
   }
-
-
-
-
 
   private noteTranscripts(e: HookEvent, agentKey: string): void {
     this.meter.noteSession(e.session_id, e.transcript_path);
@@ -2144,41 +1975,13 @@ export class Office {
   }
 }
 
-
 function assigns(from: AgentRuntime, to: AgentRuntime): boolean {
   return from.parentKey !== to.key && roleKind(to.role) !== 'director';
 }
 
-
-
-function idleSince(agent: AgentRuntime): number {
-  return Math.max(agent.stateSince, agent.taskOpenSince ?? 0);
-}
-
-function waitsForUser(who: string): boolean {
-  return /^@?(usuario|user)$/i.test(who.trim());
-}
-
-function waitsFor(who: string, from: AgentRuntime): boolean {
-  const name = from.name?.split('@')[0]?.toLowerCase();
-  if (!name) return false;
-  return who
-    .toLowerCase()
-    .split(/\s*(?:,|\/|\by\b|\band\b)\s*/)
-    .some((part) => part.trim().replace(/^@/, '') === name);
-}
-
-
-
-
-
-
-
 function fingerprintKey(floor: string, ts: number, path: string): string {
   return `${floor}\0${ts}\0${path}`;
 }
-
-
 
 function parseList(raw: string): string[] {
   try {
@@ -2188,4 +1991,3 @@ function parseList(raw: string): string[] {
     return [];
   }
 }
-
