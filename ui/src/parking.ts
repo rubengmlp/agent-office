@@ -10,6 +10,7 @@ type Bay = { car: Car; queue: string[]; awayFor: number };
 
 export class ParkingLot {
   private bays: Bay[] = [];
+  private carList: Car[] = [];
   private readonly reservations = new Map<string, number>();
   private readonly departed = new Set<string>();
   private carCount = 0;
@@ -22,7 +23,7 @@ export class ParkingLot {
   }
 
   get cars(): readonly Car[] {
-    return this.bays.map((bay) => bay.car);
+    return this.carList;
   }
 
   get size(): number {
@@ -46,6 +47,7 @@ export class ParkingLot {
         if (queue.includes(key)) this.bays[target].queue.push(key);
       }
     }
+    this.carList = this.bays.map((bay) => bay.car);
   }
 
   reserve(key: string): number {
