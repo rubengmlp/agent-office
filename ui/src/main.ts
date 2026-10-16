@@ -5,6 +5,7 @@ import { el } from './dom';
 import { Heartbeat } from './heartbeat';
 import { applyLang, readStoredLang, t, type MessageKey, type Params } from './i18n';
 import { LiveConnection } from './live';
+import { Notifier } from './notify';
 import type { OfficeHandle } from './office/office';
 import { mountSettings } from './settings/settings';
 import { mountPanel } from './panel/panel';
@@ -67,7 +68,8 @@ function boot(): void {
 
   mountTable(tableHost, store);
   mountPanel(panelHost, store, actions, api);
-  mountSettings(settingsHost, store, api);
+  const notifier = api ? new Notifier(store) : null;
+  mountSettings(settingsHost, store, api, notifier);
   mountToasts(toastHost, store);
 
   const mountView: Promise<OfficeHandle> =
@@ -107,13 +109,20 @@ function boot(): void {
     return;
   }
 
-  const heartbeat = new Heartbeat((message) => live.send(message));
+  const heartbeat = new Heartbeat(
+    (message) => live.send(message),
+    () => notifier?.active() ?? false,
+  );
+  if (notifier) notifier.onChange = () => heartbeat.pulse();
   const live = new LiveConnection(key, {
     onStatus: (status) => {
       store.setConnection(status);
       setNotice(status === 'denied' ? 'main.denied' : null);
     },
-    onMessage: (message) => store.apply(message),
+    onMessage: (message) => {
+      store.apply(message);
+      notifier?.observe(message);
+    },
     onOpen: () => heartbeat.pulse(),
   });
   heartbeat.start();
