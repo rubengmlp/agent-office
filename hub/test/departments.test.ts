@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ensureDocsRepo } from '../src/docs-repo';
 import { realPath } from '../src/floors';
 import { runGit, type GitRunner } from '../src/git';
-import { Office } from '../src/office';
+import { statusOf, type DocRow } from '../src/documents';
+import { Office, type OfficeOptions } from '../src/office';
 import { PROFILES_DIR } from '../src/config';
 import { loadProfiles } from '../src/profiles';
 import type { AgentView, HookMeta } from '../src/types';
@@ -26,9 +27,10 @@ afterEach(() => h?.cleanup());
 const agent = (key: string): AgentView | undefined => h.office.snapshot().agents.find((a) => a.key === key);
 const doc = (path: string) => h.office.documents().find((d) => d.path === path);
 
-function office(git?: GitRunner): void {
+function office(git?: GitRunner, extra: Partial<OfficeOptions> = {}): void {
   h = harness({
     ...(git ? { git } : {}),
+    ...extra,
     configure: (config) => {
       config.departments = { redaccion: true, mantenimiento: true };
       config.review = { maxRounds: 3 };
@@ -143,6 +145,7 @@ describe('Redacción review loop', () => {
 
     expect(gate(LEAD, cwd, 'ared-1', 'redactor-login', 'HECHO: plan listo').reason).toContain('Falta la ruta');
     expect(gate(LEAD, cwd, 'ared-1', 'redactor-login', `HECHO: ${PLAN} aprobado en 2 rondas — listo`).pass).toBe(true);
+    expect(doc(PLAN)?.status).toBe('aprobado');
 
     await h.office.idle();
     const log = git(docs, 'log', '--format=%s');
@@ -157,7 +160,7 @@ describe('Redacción review loop', () => {
     expect(stale.reason).toContain('cambió después');
     touch(file, -500);
     expect(gate(LEAD, cwd, null, null, `HECHO: ${PLAN} aprobado en 2 rondas — resumen`).pass).toBe(true);
-    expect(doc(PLAN)?.status).toBe('cerrado');
+    expect(doc(PLAN)).toMatchObject({ status: 'entregado', deliveredAt: h.clock.now, decidedAt: null });
   });
 
   test('the last round without agreement leaves the plan open as sin acuerdo', () => {
@@ -337,7 +340,179 @@ describe('Redacción sources through the hub', () => {
     await h.office.idle();
     expect(existsSync(sources)).toBe(false);
     expect(git(mobile.repo, 'worktree', 'list', '--porcelain')).not.toContain('.fuentes');
-    expect(doc(PLAN)?.status).toBe('cerrado');
+    expect(doc(PLAN)?.status).toBe('entregado');
+    expect(doc(PLAN)?.base).toEqual([{ floor: 'mobile', ref: 'develop', sha: expect.any(String), date: expect.any(String), stale: false }]);
+    expect(h.db.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM sync_worktrees').get()?.n).toBe(0);
+  });
+});
+
+describe('delivered plans', () => {
+  const DIRECTOR = 'ffffffff-0000-4000-8000-000000000003';
+  const sent: { socket: string; payload: string }[] = [];
+
+  async function deliveredPlan(): Promise<string> {
+    sent.length = 0;
+    office(undefined, {
+      deliverFn: async (socket, payload) => {
+        sent.push({ socket, payload });
+      },
+    });
+    const mobile = originAndClone(h.root, 'mobile');
+    h.config.floors.mobile = floor(mobile.repo);
+    const cwd = join(docs, 'redaccion');
+    h.office.ingest(ev(LEAD, cwd, 'SessionStart', {}), leadMeta);
+    spawn(LEAD, cwd, 'redactor-login', 'office-redactor', 'c1');
+    start(LEAD, cwd, 'ared-1', 'redactor-login');
+    spawn(LEAD, cwd, 'revisor-planes-login-r1', 'office-revisor-planes', 'c2');
+    start(LEAD, cwd, 'arev-1', 'revisor-planes-login-r1');
+    expect((await h.office.syncSources({ slug: 'login', floors: ['mobile'] })).ok).toBe(true);
+    writeFileSync(join(docs, PLAN), '# Login con Apple\n\n## Pasos\n1. migración\n');
+    touch(join(docs, PLAN), -60_000);
+    say(LEAD, cwd, 'ared-1', 'redactor-login', 'team-lead', `REVISAR: ${PLAN} ronda 1`);
+    say(LEAD, cwd, 'arev-1', 'revisor-planes-login-r1', 'redactor-login', `APROBADO: ${PLAN} ronda 1 — nota 9/10 — listo`);
+    say(LEAD, cwd, null, null, 'lead-mobile', `PLAN: ${PLAN} — login con Apple en mobile — léelo y espera la orden del director`);
+    expect(gate(LEAD, cwd, null, null, `HECHO: ${PLAN} aprobado en 1 rondas — resumen`).pass).toBe(true);
+    await h.office.idle();
+    return cwd;
+  }
+
+  function director(socket: string | null): void {
+    if (socket) writeFileSync(socket, '');
+    h.office.ingest(ev(DIRECTOR, h.workspace, 'SessionStart', {}), { socket, token: 'tok', role: 'office-director', name: 'director' });
+  }
+
+  test('statusOf: discarded, closed, executing, parked and delivered win over the verdicts in that order', () => {
+    const row = (over: Partial<DocRow>): DocRow => ({
+      path: PLAN,
+      round: 1,
+      requested_at: 1,
+      closed_at: null,
+      discarded_at: null,
+      delivered_at: null,
+      decision: null,
+      decided_at: null,
+      delivered_base: null,
+      ...over,
+    });
+    const approved = { kind: 'approved', ts: 10, round: 1, score: 9 };
+    expect(statusOf(row({ discarded_at: 5, closed_at: 5, decision: 'ejecutar', delivered_at: 5 }), approved, 1)).toBe('descartado');
+    expect(statusOf(row({ closed_at: 5, decision: 'ejecutar', delivered_at: 5 }), approved, 1)).toBe('cerrado');
+    expect(statusOf(row({ decision: 'ejecutar', delivered_at: 5 }), approved, 1)).toBe('ejecutando');
+    expect(statusOf(row({ decision: 'aparcar', delivered_at: 5 }), approved, 1)).toBe('aparcado');
+    expect(statusOf(row({ delivered_at: 5 }), approved, 100)).toBe('entregado');
+    expect(statusOf(row({}), approved, 1)).toBe('aprobado');
+    expect(statusOf(row({}), approved, 100)).toBe('revision');
+  });
+
+  test('the lead HECHO delivers, keeps the floors and the panel parks, executes through the director and closes', async () => {
+    await deliveredPlan();
+    expect(h.office.snapshot().activity.map((a) => a.summary)).toContain(`avisa a lead-mobile del plan ${PLAN}`);
+    expect(doc(PLAN)).toMatchObject({ status: 'entregado', base: [{ floor: 'mobile', ref: 'develop' }] });
+    expect(existsSync(join(docs, 'redaccion', '.fuentes', 'login'))).toBe(false);
+
+    expect(await h.office.decidePlan(PLAN, 'cerrar')).toBe('invalid-state');
+    expect(await h.office.decidePlan('redaccion/planes/otro.md', 'aparcar')).toBe('not-found');
+    expect(await h.office.decidePlan(PLAN, 'aparcar')).toBe('ok');
+    expect(doc(PLAN)).toMatchObject({ status: 'aparcado', decidedAt: h.clock.now });
+    expect(await h.office.decidePlan(PLAN, 'aparcar')).toBe('invalid-state');
+
+    expect(await h.office.decidePlan(PLAN, 'ejecutar')).toBe('no-director');
+    director(join(h.root, 'sin-socket.sock'));
+    h.office.tick();
+    director(null);
+    expect(doc(PLAN)?.status).toBe('aparcado');
+    const socket = join(h.root, 'director.sock');
+    director(socket);
+    expect(await h.office.decidePlan(PLAN, 'ejecutar')).toBe('ok');
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.socket).toBe(socket);
+    expect(sent[0]?.payload).toContain('[Agent Office] Orden del usuario');
+    expect(sent[0]?.payload).toContain('Ejecuta el plan redaccion/planes/login.md');
+    expect(sent[0]?.payload).toContain('Login con Apple');
+    expect(sent[0]?.payload).toContain('Plantas: mobile.');
+    expect(sent[0]?.payload).toContain('lead-mobile');
+    expect(sent[0]?.payload).toContain(`${docs}/${PLAN}`);
+    expect(doc(PLAN)?.status).toBe('ejecutando');
+    expect(h.office.snapshot().activity.map((a) => a.summary)).toContain(`plan enviado a ejecutar: ${PLAN}`);
+
+    expect(await h.office.discardDocument(PLAN)).toBe('closed');
+    expect(await h.office.decidePlan(PLAN, 'aparcar')).toBe('ok');
+    expect(doc(PLAN)?.status).toBe('aparcado');
+    expect(await h.office.decidePlan(PLAN, 'ejecutar')).toBe('ok');
+    expect(sent).toHaveLength(2);
+    expect(await h.office.decidePlan(PLAN, 'cerrar')).toBe('ok');
+    expect(doc(PLAN)).toMatchObject({ status: 'cerrado', base: [{ floor: 'mobile' }] });
+    expect(await h.office.decidePlan(PLAN, 'ejecutar')).toBe('invalid-state');
+    expect(await h.office.discardDocument(PLAN)).toBe('closed');
+  });
+
+  test('an unreachable director leaves the plan as it was, and a delivered plan can be discarded', async () => {
+    await deliveredPlan();
+    const socket = join(h.root, 'director.sock');
+    director(socket);
+    rmSync(socket);
+    expect(await h.office.decidePlan(PLAN, 'ejecutar')).toBe('unreachable');
+    expect(sent).toEqual([]);
+    expect(doc(PLAN)?.status).toBe('entregado');
+    expect(await h.office.discardDocument(PLAN)).toBe('ok');
+    expect(doc(PLAN)?.status).toBe('descartado');
+  });
+
+  test('a restart reads the floors of a delivered plan from the database and keeps its sources removed', async () => {
+    await deliveredPlan();
+    const restarted = new Office({
+      db: h.db,
+      config: h.config,
+      profiles: loadProfiles(PROFILES_DIR),
+      workspaceDir: h.workspace,
+      claudeHome: join(h.root, 'claude-home'),
+      gitRoot: (cwd) => cwd,
+      now: () => h.clock.now,
+    });
+    expect(restarted.documents().find((d) => d.path === PLAN)).toMatchObject({ status: 'entregado', base: [{ floor: 'mobile', ref: 'develop' }] });
+  });
+});
+
+describe('questions through the lead', () => {
+  function writerTeam(): string {
+    const cwd = redaccionTeam();
+    h.office.ingest(
+      ev(LEAD, cwd, 'PostToolUse', {
+        tool_name: 'Agent',
+        tool_use_id: 'call-red',
+        tool_input: { name: 'redactor-login', subagent_type: 'office-redactor' },
+        tool_response: { status: 'teammate_spawned', agentId: 'ared-1' },
+      }),
+    );
+    return cwd;
+  }
+
+  test('PREGUNTA keeps the writer asking until the lead answers, and turns into blocked when nobody does', () => {
+    const cwd = writerTeam();
+    say(LEAD, cwd, 'ared-1', 'redactor-login', 'team-lead', 'PREGUNTA: ¿Apple antes que Google? — opciones: Apple | Google');
+    expect(agent('ared-1')).toMatchObject({ state: 'asking', detail: 'pregunta: ¿Apple antes que Google?' });
+    h.office.ingest(ev(LEAD, cwd, 'PostToolUse', { agent_id: 'ared-1', agent_type: 'redactor-login', tool_name: 'SendMessage', tool_input: { to: 'team-lead', message: 'PREGUNTA: x' } }));
+    h.office.ingest(ev(LEAD, cwd, 'SubagentStop', { agent_id: 'ared-1', agent_type: 'redactor-login', last_assistant_message: 'Espero respuesta' }));
+    h.office.ingest(ev(LEAD, cwd, 'TeammateIdle', { agent_id: 'ared-1', teammate_name: 'redactor-login' }));
+    expect(agent('ared-1')).toMatchObject({ state: 'asking', detail: 'pregunta: ¿Apple antes que Google?', endedAt: null });
+
+    h.clock.advance(h.config.blockedAfterMinutes * 60_000 + 1000);
+    expect(agent('ared-1')).toMatchObject({ state: 'blocked', detail: 'sin respuesta: pregunta: ¿Apple antes que Google?' });
+
+    say(LEAD, cwd, null, null, 'redactor-login', 'El usuario dice: Apple primero');
+    expect(agent('ared-1')).toMatchObject({ state: 'working', detail: 'respuesta recibida' });
+    h.office.ingest(ev(LEAD, cwd, 'SubagentStop', { agent_id: 'ared-1', agent_type: 'redactor-login' }));
+    expect(agent('ared-1')).toMatchObject({ state: 'idle', detail: 'esperando' });
+  });
+
+  test('the next tool call of the writer also ends the wait', () => {
+    const cwd = writerTeam();
+    say(LEAD, cwd, 'ared-1', 'redactor-login', 'team-lead', 'PREGUNTA: ¿Incluyo el registro? — opciones: sí | no');
+    h.office.ingest(ev(LEAD, cwd, 'PreToolUse', { agent_id: 'ared-1', agent_type: 'redactor-login', tool_name: 'Read', tool_input: { file_path: join(docs, PLAN) } }));
+    expect(agent('ared-1')?.state).toBe('reading');
+    h.office.ingest(ev(LEAD, cwd, 'PostToolUse', { agent_id: 'ared-1', agent_type: 'redactor-login', tool_name: 'Read', tool_input: { file_path: join(docs, PLAN) } }));
+    h.office.ingest(ev(LEAD, cwd, 'SubagentStop', { agent_id: 'ared-1', agent_type: 'redactor-login' }));
+    expect(agent('ared-1')?.state).toBe('idle');
   });
 });
 

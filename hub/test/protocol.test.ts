@@ -37,6 +37,16 @@ describe('protocol messages', () => {
     expect(parseProtocol('Te paso el plan para REVISAR: x')).toBeNull();
   });
 
+  test('PLAN carries the plan path, PREGUNTA has no target and both are case sensitive', () => {
+    expect(parseProtocol('PLAN: redaccion/planes/login.md — resumen en cinco líneas — léelo y espera la orden')).toMatchObject({
+      kind: 'plan',
+      target: 'redaccion/planes/login.md',
+    });
+    expect(parseProtocol('PREGUNTA: ¿Apple o Google primero? — opciones: Apple | Google')).toMatchObject({ kind: 'question', target: null });
+    expect(parseProtocol('Plan: primero el login y después el registro')).toBeNull();
+    expect(parseProtocol('pregunta: ¿seguro?')).toBeNull();
+  });
+
   test('document paths are normalised to the documents repository', () => {
     const { dir, cleanup } = tempDir();
     const docs = realPath(join(dir, 'docs'));

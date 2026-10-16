@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ensureDocsRepo } from '../src/docs-repo';
 import { startServer } from '../src/server';
@@ -132,5 +132,32 @@ describe('hub server v2 routes', () => {
     expect(bad.status).toBe(400);
     const text = await call('POST', '/api/redaccion/sync?format=text', { slug: 'x', floors: [] });
     expect(await text.text()).toStartWith('ERROR:');
+  });
+
+  test('plan decisions validate the request, the state and the director, and discard explains its 409', async () => {
+    const path = 'redaccion/planes/viaje.md';
+    writeFileSync(join(docs, path), '# Viaje\n');
+    h.db.query("INSERT INTO documents (path, kind, slug, round, delivered_at, updated_at) VALUES (?, 'plan', 'viaje', 2, 1, 1)").run(path);
+    h.office.refreshDocuments();
+    const decide = (body: unknown) => call('POST', '/api/documents/decide', body);
+    expect((await decide({ path })).status).toBe(400);
+    expect((await decide({ decision: 'aparcar' })).status).toBe(400);
+    expect((await decide({ path, decision: 'borrar' })).status).toBe(400);
+    expect((await decide({ path: 'redaccion/planes/nada.md', decision: 'aparcar' })).status).toBe(404);
+    const invalid = await decide({ path, decision: 'cerrar' });
+    expect(invalid.status).toBe(409);
+    expect(await invalid.json()).toEqual({ error: 'El plan no admite esa decisión en su estado actual' });
+    const noDirector = await decide({ path, decision: 'ejecutar' });
+    expect(noDirector.status).toBe(409);
+    expect(await noDirector.json()).toEqual({ error: 'El director no está abierto' });
+    const parked = await decide({ path, decision: 'aparcar' });
+    expect(parked.status).toBe(200);
+    expect(await parked.json()).toEqual({ ok: true });
+    expect(h.office.documents().find((d) => d.path === path)?.status).toBe('aparcado');
+    h.db.query("UPDATE documents SET decision = 'ejecutar' WHERE path = ?").run(path);
+    h.office.refreshDocuments();
+    const discard = await call('POST', '/api/documents/discard', { path });
+    expect(discard.status).toBe(409);
+    expect(await discard.json()).toEqual({ error: 'El plan se está ejecutando, está cerrado o descartado' });
   });
 });

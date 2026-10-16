@@ -126,6 +126,26 @@ describe('synthetic events from the docs', () => {
     expect(c.detail).toBe('¿Qué endpoint?');
   });
 
+  test('a PREGUNTA message leaves the sender asking with the question and without the options', () => {
+    const c = classify(
+      {
+        ...base,
+        hook_event_name: 'PreToolUse',
+        tool_name: 'SendMessage',
+        tool_input: { to: 'team-lead', message: 'PREGUNTA: ¿El login con Apple va antes que el de Google? — opciones: Apple primero | Google primero | A la vez' },
+      },
+      flutter,
+    );
+    expect(c.state).toBe('asking');
+    expect(c.question).toBe('¿El login con Apple va antes que el de Google?');
+    expect(c.detail).toBe('pregunta: ¿El login con Apple va antes que el de Google?');
+    expect(c.detail).not.toContain('opciones');
+    expect(c.message).toEqual({ to: 'team-lead', text: expect.stringContaining('PREGUNTA:') });
+    const prose = classify({ ...base, hook_event_name: 'PreToolUse', tool_name: 'SendMessage', tool_input: { to: 'team-lead', message: 'Pregunta: ¿sigo?' } }, flutter);
+    expect(prose.state).toBe('talking');
+    expect(prose.question).toBeNull();
+  });
+
   test('edits are recorded after the tool ran', () => {
     const input = { file_path: '/repo/lib/a.dart', old_string: 'a', new_string: 'b' };
     const pre = classify({ ...base, hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: input }, flutter);

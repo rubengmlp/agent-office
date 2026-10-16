@@ -233,7 +233,18 @@ export type ReportView = {
 
 export type DocumentKind = 'plan' | 'skill';
 
-export type DocumentStatus = 'borrador' | 'revision' | 'aprobado' | 'sin-acuerdo' | 'cerrado' | 'descartado';
+export type DocumentStatus =
+  | 'borrador'
+  | 'revision'
+  | 'aprobado'
+  | 'sin-acuerdo'
+  | 'entregado'
+  | 'aparcado'
+  | 'ejecutando'
+  | 'cerrado'
+  | 'descartado';
+
+export type PlanDecision = 'ejecutar' | 'aparcar' | 'cerrar';
 
 export type DocumentBase = { floor: string; ref: string; sha: string; date: string | null; stale: boolean };
 
@@ -248,6 +259,8 @@ export type DocumentView = {
   round: number;
   score: number | null;
   updatedAt: number;
+  deliveredAt: number | null;
+  decidedAt: number | null;
   base: DocumentBase[];
   ahead: DocumentAhead[];
   installedAt: string[];
@@ -331,3 +344,5 @@ export type Recording = {
 export type AnswerRequest = { answers: Record<string, string> } | { release: true };
 
 export type OrderRequest = { sessionId: string; text: string };
+
+export type PlanDecisionRequest = { path: string; decision: PlanDecision };

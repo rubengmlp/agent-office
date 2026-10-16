@@ -7,7 +7,7 @@ import { isHookEvent, type Office } from './office';
 import { hostAllowed, injectKey, keyMatches, originAllowed } from './security';
 import type { SettingsService } from './settings';
 import { record, text } from './state-machine';
-import type { ClientMessage, HookMeta, ServerMessage } from './types';
+import type { ClientMessage, HookMeta, PlanDecision, ServerMessage } from './types';
 
 type WsData = { authed: boolean; timer: ReturnType<typeof setTimeout> | null };
 
@@ -23,6 +23,7 @@ export type ServerOptions = {
 export type RunningServer = { server: Server<WsData>; stop: () => void };
 
 export const AUTH_TIMEOUT_MS = 1000;
+const PLAN_DECISIONS: readonly PlanDecision[] = ['ejecutar', 'aparcar', 'cerrar'];
 const MAX_ORDER_LENGTH = 4000;
 const PENDING_MESSAGE = 'La pregunta ya no está pendiente';
 
@@ -159,8 +160,21 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
     if (!path) return c.json({ error: 'path es obligatorio' }, 400);
     const result = await office.discardDocument(path);
     if (result === 'ok') return c.json({ ok: true });
-    if (result === 'closed') return c.json({ error: 'El plan ya está entregado o descartado' }, 409);
+    if (result === 'closed') return c.json({ error: 'El plan se está ejecutando, está cerrado o descartado' }, 409);
     return c.json({ error: 'Plan no encontrado' }, 404);
+  });
+
+  app.post('/api/documents/decide', requireKey, async (c) => {
+    const body = record(await readJson(c));
+    const path = text(body.path);
+    const decision = body.decision;
+    if (!path || !isPlanDecision(decision)) return c.json({ error: 'path y decision (ejecutar, aparcar o cerrar) son obligatorios' }, 400);
+    const result = await office.decidePlan(path, decision);
+    if (result === 'ok') return c.json({ ok: true });
+    if (result === 'not-found') return c.json({ error: 'Plan no encontrado' }, 404);
+    if (result === 'invalid-state') return c.json({ error: 'El plan no admite esa decisión en su estado actual' }, 409);
+    if (result === 'no-director') return c.json({ error: 'El director no está abierto' }, 409);
+    return c.json({ error: 'No se pudo entregar la orden al director' }, 502);
   });
 
   app.post('/api/redaccion/sync', requireKey, async (c) => {
@@ -314,4 +328,8 @@ function parseClientMessage(raw: string | Buffer): ClientMessage | null {
   } catch {
     return null;
   }
+}
+
+function isPlanDecision(value: unknown): value is PlanDecision {
+  return typeof value === 'string' && (PLAN_DECISIONS as readonly string[]).includes(value);
 }

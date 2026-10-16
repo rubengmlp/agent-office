@@ -2,14 +2,26 @@ import type { Database } from 'bun:sqlite';
 import { existsSync, readdirSync, readFileSync, statSync, watch, type Dirent, type FSWatcher } from 'node:fs';
 import { join } from 'node:path';
 import type { DocRef } from './protocol';
-import type { DocumentAhead, DocumentBase, DocumentContent, DocumentKind, DocumentStatus, DocumentView } from './types';
+import type { DocumentAhead, DocumentBase, DocumentContent, DocumentKind, DocumentStatus, DocumentView, PlanDecision } from './types';
 
 export const PLANS_DIR = join('redaccion', 'planes');
 export const SKILLS_DIR = join('taller', 'skills');
 const MAX_CONTENT_BYTES = 1_000_000;
 const SKIP_DIRS = new Set(['evals', '.git', 'node_modules', '__pycache__']);
 
-export type DocRow = { path: string; round: number; requested_at: number | null; closed_at: number | null; discarded_at: number | null };
+export const FINISHED_PLAN: ReadonlySet<DocumentStatus> = new Set<DocumentStatus>(['cerrado', 'descartado', 'entregado', 'aparcado', 'ejecutando']);
+
+export type DocRow = {
+  path: string;
+  round: number;
+  requested_at: number | null;
+  closed_at: number | null;
+  discarded_at: number | null;
+  delivered_at: number | null;
+  decision: string | null;
+  decided_at: number | null;
+  delivered_base: string | null;
+};
 export type VerdictRow = { kind: string; ts: number; round: number | null; score: number | null };
 
 export type DocumentsOptions = {
@@ -144,6 +156,24 @@ export class DocumentDesk {
     this.opts.db.query('UPDATE documents SET closed_at = ?, updated_at = ? WHERE path = ?').run(now, now, ref.path);
   }
 
+  markDelivered(ref: DocRef, base: DocumentBase[], now: number): void {
+    this.upsert(ref, now);
+    this.opts.db
+      .query(
+        'UPDATE documents SET delivered_at = COALESCE(delivered_at, ?), delivered_base = COALESCE(delivered_base, ?), updated_at = ? WHERE path = ?',
+      )
+      .run(now, base.length > 0 ? JSON.stringify(base) : null, now, ref.path);
+  }
+
+  markDecision(ref: DocRef, decision: PlanDecision, now: number): void {
+    this.upsert(ref, now);
+    if (decision === 'cerrar') {
+      this.opts.db.query('UPDATE documents SET closed_at = ?, decided_at = ?, updated_at = ? WHERE path = ?').run(now, now, now, ref.path);
+      return;
+    }
+    this.opts.db.query('UPDATE documents SET decision = ?, decided_at = ?, updated_at = ? WHERE path = ?').run(decision, now, now, ref.path);
+  }
+
   markDiscarded(ref: DocRef, now: number): void {
     this.upsert(ref, now);
     this.opts.db.query('UPDATE documents SET discarded_at = ?, updated_at = ? WHERE path = ?').run(now, now, ref.path);
@@ -151,14 +181,16 @@ export class DocumentDesk {
 
   isOpen(slug: string, kind: DocumentKind): boolean {
     const doc = this.cache.find((d) => d.slug === slug && d.kind === kind);
-    return !!doc && doc.status !== 'cerrado' && doc.status !== 'descartado';
+    return !!doc && !FINISHED_PLAN.has(doc.status);
   }
 
   finishedPlanSlugs(): Set<string> {
     const finished = new Set<string>();
-    for (const d of this.cache) if (d.kind === 'plan' && (d.status === 'cerrado' || d.status === 'descartado')) finished.add(d.slug);
+    for (const d of this.cache) if (d.kind === 'plan' && FINISHED_PLAN.has(d.status)) finished.add(d.slug);
     const rows = this.opts.db
-      .query<{ slug: string }, []>("SELECT slug FROM documents WHERE kind = 'plan' AND (closed_at IS NOT NULL OR discarded_at IS NOT NULL)")
+      .query<{ slug: string }, []>(
+        "SELECT slug FROM documents WHERE kind = 'plan' AND (closed_at IS NOT NULL OR discarded_at IS NOT NULL OR delivered_at IS NOT NULL)",
+      )
       .all();
     for (const r of rows) finished.add(r.slug);
     return finished;
@@ -222,7 +254,9 @@ export class DocumentDesk {
 
   private view(ref: DocRef, file: string, mtime: number): DocumentView {
     const row = this.opts.db
-      .query<DocRow, [string]>('SELECT path, round, requested_at, closed_at, discarded_at FROM documents WHERE path = ?')
+      .query<DocRow, [string]>(
+        'SELECT path, round, requested_at, closed_at, discarded_at, delivered_at, decision, decided_at, delivered_base FROM documents WHERE path = ?',
+      )
       .get(ref.path);
     const verdicts = this.opts.db
       .query<VerdictRow, [string]>(
@@ -240,10 +274,17 @@ export class DocumentDesk {
       round,
       score: last?.score ?? null,
       updatedAt: Math.round(mtime),
-      base: ref.kind === 'plan' ? this.opts.base(ref.slug) : [],
+      deliveredAt: row?.delivered_at ?? null,
+      decidedAt: row?.decided_at ?? null,
+      base: ref.kind === 'plan' ? this.planBase(ref.slug, row?.delivered_base ?? null) : [],
       ahead: ref.kind === 'plan' ? this.opts.ahead(ref.slug) : [],
       installedAt: ref.kind === 'skill' ? this.installedAt(ref.slug) : [],
     };
+  }
+
+  private planBase(slug: string, delivered: string | null): DocumentBase[] {
+    const live = this.opts.base(slug);
+    return live.length > 0 || delivered === null ? live : parseBase(delivered);
   }
 
   private installedAt(name: string): string[] {
@@ -257,11 +298,29 @@ export class DocumentDesk {
 export function statusOf(row: DocRow | null, last: VerdictRow | null, mtime: number): DocumentStatus {
   if (row?.discarded_at) return 'descartado';
   if (row?.closed_at) return 'cerrado';
+  if (row?.decision === 'ejecutar') return 'ejecutando';
+  if (row?.decision === 'aparcar') return 'aparcado';
+  if (row?.delivered_at) return 'entregado';
   if (last?.kind === 'approved') return last.ts > mtime ? 'aprobado' : 'revision';
   if (last?.kind === 'no-agreement') return 'sin-acuerdo';
   if (last?.kind === 'improve') return 'revision';
   if (row?.requested_at) return 'revision';
   return 'borrador';
+}
+
+function parseBase(raw: string): DocumentBase[] {
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((item: unknown) => {
+      if (!item || typeof item !== 'object') return [];
+      const b = item as Record<string, unknown>;
+      if (typeof b.floor !== 'string' || typeof b.ref !== 'string' || typeof b.sha !== 'string') return [];
+      return [{ floor: b.floor, ref: b.ref, sha: b.sha, date: typeof b.date === 'string' ? b.date : null, stale: b.stale === true }];
+    });
+  } catch {
+    return [];
+  }
 }
 
 function safeList(dir: string): string[] {

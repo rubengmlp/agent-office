@@ -50,6 +50,7 @@ import type {
   AgentState,
   AgentView,
   DocumentContent,
+  DocumentStatus,
   DocumentView,
   FloorKind,
   GuardAlert,
@@ -59,6 +60,7 @@ import type {
   MemoryView,
   MessageView,
   OfficeConfig,
+  PlanDecision,
   QuestionOutcome,
   QuestionView,
   ReportView,
@@ -96,6 +98,7 @@ type AgentRuntime = {
   sentState: AgentState | null;
   retiredAt: number | null;
   retiredAwake: boolean;
+  awaitingAnswer: boolean;
 };
 
 type SessionRuntime = {
@@ -136,6 +139,16 @@ export type LessonResult = { ok: true; lesson: LessonView } | { ok: false; statu
 
 export type DiscardResult = 'ok' | 'not-found' | 'closed';
 
+export type DecideResult = 'ok' | 'not-found' | 'invalid-state' | 'no-director' | 'unreachable' | 'failed';
+
+const DECISION_FROM: Record<PlanDecision, readonly DocumentStatus[]> = {
+  aparcar: ['entregado', 'ejecutando'],
+  ejecutar: ['entregado', 'aparcado'],
+  cerrar: ['ejecutando'],
+};
+
+const NOT_DISCARDABLE: ReadonlySet<DocumentStatus> = new Set<DocumentStatus>(['ejecutando', 'cerrado', 'descartado']);
+
 export type OfficeOptions = {
   db: Database;
   config: OfficeConfig;
@@ -164,6 +177,8 @@ const EMPTY_META: HookMeta = { socket: null, token: null, role: null, name: null
 const NO_TESTS: Matchers = { test: /(?!)/, check: /(?!)/ };
 const NOT_PERMISSIONS: ReadonlySet<string> = new Set(['AskUserQuestion', 'ExitPlanMode']);
 const TURN_OVER: ReadonlySet<string> = new Set(['SubagentStop', 'Stop', 'TeammateIdle', 'SessionEnd']);
+const HOLDS_QUESTION: ReadonlySet<string> = new Set(['SubagentStop', 'Stop', 'TeammateIdle', 'Notification', 'PostToolUse', 'PostToolUseFailure']);
+const ANSWERS_QUESTION: ReadonlySet<string> = new Set(['PreToolUse', 'UserPromptSubmit', 'SubagentStart']);
 const VERDICT_LABELS: Record<Exclude<VerdictKind, 'tests'>, string> = {
   approved: 'aprobado',
   improve: 'mejorar',
@@ -326,15 +341,12 @@ export class Office {
     const session = this.touchSession(e, meta, now);
     const kind = session.floorKind;
     const c = classify(e, isDepartmentFloor(kind) ? NO_TESTS : profileFor(this.profiles, session.stack));
-    if (c.event === 'TeammateIdle' && !e.agent_id && !this.agents.has(c.agentKey)) {
-      const owner = this.liveTeammate(c.teammate, c.team ?? session.team ?? teamOfSession(e.session_id), e.session_id);
-      if (owner) c.agentKey = owner.key;
-    }
-    if ((c.event === 'SubagentStop' || c.event === 'TeammateIdle') && !this.agents.has(c.agentKey)) {
-      if (c.event === 'SubagentStop' || c.agentKey.includes('@')) {
-        this.sql.insertEvent.run(now, e.session_id, c.agentKey, session.floor, c.event, null, null, null, storedPayload(e, kind));
-        return null;
-      }
+    const byName = c.event === 'TeammateIdle' && !e.agent_id && c.agentKey !== e.session_id && !this.agents.has(c.agentKey);
+    const owner = byName ? this.liveTeammate(c.teammate, c.team ?? session.team ?? teamOfSession(e.session_id), e.session_id) : null;
+    if (owner) c.agentKey = owner.key;
+    if ((c.event === 'SubagentStop' || byName) && !this.agents.has(c.agentKey)) {
+      this.sql.insertEvent.run(now, e.session_id, c.agentKey, session.floor, c.event, null, null, null, storedPayload(e, kind));
+      return null;
     }
     const agent = this.touchAgent(e, c, session, now);
     if (this.isRetired(agent)) {
@@ -348,7 +360,16 @@ export class Office {
       nextState = 'idle';
       ended = false;
     }
-    if (nextState === null && (c.event === 'PostToolUse' || c.event === 'PostToolUseFailure') && agent.state === 'asking') {
+    if (c.question !== null) agent.awaitingAnswer = true;
+    else if (agent.awaitingAnswer && ANSWERS_QUESTION.has(c.event)) agent.awaitingAnswer = false;
+    const holding = agent.awaitingAnswer && !ended && HOLDS_QUESTION.has(c.event);
+    if (holding) nextState = null;
+    if (
+      nextState === null &&
+      (c.event === 'PostToolUse' || c.event === 'PostToolUseFailure') &&
+      agent.state === 'asking' &&
+      !agent.awaitingAnswer
+    ) {
       nextState = 'working';
     }
     if (ended) agent.endedAt = now;
@@ -357,8 +378,10 @@ export class Office {
       agent.state = nextState;
       agent.stateSince = now;
     }
-    if (c.event === 'SubagentStop' && agent.teammate) agent.detail = 'esperando';
-    else if (c.detail) agent.detail = publicDetail(c, kind);
+    if (!holding) {
+      if (c.event === 'SubagentStop' && agent.teammate) agent.detail = 'esperando';
+      else if (c.detail) agent.detail = publicDetail(c, kind);
+    }
     if (c.tool && c.event === 'PreToolUse') agent.tool = c.tool;
     if (c.blocked) agent.blockedReason = kind === 'observed' ? 'bloqueado' : c.blocked;
     else if (c.unblock) agent.blockedReason = null;
@@ -630,7 +653,7 @@ export class Office {
   async discardDocument(path: string): Promise<DiscardResult> {
     const doc = this.docs.find(path);
     if (!doc || doc.kind !== 'plan') return 'not-found';
-    if (doc.status === 'cerrado' || doc.status === 'descartado') return 'closed';
+    if (NOT_DISCARDABLE.has(doc.status)) return 'closed';
     const now = this.now();
     const ref: DocRef = { path: doc.path, kind: doc.kind, slug: doc.slug };
     this.docs.markDiscarded(ref, now);
@@ -638,6 +661,30 @@ export class Office {
     this.refreshDocuments();
     this.pushActivity({ ts: now, agentKey: 'panel', event: 'Discard', tool: null, state: null, summary: `plan descartado desde el panel: ${doc.path}` });
     await this.sync.remove(doc.slug);
+    return 'ok';
+  }
+
+  async decidePlan(path: string, decision: PlanDecision): Promise<DecideResult> {
+    const doc = this.docs.find(path);
+    if (!doc || doc.kind !== 'plan') return 'not-found';
+    if (!DECISION_FROM[decision].includes(doc.status)) return 'invalid-state';
+    if (decision === 'ejecutar') {
+      const director = this.directorSession();
+      if (!director) return 'no-director';
+      const sent = await this.order(director.sessionId, executeOrderText(doc, this.docsRoot()));
+      if (sent === 'not-found') return 'no-director';
+      if (sent !== 'ok') return sent;
+    }
+    const now = this.now();
+    this.docs.markDecision({ path: doc.path, kind: doc.kind, slug: doc.slug }, decision, now);
+    this.refreshDocuments();
+    const summary =
+      decision === 'ejecutar'
+        ? `plan enviado a ejecutar: ${doc.path}`
+        : decision === 'aparcar'
+          ? `plan aparcado desde el panel: ${doc.path}`
+          : `plan cerrado desde el panel: ${doc.path}`;
+    this.pushActivity({ ts: now, agentKey: 'panel', event: 'Decision', tool: null, state: null, summary });
     return 'ok';
   }
 
@@ -885,9 +932,14 @@ export class Office {
         : `entrega bloqueada: ${ref ? `${ref.path} sin aprobación vigente` : 'falta la ruta del documento'}`,
     });
     if (decision.pass && ref && isLeadRole(role)) {
-      this.docs.markClosed(ref, now);
-      this.refreshDocuments();
-      if (ref.kind === 'plan') this.background(this.sync.remove(ref.slug));
+      if (ref.kind === 'plan') {
+        this.docs.markDelivered(ref, this.sync.base(ref.slug), now);
+        this.refreshDocuments();
+        this.background(this.sync.remove(ref.slug));
+      } else {
+        this.docs.markClosed(ref, now);
+        this.refreshDocuments();
+      }
     }
     return decision;
   }
@@ -914,6 +966,12 @@ export class Office {
     if (!isDepartmentFloor(session.floorKind)) return;
     const ref = docRef(parsed.target, this.docsRoot(), session.cwd);
     if (!ref) return;
+    if (parsed.kind === 'plan') {
+      if (ref.kind === 'plan' && isLeadRole(from.role)) {
+        this.pushActivity({ ts: now, agentKey: from.key, event: 'Plan', tool: 'SendMessage', state: null, summary: `avisa a ${message.to} del plan ${ref.path}` });
+      }
+      return;
+    }
     const round = parsed.round;
     if (parsed.kind === 'review' && isAuthorRole(from.role)) {
       this.docs.markRequested(ref, round, now);
@@ -1179,6 +1237,7 @@ export class Office {
         sentState: null,
         retiredAt: null,
         retiredAwake: false,
+        awaitingAnswer: false,
       };
       this.agents.set(agent.key, agent);
     }
@@ -1269,7 +1328,19 @@ export class Office {
     this.messages.push(view);
     if (this.messages.length > MAX_MESSAGES) this.messages.splice(0, this.messages.length - MAX_MESSAGES);
     this.emit({ type: 'message', data: view });
+    const recipient = toKey ? this.agents.get(toKey) : undefined;
+    if (recipient && recipient !== from && recipient.awaitingAnswer) this.answerReceived(recipient, now);
     if (body) this.handleProtocol({ to: message.to, toKey, text: body }, from, session, now);
+  }
+
+  private answerReceived(agent: AgentRuntime, now: number): void {
+    agent.awaitingAnswer = false;
+    agent.state = 'working';
+    agent.stateSince = now;
+    agent.detail = 'respuesta recibida';
+    agent.updatedAt = now;
+    this.persistAgent(agent);
+    this.emitAgent(agent, now);
   }
 
   private recipientKey(to: string, from: AgentRuntime): string | null {
@@ -1289,6 +1360,17 @@ export class Office {
     }
     const at = to.indexOf('@');
     return at > 0 ? this.recipientKey(to.slice(0, at), from) : null;
+  }
+
+  private directorSession(): SessionRuntime | null {
+    let found: SessionRuntime | null = null;
+    for (const session of this.sessions.values()) {
+      if (session.endedAt !== null) continue;
+      const role = session.role ?? this.agents.get(session.sessionId)?.role ?? null;
+      if (canonicalRole(role) !== 'office-director') continue;
+      if (!found || session.updatedAt > found.updatedAt) found = session;
+    }
+    return found;
   }
 
   private leadSession(team: string | null | undefined): SessionRuntime | null {
@@ -1515,6 +1597,7 @@ export class Office {
         sentState: null,
         retiredAt: null,
         retiredAwake: false,
+        awaitingAnswer: false,
       });
       this.sessions.set(row.session_id, {
         sessionId: row.session_id,
@@ -1545,6 +1628,19 @@ export class Office {
       this.opts.rawDir = null;
     }
   }
+}
+
+export function executeOrderText(doc: Pick<DocumentView, 'path' | 'title' | 'round' | 'base'>, docsRepo: string): string {
+  const floors = [...new Set(doc.base.map((b) => b.floor))];
+  const rounds = `${doc.round} ${doc.round === 1 ? 'ronda' : 'rondas'}`;
+  const floorList = floors.length > 0 ? floors.join(', ') : 'las que indique el plan';
+  const leads = floors.length > 0 ? ` (${floors.map((f) => `\`lead-${f}\``).join(', ')})` : '';
+  return [
+    `Ejecuta el plan ${doc.path} («${doc.title}»), aprobado por Redacción en ${rounds}.`,
+    `Plantas: ${floorList}.`,
+    `Léelo en \`${docsRepo}/${doc.path}\`, divídelo por planta según sus Pasos y manda a cada jefe${leads} su parte con la ruta del plan; ya lo conocen por el aviso PLAN de Redacción.`,
+    'Avísame cuando terminen todas.',
+  ].join(' ');
 }
 
 export function historyPath(slug: string): string {

@@ -2,12 +2,22 @@ import { Database } from 'bun:sqlite';
 import { chmodSync } from 'node:fs';
 import type { FloorRecord, FloorRegistry } from './floors';
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 export const ADDITIVE_SINCE = 2;
 
 export type Migration = { version: number; statements: string[] };
 
-export const MIGRATIONS: readonly Migration[] = [];
+export const MIGRATIONS: readonly Migration[] = [
+  {
+    version: 3,
+    statements: [
+      'ALTER TABLE documents ADD COLUMN delivered_at INTEGER',
+      'ALTER TABLE documents ADD COLUMN decision TEXT',
+      'ALTER TABLE documents ADD COLUMN decided_at INTEGER',
+      'ALTER TABLE documents ADD COLUMN delivered_base TEXT',
+    ],
+  },
+];
 
 const V1_TABLES = ['events', 'sessions', 'agents', 'floors', 'tasks', 'edits', 'test_runs', 'messages', 'questions', 'gate_decisions'];
 

@@ -41,6 +41,7 @@ export type Classified = {
   task: TaskInfo | null;
   teammate: string | null;
   team: string | null;
+  question: string | null;
   summary: string;
 };
 
@@ -61,6 +62,11 @@ export const READ_TOOLS = new Set([
 export const SPAWN_TOOLS = new Set(['Agent', 'Task']);
 export const BLOCK_PREFIX = /^\s*BLOQUEADO\s*:/i;
 export const DONE_PREFIX = /^\s*HECHO\s*:/i;
+export const QUESTION_PREFIX = /^\s*PREGUNTA\s*:/;
+
+export function questionText(body: string): string {
+  return body.replace(QUESTION_PREFIX, '').split(/\s*[—–-]+\s*opciones\s*:/i)[0]?.trim() ?? '';
+}
 
 export function text(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null;
@@ -105,6 +111,7 @@ export function classify(e: HookEvent, m: Matchers): Classified {
     task: null,
     teammate: null,
     team: text(e.team_name),
+    question: null,
     summary: e.hook_event_name,
   };
   const input = record(e.tool_input);
@@ -212,6 +219,18 @@ function preTool(base: Classified, e: HookEvent, input: Record<string, unknown>,
     const to = text(input.to) ?? '?';
     const body = text(input.message) ?? '';
     const blocked = BLOCK_PREFIX.test(body);
+    if (!blocked && QUESTION_PREFIX.test(body)) {
+      const question = questionText(body) || 'pregunta';
+      return {
+        ...base,
+        state: 'asking',
+        message: { to, text: body },
+        question,
+        unblock: true,
+        detail: `pregunta: ${short(question, 120)}`,
+        summary: `pregunta a ${to}: ${short(question, 60)}`,
+      };
+    }
     return {
       ...base,
       state: blocked ? 'blocked' : 'talking',

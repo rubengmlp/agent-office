@@ -95,7 +95,10 @@ export const DOCUMENT_STATUS_LABELS: Record<DocumentStatus, string> = {
   revision: 'En revisión',
   aprobado: 'Aprobado',
   'sin-acuerdo': 'Sin acuerdo',
-  cerrado: 'Entregado',
+  entregado: 'Pendiente de decisión',
+  aparcado: 'Aparcado',
+  ejecutando: 'En ejecución',
+  cerrado: 'Cerrado',
   descartado: 'Descartado',
 };
 
@@ -104,6 +107,9 @@ export const DOCUMENT_STATUS_COLORS: Record<DocumentStatus, string> = {
   revision: '#eab308',
   aprobado: '#22c55e',
   'sin-acuerdo': '#ef4444',
+  entregado: '#a855f7',
+  aparcado: '#a8a29e',
+  ejecutando: '#06b6d4',
   cerrado: '#4f7cff',
   descartado: '#64748b',
 };
