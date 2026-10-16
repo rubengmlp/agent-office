@@ -129,12 +129,18 @@ describe('floor CLI', () => {
     writeFloor(p, profiles, planFloor(p, profiles, repo));
     const config = loadConfig(p);
     config.permissionModes.mobile = 'plan';
+    config.permissionModes.redaccion = 'manual';
+    config.floorRoles.mobile = { dev: { model: 'haiku', effort: 'low' } };
+    config.floorRoles.redaccion = { redactor: { model: 'sonnet', effort: 'high' } };
     saveConfig(p, config);
 
     expect(purgeFloor(p, profiles, 'mobile')).toHaveLength(3);
     const after = loadConfig(p);
     expect(after.floors.mobile).toBeUndefined();
     expect(after.permissionModes.mobile).toBeUndefined();
+    expect(after.floorRoles.mobile).toBeUndefined();
+    expect(after.permissionModes.redaccion).toBe('manual');
+    expect(after.floorRoles.redaccion).toEqual({ redactor: { model: 'sonnet', effort: 'high' } });
     for (const role of ['lead', 'dev', 'tester'] as const) expect(existsSync(agentFile(p, role, 'mobile'))).toBe(false);
     expect(existsSync(join(p.sessionsDir, 'lead-mobile.sh'))).toBe(false);
     expect(readFileSync(p.officeSh, 'utf8')).not.toContain('mobile');

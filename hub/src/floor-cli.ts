@@ -203,6 +203,7 @@ export function purgeFloor(p: Paths, profiles: Profiles, slug: string): string[]
   const removed = deleteFloorAgents(p, slug);
   delete config.floors[slug];
   delete config.permissionModes[slug];
+  delete config.floorRoles[slug];
   // config.json is saved last: if regenerating the fixed agents or the launchers fails, the floor is still
   // there and repeating the purge writes them again.
   writeFixedAgents(p, config, profiles);
