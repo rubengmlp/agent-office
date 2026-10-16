@@ -196,6 +196,71 @@ describe('Redacción review loop', () => {
     expect(h.office.documentContent(PLAN)?.markdown).toContain('# Plan\n');
     expect(h.office.documentContent('../../etc/passwd')).toBeNull();
   });
+
+  test('the office enforces maxRounds: a REVISAR over the cap is blocked, ignored and logged', async () => {
+    const cwd = redaccionTeam();
+    h.config.review.maxRounds = 2; // the harness and Office share the config object
+    writeFileSync(join(docs, PLAN), '# Plan\n');
+    touch(join(docs, PLAN), -60_000);
+    say(LEAD, cwd, 'ared-1', 'redactor-login', 'team-lead', `REVISAR: ${PLAN} ronda 1`);
+    say(LEAD, cwd, 'arev-1', 'revisor-planes-login-r1', 'redactor-login', `MEJORAR: ${PLAN} ronda 1 — nota 5/10\n1. bloqueante: falta la migración`);
+    await h.office.idle();
+    // commitDocument only commits when the staged diff is not empty: each round needs a real change.
+    h.clock.advance(60_000);
+    writeFileSync(join(docs, PLAN), '# Plan\n\n## Pasos\n1. migración\n');
+    touch(join(docs, PLAN), -1000);
+    expect(gate(LEAD, cwd, 'ared-1', 'redactor-login', `REVISAR: ${PLAN} ronda 2`).pass).toBe(true);
+    say(LEAD, cwd, 'ared-1', 'redactor-login', 'team-lead', `REVISAR: ${PLAN} ronda 2`);
+    await h.office.idle();
+    expect(doc(PLAN)).toMatchObject({ status: 'revision', round: 2, maxRounds: 2 });
+
+    h.clock.advance(60_000);
+    writeFileSync(join(docs, PLAN), '# Plan\n\n## Pasos\n1. migración\n2. backfill\n');
+    touch(join(docs, PLAN), -1000);
+    const over = gate(LEAD, cwd, 'ared-1', 'redactor-login', `REVISAR: ${PLAN} ronda 3`);
+    expect(over.pass).toBe(false);
+    expect(over.reason).toContain('ronda 3');
+    expect(over.reason).toContain('2 rondas');
+    // emit.sh fires in the same PreToolUse whatever gate.sh answers: ingest must ignore it too.
+    say(LEAD, cwd, 'ared-1', 'redactor-login', 'team-lead', `REVISAR: ${PLAN} ronda 3`);
+    await h.office.idle();
+    expect(doc(PLAN)).toMatchObject({ status: 'revision', round: 2 });
+    expect(emittedDoc(PLAN)?.round).toBe(2);
+    const log = git(docs, 'log', '--format=%s');
+    expect(log).toContain('redaccion: login ronda 2');
+    expect(log).not.toContain('ronda 3');
+    const summaries = h.office.snapshot().activity.map((a) => a.summary);
+    expect(summaries).toContainEqual({ key: 'hub.act.reviewBlockedOverMax', params: { path: PLAN, round: 3, max: 2 } });
+    expect(summaries).toContainEqual({ key: 'hub.act.reviewIgnoredOverMax', params: { path: PLAN, round: 3, max: 2 } });
+    expect(h.db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM gate_decisions WHERE decision = 'block' AND task_id = ?").get(PLAN)?.n).toBe(1);
+  });
+
+  test('a SIN ACUERDO opens another maxRounds budget; the lead is not capped', () => {
+    const cwd = redaccionTeam();
+    h.config.review.maxRounds = 2;
+    writeFileSync(join(docs, PLAN), '# Plan\n');
+    touch(join(docs, PLAN), -60_000);
+    say(LEAD, cwd, 'ared-1', 'redactor-login', 'team-lead', `REVISAR: ${PLAN} ronda 2`);
+    say(LEAD, cwd, 'arev-1', 'revisor-planes-login-r1', 'redactor-login', `SIN ACUERDO: ${PLAN} ronda 2 — falta la migración`);
+    expect(doc(PLAN)).toMatchObject({ status: 'sin-acuerdo', round: 2, maxRounds: 4 });
+    expect(gate(LEAD, cwd, 'ared-1', 'redactor-login', `REVISAR: ${PLAN} ronda 3`).pass).toBe(true);
+    say(LEAD, cwd, 'ared-1', 'redactor-login', 'team-lead', `REVISAR: ${PLAN} ronda 3`);
+    expect(doc(PLAN)?.round).toBe(3); // status stays sin-acuerdo until the next verdict
+    expect(gate(LEAD, cwd, 'ared-1', 'redactor-login', `REVISAR: ${PLAN} ronda 5`).pass).toBe(false);
+    expect(gate(LEAD, cwd, 'ared-1', 'redactor-login', `REVISAR: ${PLAN}`).pass).toBe(true); // no round: out of scope, unchanged
+    expect(gate(LEAD, cwd, null, null, `REVISAR: ${PLAN} ronda 9`).pass).toBe(true); // the lead is not an author
+  });
+
+  test('a SIN ACUERDO without a round number counts at the current round of the document', () => {
+    const cwd = redaccionTeam();
+    h.config.review.maxRounds = 2;
+    writeFileSync(join(docs, PLAN), '# Plan\n');
+    touch(join(docs, PLAN), -60_000);
+    say(LEAD, cwd, 'ared-1', 'redactor-login', 'team-lead', `REVISAR: ${PLAN} ronda 2`);
+    say(LEAD, cwd, 'arev-1', 'revisor-planes-login-r1', 'redactor-login', `SIN ACUERDO: ${PLAN} — falta la migración`);
+    expect(doc(PLAN)).toMatchObject({ status: 'sin-acuerdo', round: 2, maxRounds: 4 });
+    expect(gate(LEAD, cwd, 'ared-1', 'redactor-login', `REVISAR: ${PLAN} ronda 3`).pass).toBe(true);
+  });
 });
 
 describe('plan reviewers', () => {
@@ -578,6 +643,23 @@ describe('Mantenimiento skills', () => {
     expect(gate(MANT, cwd, 'aart-1', 'artesano-pdf-tools', done).pass).toBe(true);
     touch(join(skill, 'scripts', 'run.sh'), 30_000);
     expect(gate(MANT, cwd, 'aart-1', 'artesano-pdf-tools', done).reason).toContain('cambió después');
+  });
+
+  test('the round cap applies to the skillwright too', () => {
+    office();
+    h.config.review.maxRounds = 3;
+    const cwd = join(docs, 'taller');
+    const skill = join(docs, 'taller', 'skills', 'pdf-tools');
+    mkdirSync(skill, { recursive: true });
+    writeFileSync(join(skill, 'SKILL.md'), '---\nname: pdf-tools\ndescription: x\n---\n');
+    h.office.ingest(ev(MANT, cwd, 'SessionStart', {}), mantMeta);
+    start(MANT, cwd, 'aart-1', 'artesano-pdf-tools');
+    say(MANT, cwd, 'aart-1', 'artesano-pdf-tools', 'team-lead', 'REVISAR: taller/skills/pdf-tools ronda 3');
+    const over = gate(MANT, cwd, 'aart-1', 'artesano-pdf-tools', 'REVISAR: taller/skills/pdf-tools ronda 4');
+    expect(over.pass).toBe(false);
+    expect(over.reason).toContain('ronda 4');
+    say(MANT, cwd, 'aart-1', 'artesano-pdf-tools', 'team-lead', 'REVISAR: taller/skills/pdf-tools ronda 4');
+    expect(h.office.documents()[0]).toMatchObject({ round: 3, maxRounds: 3 });
   });
 
   test('installed skills show where they live', () => {

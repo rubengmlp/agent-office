@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { CONFIG_VERSION, DEFAULT_ROLES, PROFILES_DIR, createKeyIfMissing, defaultConfig, loadConfig, migrateConfig, normalizeConfig, roleSettingsFor, saveConfig } from '../src/config';
 import { configTargets, watchTargets } from '../src/config-watch';
 import { openDb } from '../src/db';
-import { decideGate } from '../src/gate';
+import { roundCap } from '../src/documents';
+import { decideGate, decideReviewGate } from '../src/gate';
 import { directorFloorsText, modelArgs, officeScript, sessionScript, sessionSpecs, sq } from '../src/office-sh';
 import { loadProfiles } from '../src/profiles';
 import { prune } from '../src/prune';
@@ -320,5 +321,25 @@ describe('launch scripts', () => {
     expect(script.indexOf('/health')).toBeLessThan(script.indexOf('exec claude'));
     expect(script).toContain("export AGENT_OFFICE_ROLE='office-lead-redaccion'");
     cleanup();
+  });
+});
+
+describe('round cap', () => {
+  test('a REVISAR over the effective cap is blocked with the reason', () => {
+    const over = decideReviewGate({ path: 'redaccion/planes/x.md', round: 3, cap: 2, maxRounds: 2 });
+    expect(over.pass).toBe(false);
+    expect(over.reason).toContain('ronda 3');
+    expect(over.reason).toContain('2 rondas');
+    expect(decideReviewGate({ path: 'redaccion/planes/x.md', round: 2, cap: 2, maxRounds: 2 }).pass).toBe(true);
+    expect(decideReviewGate({ path: 'redaccion/planes/x.md', round: null, cap: 2, maxRounds: 2 }).pass).toBe(true);
+    expect(decideReviewGate({ path: 'redaccion/planes/x.md', round: 5, cap: 6, maxRounds: 4 }).pass).toBe(true);
+    const renewed = decideReviewGate({ path: 'redaccion/planes/x.md', round: 7, cap: 6, maxRounds: 4 });
+    expect(renewed.pass).toBe(false);
+    expect(renewed.reason).toContain('gastadas');
+  });
+
+  test('every SIN ACUERDO adds its round to the configured maximum', () => {
+    expect(roundCap(4, null)).toBe(4);
+    expect(roundCap(4, 4)).toBe(8);
   });
 });
