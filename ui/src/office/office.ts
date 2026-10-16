@@ -1,21 +1,43 @@
 import { Application, Container, Graphics } from 'pixi.js';
+import { LiftController, linkLift } from '../lift';
 import type { Store } from '../store';
 import type { AgentView } from '../types';
 import { mountUsageCard } from '../usage-card';
+import { Backdrop } from './backdrop';
 import { CharacterView, type Target } from './character-view';
 import {
   DESK_FEET_Y,
   DESK_SEAT_X,
   FLOOR_GAP,
+  GARDEN_H,
+  LANDING_DX,
   LEAD_SEAT_X,
+  LIFT_DOOR_S,
+  LIFT_DWELL_S,
+  LIFT_MAX_DWELL_S,
+  LIFT_SPEED_2D,
   MEETING_REFRESH_S,
   MIN_WIDTH,
   SCALE,
+  SIDE_MARGIN,
+  SKY_H,
   SLOT_W,
 } from './constants';
 import { FloorScene } from './floor-scene';
 import { buildDesk, type DeskParts } from './furniture';
-import { computeFloorLayout, liftGate, liftRoute, streetExit, type DeskSlot, type Point } from './layout';
+import { GardenScene } from './garden';
+import {
+  computeFloorLayout,
+  gardenArrival,
+  gardenDoor,
+  gardenRoute,
+  liftCenter,
+  liftGate,
+  liftRoute,
+  type DeskSlot,
+  type Point,
+} from './layout';
+import { LiftCabin } from './lift-cabin';
 import { findMeetingPairs } from './meetings';
 import { hashString } from './palette';
 
@@ -27,6 +49,7 @@ type Entry = {
   ownDesk: DeskParts | null;
   desk: DeskParts | null;
   slot: DeskSlot | null;
+  goalScene: FloorScene | null;
 };
 
 type MeetingSeat = { floor: string; seat: number };
@@ -72,6 +95,24 @@ class OfficeView {
   private readonly scenes = new Map<string, FloorScene>();
   private readonly entries = new Map<string, Entry>();
   private readonly firstSeen = new Map<string, number>();
+  private readonly media = window.matchMedia('(prefers-color-scheme: dark)');
+  private readonly backdrop = new Backdrop();
+  private readonly garden = new GardenScene(this.backgrounds, this.actors);
+  private readonly cabin = new LiftCabin(this.actors);
+  private readonly lift = new LiftController({ speed: LIFT_SPEED_2D, doorTime: LIFT_DOOR_S, dwell: LIFT_DWELL_S, maxDwell: LIFT_MAX_DWELL_S });
+  private readonly liftLink = linkLift<Point>(this.lift, {
+    serves: (from, to) => from !== to && this.scenes.has(from) && this.scenes.has(to),
+    landing: (floor) => {
+      const scene = this.scenes.get(floor) ?? this.ground();
+      return scene ? { x: scene.layout.lift.x - LANDING_DX, y: scene.top + scene.layout.walkY } : { x: 0, y: 0 };
+    },
+    cabin: (floor) => {
+      const scene = this.scenes.get(floor) ?? this.ground();
+      return scene ? liftGate(scene.layout, scene.top) : { x: 0, y: 0 };
+    },
+  });
+  private gardenTop = SKY_H;
+  private backdropKey = '';
   private sceneOrder: FloorScene[] = [];
   private meetings = new Map<string, MeetingSeat>();
   private seenCounter = 0;
@@ -99,14 +140,14 @@ class OfficeView {
     this.actors.sortableChildren = true;
     this.world.scale.set(SCALE);
     this.world.addChild(this.backgrounds, this.actors, this.foregrounds, this.lines);
+    this.backgrounds.addChildAt(this.backdrop.root, 0);
     this.app.stage.addChild(this.world, this.scrollbar);
 
     this.app.canvas.addEventListener('wheel', this.onWheel, { passive: false });
-    window
-      .matchMedia('(prefers-color-scheme: dark)')
-      .addEventListener('change', () => {
-        this.app.renderer.background.color = canvasBackground();
-      });
+    this.media.addEventListener('change', () => {
+      this.app.renderer.background.color = canvasBackground();
+      this.dirty = true;
+    });
 
     this.app.ticker.add((ticker) => this.update(ticker.deltaMS / 1000));
     this.store.watch(['agents', 'floors', 'tick', 'lang'], () => {
@@ -147,9 +188,18 @@ class OfficeView {
       this.meetingTimer = 0;
       this.refreshMeetings();
     }
+    this.liftLink.deliver(this.lift.tick(dt));
+    this.garden.tick(dt, this.elapsed);
+    this.backdrop.tick(this.elapsed);
     this.animate(dt);
+    this.repath();
+    this.cabin.update(this.lift, this.ground()?.layout.lift ?? null);
     this.drawLines();
     this.applyScroll();
+  }
+
+  private ground(): FloorScene | undefined {
+    return this.sceneOrder[this.sceneOrder.length - 1];
   }
 
   private sync(): void {
@@ -167,10 +217,11 @@ class OfficeView {
 
     const order = (key: string): number => this.firstSeen.get(key) ?? 0;
     const live = new Set<string>();
+    const width = this.logicalWidth - SIDE_MARGIN * 2;
     this.sceneOrder = [];
-    let top = 0;
+    let top = SKY_H;
     for (const floor of floors) {
-      const layout = computeFloorLayout(floor, byFloor.get(floor.slug) ?? [], this.logicalWidth, order);
+      const layout = computeFloorLayout(floor, byFloor.get(floor.slug) ?? [], width, order);
       let scene = this.scenes.get(floor.slug);
       if (scene) {
         scene.update(floor, layout, top);
@@ -189,7 +240,17 @@ class OfficeView {
       scene.destroy();
       this.scenes.delete(slug);
     }
-    this.worldHeight = Math.max(0, top - FLOOR_GAP);
+    const ground = this.ground();
+    this.gardenTop = top;
+    this.worldHeight = top + GARDEN_H;
+    const dark = this.media.matches;
+    const backdropKey = [width, top, dark].join('|');
+    if (backdropKey !== this.backdropKey) {
+      this.backdropKey = backdropKey;
+      this.backdrop.draw(width, top, dark);
+    }
+    this.garden.update(width, top, ground ? liftCenter(ground.layout) : width - 9, dark);
+    this.lift.setStops(new Map(this.sceneOrder.map((scene) => [scene.slug, scene.top + scene.layout.walkY])), ground?.slug);
 
     this.syncEntries(agents);
     this.refreshMeetings();
@@ -204,17 +265,20 @@ class OfficeView {
       let entry = this.entries.get(agent.key);
       if (agent.away && (!entry || entry.view.faded)) continue;
       present.add(agent.key);
+      if (!agent.away && this.garden.lot.bayOf(agent.key) !== null) this.garden.lot.release(agent.key);
       const saturation = scene.view.kind === 'observed' ? 0.4 : 1;
       const look = `${agent.roleKind}|${saturation}`;
       if (entry && entry.look !== look) {
+        const position = entry.view.position;
+        this.liftLink.cancel(agent.key);
         entry.view.destroy();
         entry.view = this.createView(agent, saturation);
+        entry.view.placeAt(position);
         entry.look = look;
       } else if (!entry) {
         const view = this.createView(agent, saturation);
-        const ground = this.sceneOrder[this.sceneOrder.length - 1];
-        if (this.primed && ground) view.placeAt(streetExit(ground.layout, ground.top));
-        entry = { view, agent, scale: 1, look, ownDesk: null, desk: null, slot: null };
+        if (this.primed && this.ground()) view.placeAt(this.garden.gate());
+        entry = { view, agent, scale: 1, look, ownDesk: null, desk: null, slot: null, goalScene: null };
         this.entries.set(agent.key, entry);
       }
       entry.agent = agent;
@@ -242,6 +306,8 @@ class OfficeView {
     for (const [key, entry] of this.entries) {
       if (!entry.view.gone && (present.has(key) || entry.view.leaving)) continue;
       this.releaseDesk(entry);
+      this.garden.lot.release(key);
+      this.liftLink.cancel(key);
       entry.view.destroy();
       this.entries.delete(key);
     }
@@ -307,7 +373,17 @@ class OfficeView {
       if (!scene) continue;
       const resolved = this.resolveTarget(agent, entry, scene, labUse);
       if (!resolved) continue;
-      entry.view.setTarget(resolved.target, this.buildPath(entry.view.position, resolved.target, resolved.scene));
+      entry.goalScene = resolved.scene;
+      entry.view.setTarget(resolved.target, this.buildPath(entry.view.position, resolved.target, resolved.scene), this.liftLink);
+    }
+  }
+
+  private repath(): void {
+    for (const entry of this.entries.values()) {
+      if (!entry.view.needsPath) continue;
+      const target = entry.view.target;
+      const scene = entry.goalScene && this.scenes.get(entry.goalScene.slug) === entry.goalScene ? entry.goalScene : this.sceneAt(target?.y ?? 0);
+      entry.view.setPath(target && scene ? this.buildPath(entry.view.position, target, scene) : []);
     }
   }
 
@@ -319,11 +395,11 @@ class OfficeView {
   ): { target: Target; scene: FloorScene } | null {
     const state = this.store.shownState(agent);
     if (agent.away) {
-      const ground = this.sceneOrder[this.sceneOrder.length - 1];
+      const ground = this.ground();
       if (!ground) return null;
       if (entry.view.waving(state)) return null;
-      const exit = streetExit(ground.layout, ground.top);
-      return { scene: ground, target: { id: 'exit', kind: 'exit', x: exit.x, y: exit.y, z: exit.y, desk: null } };
+      const spot = this.garden.spot(this.garden.lot.reserve(agent.key));
+      return { scene: ground, target: { id: 'exit', kind: 'exit', x: spot.x, y: spot.y, z: spot.y + 1, desk: null } };
     }
     const leaving = state === 'done' || state === 'failed' || agent.endedAt !== null;
 
@@ -354,7 +430,7 @@ class OfficeView {
     return {
       scene,
       target: {
-        id: `desk:${agent.key}`,
+        id: `desk:${scene.slug}:${agent.key}`,
         kind: 'desk',
         x: slot.x + seatX * slot.scale,
         y: scene.top + slot.y + DESK_FEET_Y * slot.scale,
@@ -373,10 +449,20 @@ class OfficeView {
 
   private buildPath(from: Point, target: Target, targetScene: FloorScene): Point[] {
     const goal = { x: target.x, y: target.y };
+    const gate = (scene: FloorScene): Point => liftGate(scene.layout, scene.top, scene.slug);
+    const ground = this.ground();
+    const pathY = this.garden.pathY;
+    if (ground && from.y >= this.gardenTop) {
+      if (target.kind === 'exit') return [{ x: from.x, y: pathY }, { x: goal.x, y: pathY }, goal];
+      const door = gardenDoor(ground.layout, ground.top);
+      return [...gardenArrival(from, door, pathY, gate(ground)), ...liftRoute(gate(ground), gate(targetScene), goal).slice(1)];
+    }
     const origin = this.sceneAt(from.y);
-    const gate = (scene: FloorScene): Point => liftGate(scene.layout, scene.top);
-    if (target.kind === 'exit') return liftRoute(origin ? gate(origin) : null, gate(targetScene), goal);
-    if (origin && from.x > origin.layout.width) return liftRoute(gate(origin), gate(targetScene), goal);
+    if (target.kind === 'exit') {
+      const door = gardenDoor(targetScene.layout, targetScene.top);
+      const outside = gardenRoute(gate(targetScene), door, pathY, goal).slice(1);
+      return liftRoute(origin ? gate(origin) : null, gate(targetScene), ...outside);
+    }
     if (!origin || origin === targetScene) return [goal];
     return [gate(origin), gate(targetScene), goal];
   }
@@ -389,6 +475,7 @@ class OfficeView {
       const agent = this.store.agents.get(key) ?? entry.agent;
       const state = this.store.shownState(agent);
       if (state === 'testing') testingFloors.add(agent.floor);
+      if (agent.away && entry.view.leaving && !entry.view.moving) this.garden.lot.depart(key);
       entry.view.update({
         dt,
         now,
@@ -398,6 +485,7 @@ class OfficeView {
         asking: asking.has(key),
         ended: agent.endedAt !== null && !agent.away,
         away: agent.away,
+        hold: agent.away && this.garden.lot.boarding(key),
         lastTest: agent.lastTest,
       });
     }
@@ -439,7 +527,7 @@ class OfficeView {
 
   private applyScroll(): void {
     this.clampScroll();
-    this.world.position.set(0, -Math.round(this.scrollY) * SCALE);
+    this.world.position.set(SIDE_MARGIN * SCALE, -Math.round(this.scrollY) * SCALE);
     const g = this.scrollbar;
     g.clear();
     const max = this.maxScroll();

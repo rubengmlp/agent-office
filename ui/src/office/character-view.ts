@@ -1,4 +1,5 @@
 import { Rectangle, type Container } from 'pixi.js';
+import type { LiftService } from '../lift';
 import { buildCharacter, type CharacterParts, type Look } from '../sprites/sprites';
 import type { AgentState, TestResult } from '../types';
 import {
@@ -13,7 +14,7 @@ import {
 } from './constants';
 import { Overlay, type BadgeKind, type IconKind } from './effects';
 import type { DeskParts } from './furniture';
-import type { Point } from './layout';
+import { liftLeg, type LiftLeg, type Point } from './layout';
 
 export type TargetKind = 'desk' | 'lab' | 'meeting' | 'exit';
 
@@ -35,8 +36,11 @@ export type FrameInput = {
   asking: boolean;
   ended: boolean;
   away: boolean;
+  hold: boolean;
   lastTest: TestResult | null;
 };
+
+type Ride = { leg: LiftLeg; phase: 'approach' | 'waiting' | 'boarding' | 'riding' };
 
 const FADING: ReadonlySet<AgentState> = new Set<AgentState>(['done', 'failed']);
 
@@ -45,7 +49,7 @@ export class CharacterView {
 
   private readonly parts: CharacterParts;
   private readonly overlay = new Overlay();
-  private target: Target | null = null;
+  private goal: Target | null = null;
   private path: Point[] = [];
   private x = 0;
   private y = 0;
@@ -62,6 +66,11 @@ export class CharacterView {
   private exitAt: number | null = null;
   private left = false;
   private shown = 1;
+  private lift: LiftService<Point> | null = null;
+  private ride: Ride | null = null;
+  private replanAfterRide = false;
+  private pathWanted = false;
+  private walking = false;
 
   constructor(
     readonly key: string,
@@ -82,12 +91,20 @@ export class CharacterView {
     return { x: this.x, y: this.y };
   }
 
+  get target(): Target | null {
+    return this.goal;
+  }
+
   get moving(): boolean {
-    return this.path.length > 0;
+    return this.path.length > 0 || this.ride !== null || this.pathWanted;
+  }
+
+  get needsPath(): boolean {
+    return this.pathWanted;
   }
 
   get leaving(): boolean {
-    return this.target?.kind === 'exit';
+    return this.goal?.kind === 'exit';
   }
 
   get gone(): boolean {
@@ -104,19 +121,37 @@ export class CharacterView {
   }
 
   placeAt(point: Point): void {
+    this.cancelRide();
     this.x = point.x;
     this.y = point.y;
     this.path = [];
+    this.pathWanted = false;
     this.placed = true;
+  }
+
+  snapToTarget(): void {
+    this.cancelRide();
+    if (this.goal) this.placeAt({ x: this.goal.x, y: this.goal.y });
+  }
+
+  setPath(path: Point[]): void {
+    this.path = path;
+    this.pathWanted = false;
   }
 
   get talkingActive(): boolean {
     return this.lastState === 'talking' && this.seconds - this.stateStart < TALK_VISIBLE_S;
   }
 
-  setTarget(target: Target, path: Point[]): void {
-    const previous = this.target;
-    this.target = target;
+  setTarget(target: Target, path: Point[], lift: LiftService<Point> | null): void {
+    this.lift = lift;
+    const previous = this.goal;
+    this.goal = target;
+    if (this.ride && (this.ride.phase === 'boarding' || this.ride.phase === 'riding')) {
+      if (!previous || previous.id !== target.id || previous.x !== target.x || previous.y !== target.y) this.replanAfterRide = true;
+      return;
+    }
+    if (this.ride && previous && previous.id !== target.id) this.cancelRide();
     if (!previous && this.placed) {
       this.path = path;
       return;
@@ -148,8 +183,8 @@ export class CharacterView {
     this.trackTest(input);
     this.resetPose();
 
-    if (this.moving) this.poseWalking();
-    else this.poseFor(input.state, t);
+    if (this.walking) this.poseWalking();
+    else if (!this.moving) this.poseFor(input.state, t);
 
     this.overlay.setIcon(this.iconFor(input.state), t);
     this.overlay.setProgress(input.state === 'testing', t);
@@ -162,28 +197,86 @@ export class CharacterView {
   }
 
   destroy(): void {
+    this.cancelRide();
     this.root.destroy({ children: true });
+  }
+
+  private cancelRide(): void {
+    if (this.ride) this.lift?.cancel(this.key);
+    this.ride = null;
+    this.replanAfterRide = false;
+  }
+
+  private walkTo(point: Point, budget: number): number {
+    const dx = point.x - this.x;
+    const dy = point.y - this.y;
+    const distance = Math.hypot(dx, dy);
+    if (distance > 0) this.walking = true;
+    if (distance <= budget) {
+      this.x = point.x;
+      this.y = point.y;
+      return budget - distance;
+    }
+    this.x += (dx / distance) * budget;
+    this.y += (dy / distance) * budget;
+    return -1;
   }
 
   private advance(dt: number): void {
     let budget = WALK_SPEED * dt;
-    if (this.path.length > 0) this.walkClock += dt;
-    while (budget > 0 && this.path.length > 0) {
-      const next = this.path[0];
-      const dx = next.x - this.x;
-      const dy = next.y - this.y;
-      const distance = Math.hypot(dx, dy);
-      if (distance <= budget) {
-        this.x = next.x;
-        this.y = next.y;
-        budget -= distance;
-        this.path.shift();
-      } else {
-        this.x += (dx / distance) * budget;
-        this.y += (dy / distance) * budget;
-        budget = 0;
+    this.walking = false;
+    const lift = this.lift;
+    for (let guard = 0; guard < 16; guard += 1) {
+      if (!this.ride && lift && this.path.length > 1) {
+        const leg = liftLeg(this.path, (from, to) => lift.serves(from, to));
+        if (leg) this.ride = { leg, phase: 'approach' };
       }
+      const ride = this.ride;
+      if (ride && lift) {
+        const { leg } = ride;
+        if (ride.phase === 'approach' || ride.phase === 'boarding') {
+          const point = ride.phase === 'approach' ? lift.landing(leg.from, leg.fromFace) : lift.cabin(leg.from);
+          budget = this.walkTo(point, Math.max(0, budget));
+          if (budget < 0) break;
+          if (ride.phase === 'approach') {
+            lift.request({ key: this.key, from: leg.from, to: leg.to, fromFace: leg.fromFace, toFace: leg.toFace });
+            ride.phase = 'waiting';
+          } else {
+            lift.aboard(this.key);
+            ride.phase = 'riding';
+          }
+          continue;
+        }
+        if (ride.phase === 'riding') this.y = lift.position();
+        const event = lift.take(this.key);
+        if (!event) break;
+        if (event.type === 'cancelled') {
+          this.snapToTarget();
+          break;
+        }
+        if (event.type === 'boarded' && ride.phase === 'waiting') {
+          ride.phase = 'boarding';
+        } else if (event.type === 'arrived' && ride.phase === 'riding') {
+          const exit = lift.cabin(leg.to);
+          this.x = exit.x;
+          this.y = exit.y;
+          this.path.splice(0, 2);
+          this.ride = null;
+          if (this.replanAfterRide) {
+            this.replanAfterRide = false;
+            this.path = [];
+            this.pathWanted = true;
+            break;
+          }
+        }
+        continue;
+      }
+      if (budget <= 0 || this.path.length === 0) break;
+      budget = this.walkTo(this.path[0], budget);
+      if (budget < 0) break;
+      this.path.shift();
     }
+    if (this.walking) this.walkClock += dt;
   }
 
   private trackState(state: AgentState): void {
@@ -348,9 +441,9 @@ export class CharacterView {
   }
 
   private applyDeskGlow(state: AgentState, t: number): void {
-    const desk = this.target?.desk ?? null;
+    const desk = this.goal?.desk ?? null;
     if (!desk) return;
-    const lit = !this.moving && this.target?.kind === 'desk' && state === 'working';
+    const lit = !this.moving && this.goal?.kind === 'desk' && state === 'working';
     desk.glow.visible = lit;
     if (lit) desk.glow.alpha = 0.6 + 0.4 * Math.sin(t * 5);
   }
@@ -368,7 +461,9 @@ export class CharacterView {
 
   private applyTransform(input: FrameInput): void {
     let alpha = 1;
-    if (this.leaving) {
+    if (this.leaving && input.hold) {
+      this.exitAt = null;
+    } else if (this.leaving) {
       alpha = this.exitAlpha();
     } else {
       this.exitAt = null;
@@ -390,7 +485,7 @@ export class CharacterView {
 
     this.root.position.set(Math.round(this.x), Math.round(this.y));
     this.root.scale.set(input.scale);
-    const settled = !this.moving && this.target !== null;
-    this.root.zIndex = settled && this.target ? this.target.z : this.y;
+    const settled = !this.moving && this.goal !== null;
+    this.root.zIndex = settled && this.goal ? this.goal.z : this.y;
   }
 }
