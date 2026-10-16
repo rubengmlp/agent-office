@@ -169,6 +169,25 @@ describe('office-hook.sh', () => {
     expect(seen.slice(before).map((s) => s.path)).toEqual(['/hook']);
   });
 
+  test('the old emit, gate and guard scripts forward to their endpoints for sessions started before the single hook', async () => {
+    const legacy = (script: string, args: string[], stdin: string) =>
+      Bun.spawn(['sh', join(PLUGIN_DIR, 'hooks', script), ...args], {
+        stdin: new TextEncoder().encode(stdin),
+        env: { ...process.env, CLAUDE_CODE_MESSAGING_SOCKET: '', CLAUDE_CODE_MESSAGING_TOKEN: '', AGENT_OFFICE_ROLE: '', AGENT_OFFICE_NAME: '', AGENT_OFFICE_HOME: home },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      }).exited;
+    const event = '{"hook_event_name":"Stop"}';
+    expect(await legacy('emit.sh', ['events'], event)).toBe(0);
+    expect(seen.at(-1)).toMatchObject({ path: '/events', body: event });
+    expect(await legacy('gate.sh', ['gate-message'], event)).toBe(0);
+    expect(seen.at(-1)).toMatchObject({ path: '/gate-message', body: event });
+    expect(await legacy('gate.sh', ['gate'], event)).toBe(0);
+    expect(seen.at(-1)).toMatchObject({ path: '/gate', body: event });
+    expect(await legacy('guard.sh', [], event)).toBe(0);
+    expect(seen.at(-1)).toMatchObject({ path: '/guard', body: event });
+  });
+
   test('ask, permission and gate-message keep their own endpoints and send the event untouched', async () => {
     const ask = '{"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion"}';
     const asked = await runHook(['ask'], home, ask);
@@ -273,7 +292,7 @@ describe('plugin command lines', () => {
     expect(found.stdout.toString()).toBe('');
   });
 
-  test('hooks.json runs office-hook.sh for all 17 commands and the old hooks are gone', () => {
+  test('hooks.json runs office-hook.sh for all 17 commands and the old hooks only forward to it', () => {
     const raw = readFileSync(join(PLUGIN_DIR, 'hooks', 'hooks.json'), 'utf8');
     const commands = [...raw.matchAll(/"command": "(.*)"/g)].map((m) => m[1] ?? '');
     expect(commands).toHaveLength(17);
@@ -281,7 +300,13 @@ describe('plugin command lines', () => {
     expect(commands.filter((c) => c.endsWith(' ask'))).toHaveLength(1);
     expect(commands.filter((c) => c.endsWith(' permission'))).toHaveLength(1);
     expect(commands.filter((c) => c.endsWith(' gate-message'))).toHaveLength(1);
-    expect(readdirSync(join(PLUGIN_DIR, 'hooks')).sort()).toEqual(['hooks.json', 'office-hook.sh']);
+    expect(readdirSync(join(PLUGIN_DIR, 'hooks')).sort()).toEqual(['emit.sh', 'gate.sh', 'guard.sh', 'hooks.json', 'office-hook.sh']);
+    for (const legacy of ['emit.sh', 'gate.sh', 'guard.sh']) {
+      const body = readFileSync(join(PLUGIN_DIR, 'hooks', legacy), 'utf8');
+      expect(body).toContain('office-hook.sh');
+      expect(body).not.toContain('X-Office-Key');
+      expect(body.split('\n').filter((line) => line.trim() !== '')).toHaveLength(2);
+    }
     expect(statSync(join(PLUGIN_DIR, 'hooks', 'office-hook.sh')).mode & 0o111).not.toBe(0);
   });
 });
