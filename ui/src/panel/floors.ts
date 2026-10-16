@@ -67,6 +67,8 @@ export function mountFloors(host: HTMLElement, store: Store): void {
   let touched = false;
   let selectedFloor: string | null = null;
   let scheduled = false;
+  let pressed = false;
+  let deferred = false;
   let times: TimeNode[] = [];
 
   const render = (): void => {
@@ -97,6 +99,10 @@ export function mountFloors(host: HTMLElement, store: Store): void {
   };
 
   const schedule = (): void => {
+    if (pressed) {
+      deferred = true;
+      return;
+    }
     if (scheduled) return;
     scheduled = true;
     requestAnimationFrame(() => {
@@ -104,6 +110,22 @@ export function mountFloors(host: HTMLElement, store: Store): void {
       render();
     });
   };
+
+  const release = (): void => {
+    if (!pressed) return;
+    pressed = false;
+    if (deferred) {
+      deferred = false;
+      schedule();
+    }
+  };
+
+  host.addEventListener('pointerdown', () => {
+    pressed = true;
+  });
+  window.addEventListener('pointerup', release);
+  window.addEventListener('pointercancel', release);
+  window.addEventListener('blur', release);
 
   host.addEventListener('click', (event) => {
     const target = event.target;
