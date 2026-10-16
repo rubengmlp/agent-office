@@ -4,6 +4,8 @@ import { roleIdOf } from './scope';
 import type { ChatClaimView, ChatKind, ChatMessageView, ChatOrigin, HubText, HubTextKey } from './types';
 
 export const GLOBAL_CHANNEL = 'global';
+// The name the user writes under; no agent may take it, so a line of an agent never reads as the user's.
+export const USER_NAME = 'usuario';
 export const MAX_CHAT_TEXT = 2000;
 export const MAX_FILES = 40;
 export const SNAPSHOT_LIMIT = 200;
@@ -56,6 +58,9 @@ export function clampWait(seconds: unknown): number {
   if (typeof n !== 'number' || !Number.isFinite(n) || n <= 0) return 0;
   return Math.min(WAIT_MAX_MS, Math.floor(n * 1000));
 }
+
+// A path with a line break could fake a line of the chat in the agents' context: check refuses it.
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 
 export function normalizeChatPath(file: string): string {
   const clean = posix.normalize(file.trim().replace(/\\/g, '/'));
@@ -113,6 +118,7 @@ const ERROR_TEXTS: Partial<Record<HubTextKey, string>> = {
   'hub.api.chatFloorUnknown': 'esta carpeta no es de ninguna planta gestionada; ejecuta el script desde el repositorio de tu planta.',
   'hub.api.chatChannelUnknown': 'ese canal no existe; usa el slug de tu planta o global.',
   'hub.api.chatChannelForbidden': 'solo puedes escribir en el canal de tu planta o en #global.',
+  'hub.api.chatSessionUnknown': 'la sesión que ejecuta el script no está abierta en esta planta; --de solo vale para compañeros de tu propio equipo.',
 };
 
 // Text for the agent that called the script, in the language of the templates; the panel gets the HubText.
@@ -140,6 +146,7 @@ export class ChatDesk {
     const claims = input.kind === 'toca' || input.kind === 'listo';
     if (!input.channel || (claims ? input.files.length === 0 : !input.text.trim())) return { status: 400, error: { key: 'hub.api.chatFields' } };
     if (input.text.length > MAX_CHAT_TEXT || input.files.length > MAX_FILES) return { status: 400, error: { key: 'hub.api.chatTooLong' } };
+    if (input.files.some((file) => CONTROL_CHARS.test(file))) return { status: 400, error: { key: 'hub.api.chatFields' } };
     if (!this.isChannel(input.channel)) return { status: 404, error: { key: 'hub.api.chatChannelUnknown' } };
     return null;
   }
@@ -257,19 +264,31 @@ export class ChatDesk {
     const after = this.seen.get(agentKey)?.id ?? 0;
     if (channels.length === 0) return { messages: [], hidden: 0, last: after };
     const marks = channels.map(() => '?').join(', ');
+    const where = `channel IN (${marks}) AND id > ? AND author_key != ?`;
     const rows = this.deps.db
-      .query<ChatRow, (string | number)[]>(`SELECT * FROM chat_messages WHERE channel IN (${marks}) AND id > ? AND author_key != ? ORDER BY id DESC`)
-      .all(...channels, after, agentKey);
+      .query<ChatRow, (string | number)[]>(`SELECT * FROM chat_messages WHERE ${where} ORDER BY id DESC LIMIT ?`)
+      .all(...channels, after, agentKey, limit);
+    const total = this.deps.db.query<{ n: number }, (string | number)[]>(`SELECT COUNT(*) AS n FROM chat_messages WHERE ${where}`).get(...channels, after, agentKey)?.n ?? 0;
     const last = this.deps.db
       .query<{ id: number | null }, string[]>(`SELECT MAX(id) AS id FROM chat_messages WHERE channel IN (${marks})`)
       .get(...channels)?.id ?? 0;
-    return { messages: rows.slice(0, limit).map(toView).reverse(), hidden: Math.max(0, rows.length - limit), last: Math.max(after, last) };
+    return { messages: rows.map(toView).reverse(), hidden: Math.max(0, total - rows.length), last: Math.max(after, last) };
   }
 
   markSeen(agentKey: string, id: number, channels: string[] = []): void {
     const current = this.seen.get(agentKey);
     if (current && current.id >= id && (current.channels.length > 0 || channels.length === 0)) return;
     this.seen.set(agentKey, { id: Math.max(id, current?.id ?? 0), channels: current?.channels.length ? current.channels : channels });
+  }
+
+  seenMark(agentKey: string): { id: number; channels: string[] } | undefined {
+    const entry = this.seen.get(agentKey);
+    return entry ? { id: entry.id, channels: [...entry.channels] } : undefined;
+  }
+
+  restoreSeen(agentKey: string, mark: { id: number; channels: string[] } | undefined): void {
+    if (mark) this.seen.set(agentKey, mark);
+    else this.seen.delete(agentKey);
   }
 
   forgetFloor(slug: string): void {

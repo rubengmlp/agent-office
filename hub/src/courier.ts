@@ -15,7 +15,7 @@ export const CHAT_PREFIX = '[Chat de Agent Office]';
 export function chatInboxText(channel: string, pending: string, text: string): string {
   const lines = [`${CHAT_PREFIX} #${channel}`];
   if (pending) lines.push(pending);
-  lines.push(`usuario: ${text.trim()}`);
+  lines.push(`usuario: ${text.replace(/\s+/g, ' ').trim()}`);
   return lines.join('\n');
 }
 

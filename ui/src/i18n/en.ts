@@ -709,6 +709,7 @@ export const en: Messages = {
   'hub.api.chatFloorUnknown': 'The folder belongs to no managed floor',
   'hub.api.chatChannelUnknown': 'That channel does not exist',
   'hub.api.chatChannelForbidden': 'Only the own floor channel or #global can be written to',
+  'hub.api.chatSessionUnknown': 'The session running the script is not open on that floor',
   'hub.doc.tooLarge': 'This document is too large to show here.',
   'hub.floors.pathRequired': 'Enter the repository path.',
   'hub.floors.notFound': 'There is no floor "{slug}".',

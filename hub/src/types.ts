@@ -188,6 +188,7 @@ export type HubTextParams = {
   'hub.api.chatFloorUnknown': undefined;
   'hub.api.chatChannelUnknown': undefined;
   'hub.api.chatChannelForbidden': undefined;
+  'hub.api.chatSessionUnknown': undefined;
 
   'hub.doc.tooLarge': undefined;
 

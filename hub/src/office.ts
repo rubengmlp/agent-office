@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
 import { CHAT_SCRIPT, managedFloors } from './agents';
-import { ChatDesk, GLOBAL_CHANNEL, READ_LIMIT, SNAPSHOT_LIMIT, isChatKind, normalizeChatPath, type ChatAuthor, type ChatError, type ChatUnread } from './chat';
+import { ChatDesk, GLOBAL_CHANNEL, READ_LIMIT, SNAPSHOT_LIMIT, USER_NAME, isChatKind, normalizeChatPath, type ChatAuthor, type ChatError, type ChatUnread } from './chat';
 import { CHAT_PREFIX, chatInboxText, deliver, encodeInbox, ORDER_LEAD, ORDER_PREFIX, orderText } from './courier';
 import { commitDocument } from './docs-repo';
 import { DocumentDesk } from './documents';
@@ -388,8 +388,8 @@ export class Office {
     this.dumpRaw(e, now);
     const session = this.touchSession(e, meta, now);
     const kind = session.floorKind;
-    const c = classify(e, isDepartmentFloor(kind) ? NO_TESTS : profileFor(this.profiles, session.stack));
-    neutralizeChatCommand(c, e);
+    const matchers = isDepartmentFloor(kind) ? NO_TESTS : profileFor(this.profiles, session.stack);
+    const c = withoutChatCalls(classify(e, matchers), e, matchers);
     const byName = c.event === 'TeammateIdle' && !e.agent_id && c.agentKey !== e.session_id && !this.agents.has(c.agentKey);
     const owner = byName ? this.liveTeammate(c.teammate, c.team ?? session.team ?? teamOfSession(e.session_id), e.session_id) : null;
     if (owner) c.agentKey = owner.key;
@@ -421,7 +421,10 @@ export class Office {
     ) {
       nextState = 'working';
     }
-    if (ended) agent.endedAt = now;
+    if (ended) {
+      agent.endedAt = now;
+      this.forgetChatNotes(new Set([agent.key]));
+    }
     else if (agent.endedAt !== null) agent.endedAt = null;
     if (nextState && nextState !== agent.state) {
       agent.state = nextState;
@@ -669,11 +672,12 @@ export class Office {
     if (!isChatKind(kind)) return { ok: false, status: 400, error: { key: 'hub.api.chatKind' } };
     const found = this.chatAuthor(raw, meta);
     if ('error' in found) return { ok: false, ...found };
-    const { author, root } = found;
+    const { author, root, cwd } = found;
     const channel = raw.channel?.trim() || author.floor;
+    // Paths are relative to the root of the floor, as fileLabel shows them, wherever the script ran from.
     const files = (raw.files ?? []).map((file) => {
-      const abs = file.startsWith('/') ? realPath(file) : null;
-      return abs && abs !== root && isInside(abs, root) ? relative(root, abs) : normalizeChatPath(file);
+      const abs = realPath(resolve(cwd, file));
+      return abs !== root && isInside(abs, root) ? relative(root, abs) : normalizeChatPath(file);
     });
     const input = { channel, kind, text: raw.text ?? '', files };
     const error = this.chat.check(input);
@@ -690,7 +694,7 @@ export class Office {
     const input = { channel, kind: 'texto' as const, text: body, files: [] };
     const error = this.chat.check(input);
     if (error) return { ok: false, ...error };
-    const author: ChatAuthor = { key: 'panel', name: 'usuario', role: null, floor: channel === GLOBAL_CHANNEL ? DIRECCION : channel, origin: 'user' };
+    const author: ChatAuthor = { key: 'panel', name: USER_NAME, role: null, floor: channel === GLOBAL_CHANNEL ? DIRECCION : channel, origin: 'user' };
     const { message } = this.chat.post({ ...input, author });
     this.chatActivity(message);
     let delivered = 0;
@@ -699,12 +703,16 @@ export class Office {
       const channels = [session.floor, GLOBAL_CHANNEL];
       const pending = this.chat.unread(session.sessionId, channels);
       const lines = this.chatLines({ messages: pending.messages.filter((m) => m.id !== message.id), hidden: pending.hidden }, session.floor) ?? '';
+      // Seen before the delivery: the turn it starts may reach the hub before deliver returns, and must not get
+      // these lines again. If it fails, the lead has not seen them.
+      const before = this.chat.seenMark(session.sessionId);
+      this.chat.markSeen(session.sessionId, pending.last, channels);
       try {
         await this.deliverFn(session.socket, encodeInbox(session.token, chatInboxText(channel, lines, message.text)));
       } catch {
+        this.chat.restoreSeen(session.sessionId, before);
         continue;
       }
-      this.chat.markSeen(session.sessionId, pending.last, channels);
       delivered += 1;
     }
     return { ok: true, message, delivered };
@@ -877,6 +885,7 @@ export class Office {
     for (const q of this.desk.list()) if (sessionIds.has(q.sessionId)) this.desk.release(q.id);
     for (const [id, hold] of this.permissionHolds) if (keys.has(hold.agentKey)) this.permissionHolds.delete(id);
     for (const key of keys) this.agents.delete(key);
+    this.forgetChatNotes(keys);
     for (const id of sessionIds) this.sessions.delete(id);
     const keptMessages = this.messages.filter((message) => message.floor !== slug);
     this.messages.splice(0, this.messages.length, ...keptMessages);
@@ -1274,27 +1283,42 @@ export class Office {
 
   // The script is not a hook and brings no agent_id: the floor comes from its folder and the author from --de,
   // or from the name of the session that runs it, and either must be alive on that floor.
-  private chatAuthor(raw: ChatPostRequest, meta: HookMeta): { author: ChatAuthor; root: string } | ChatError {
+  // With --de, the session that runs the script must also be alive on that floor: teammates share its
+  // environment, so a session of another floor cannot sign for a teammate of this one.
+  private chatAuthor(raw: ChatPostRequest, meta: HookMeta): { author: ChatAuthor; root: string; cwd: string } | ChatError {
     const cwd = raw.cwd?.trim();
     const root = cwd ? this.floors.rootOf(realPath(cwd)) : null;
     const slug = root ? managedFloors(this.config).find(([, floor]) => realPath(floor.path) === root)?.[0] : undefined;
-    if (!root || !slug) return { status: 404, error: { key: 'hub.api.chatFloorUnknown' } };
+    if (!cwd || !root || !slug) return { status: 404, error: { key: 'hub.api.chatFloorUnknown' } };
     const from = raw.from?.trim() || null;
+    const caller = meta.name ? this.liveSessionNamed(meta.name, slug) : null;
+    if (from && !caller) return { status: 403, error: { key: 'hub.api.chatSessionUnknown' } };
     const name = from ?? meta.name;
-    if (name) {
+    if (name && name !== USER_NAME) {
       const agent = [...this.agents.values()]
         .filter((a) => a.name === name && a.floor === slug && a.endedAt === null && !this.isRetired(a))
         .sort((a, b) => b.updatedAt - a.updatedAt)[0];
-      if (agent) return { author: { key: agent.key, name, role: agent.role, floor: slug, origin: 'agent' }, root };
-      const session = [...this.sessions.values()]
-        .filter((s) => s.name === name && s.floor === slug && s.endedAt === null)
-        .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+      if (agent) return { author: { key: agent.key, name, role: agent.role, floor: slug, origin: 'agent' }, root, cwd };
+      const session = this.liveSessionNamed(name, slug);
       if (session) {
         const role = session.role ?? this.agents.get(session.sessionId)?.role ?? null;
-        return { author: { key: session.sessionId, name, role, floor: slug, origin: 'agent' }, root };
+        return { author: { key: session.sessionId, name, role, floor: slug, origin: 'agent' }, root, cwd };
       }
     }
     return { status: 404, error: { key: 'hub.api.chatAuthorUnknown' } };
+  }
+
+  private liveSessionNamed(name: string, slug: string): SessionRuntime | null {
+    return (
+      [...this.sessions.values()].filter((s) => s.name === name && s.floor === slug && s.endedAt === null).sort((a, b) => b.updatedAt - a.updatedAt)[0] ??
+      null
+    );
+  }
+
+  private forgetChatNotes(keys: ReadonlySet<string>): void {
+    for (const notes of [this.chatNudged, this.chatWarned]) {
+      for (const note of notes) if (keys.has(note.slice(0, note.indexOf('|')))) notes.delete(note);
+    }
   }
 
   // Live leads of managed floors that read the channel: the floor's own, or all of them for #global.
@@ -1767,6 +1791,7 @@ export class Office {
     for (const agent of this.agents.values()) {
       if (agent.sessionId !== session.sessionId || agent.endedAt !== null) continue;
       agent.endedAt = now;
+      this.forgetChatNotes(new Set([agent.key]));
       if (agent.state !== 'done') {
         agent.state = 'done';
         agent.stateSince = now;
@@ -1964,28 +1989,81 @@ function assigns(from: AgentRuntime, to: AgentRuntime): boolean {
   return from.parentKey !== to.key && roleKind(to.role) !== 'director';
 }
 
-// A call to the chat script is talking, not testing: whatever its text says, it must not count as a test run.
-export function isChatCommand(command: string): boolean {
-  if (command.includes('$(') || command.includes('`')) return false;
-  const segments = tokenize(command);
-  if (segments.length !== 1) return false;
-  const words = [...(segments[0] ?? [])];
+const SEPARATORS: ReadonlySet<string> = new Set(['\n', ';', '|', '&', '(', ')']);
+
+// The raw text of each command of a shell line, split where tokenize splits (; | & newlines and parentheses)
+// outside quotes; the &> and >& redirections do not split.
+function shellSegments(command: string): string[] {
+  const segments: string[] = [];
+  let current = '';
+  let quote: '"' | "'" | null = null;
+  const end = () => {
+    if (current.trim()) segments.push(current.trim());
+    current = '';
+  };
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i] ?? '';
+    if (ch === '\\' && quote !== "'" && i + 1 < command.length) {
+      current += ch + (command[++i] ?? '');
+      continue;
+    }
+    if (quote) {
+      if (ch === quote) quote = null;
+      current += ch;
+      continue;
+    }
+    if (ch === "'" || ch === '"') quote = ch;
+    const redirect = ch === '&' && (command[i + 1] === '>' || current.endsWith('>') || current.endsWith('<'));
+    if (!redirect && SEPARATORS.has(ch)) end();
+    else current += ch;
+  }
+  end();
+  return segments;
+}
+
+const SHELLS: ReadonlySet<string> = new Set(['sh', 'bash', 'zsh', 'dash']);
+
+function isChatCall(segment: string): boolean {
+  const words = [...(tokenize(segment)[0] ?? [])];
   while (words.length > 0 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0] ?? '')) words.shift();
+  if (SHELLS.has(basename(words[0] ?? ''))) {
+    words.shift();
+    while ((words[0] ?? '').startsWith('-')) words.shift();
+  }
   const first = words[0];
   return !!first && (first === CHAT_SCRIPT || basename(first) === 'office-chat.sh');
 }
 
+// A shell line without its calls to the chat script, or null when it has none. Nothing is taken out of a line
+// with $( or backticks: whatever they run, even inside a chat message, really runs.
+export function chatFreeCommand(command: string): string | null {
+  if (command.includes('$(') || command.includes('`')) return null;
+  const segments = shellSegments(command);
+  const rest = segments.filter((segment) => !isChatCall(segment));
+  return rest.length === segments.length ? null : rest.join('; ');
+}
+
+export function isChatCommand(command: string): boolean {
+  return chatFreeCommand(command) === '';
+}
+
 const CHAT_COMMAND_EVENTS: ReadonlySet<string> = new Set(['PreToolUse', 'PostToolUse', 'PostToolUseFailure']);
 
-function neutralizeChatCommand(c: Classified, e: HookEvent): void {
-  if (c.tool !== 'Bash' || !CHAT_COMMAND_EVENTS.has(c.event)) return;
-  const command = text(record(e.tool_input).command);
-  if (!command || !isChatCommand(command)) return;
+// A call to the chat script is talking, not testing: whatever its text says, it must not count as a test run.
+// The rest of the line is classified on its own, so a real test next to it still counts.
+function withoutChatCalls(c: Classified, e: HookEvent, matchers: Matchers): Classified {
+  if (c.tool !== 'Bash' || !CHAT_COMMAND_EVENTS.has(c.event)) return c;
+  const input = record(e.tool_input);
+  const command = text(input.command);
+  const rest = command === null ? null : chatFreeCommand(command);
+  if (rest === null) return c;
+  if (rest !== '') return classify({ ...e, tool_input: { ...input, command: rest } }, matchers);
   c.test = null;
   c.command = null;
   c.state = 'working';
   c.summary = { key: 'hub.act.chatCommand' };
   c.detail = { key: 'hub.act.chatCommand' };
+  return c;
 }
 
 export function taskLine(body: string | null): string | null {

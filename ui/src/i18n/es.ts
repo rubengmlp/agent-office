@@ -708,6 +708,7 @@ export const es = {
   'hub.api.chatFloorUnknown': 'La carpeta no pertenece a ninguna planta gestionada',
   'hub.api.chatChannelUnknown': 'Ese canal no existe',
   'hub.api.chatChannelForbidden': 'Solo se puede escribir en el canal de la propia planta o en #global',
+  'hub.api.chatSessionUnknown': 'La sesión que ejecuta el script no está abierta en esa planta',
   'hub.doc.tooLarge': 'El documento es demasiado grande para mostrarlo en el panel.',
   'hub.floors.pathRequired': 'Indica la ruta del repositorio.',
   'hub.floors.notFound': 'No hay ninguna planta "{slug}".',
