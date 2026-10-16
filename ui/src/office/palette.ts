@@ -1,4 +1,4 @@
-import type { FloorView, Stack } from '../types';
+import type { FloorKind, FloorView, Stack } from '../types';
 
 export function hashString(value: string): number {
   let hash = 2166136261;
@@ -75,6 +75,11 @@ const STACK_HUE: Record<Stack, number> = {
   generic: 268,
 };
 
+const DEPARTMENT_HUE: Partial<Record<FloorKind, number>> = {
+  redaccion: 32,
+  mantenimiento: 172,
+};
+
 const DIRECCION: FloorPalette = {
   wall: 0xcfe6f3,
   wallDark: 0xaed0e3,
@@ -110,7 +115,7 @@ const OBSERVED: FloorPalette = {
 export function floorPalette(floor: FloorView): FloorPalette {
   if (floor.kind === 'direccion') return DIRECCION;
   if (floor.kind === 'observed') return OBSERVED;
-  const hue = STACK_HUE[floor.stack];
+  const hue = DEPARTMENT_HUE[floor.kind] ?? STACK_HUE[floor.stack];
   return {
     wall: hsl(hue, 0.38, 0.46),
     wallDark: hsl(hue, 0.38, 0.36),

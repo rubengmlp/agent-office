@@ -5,6 +5,8 @@ import { el } from './dom';
 import { Heartbeat } from './heartbeat';
 import { LiveConnection } from './live';
 import { mountOffice, type OfficeHandle } from './office/office';
+import { mountScene } from './scene/scene';
+import { mountSettings } from './settings/settings';
 import { mountPanel } from './panel/panel';
 import { loadRecording, mountReplayControls, ReplayPlayer } from './replay';
 import { Store } from './store';
@@ -32,6 +34,8 @@ function boot(): void {
 
   const officeHost = el('div', 'view office-view active');
   const tableHost = el('div', 'view table-view');
+  const settingsHost = el('div', 'view settings-view');
+  const view = new URLSearchParams(location.search).get('view') === '3d' ? '3d' : '2d';
   const notice = el('div', 'notice');
   notice.hidden = true;
   const panelHost = el('aside', 'panel');
@@ -47,19 +51,22 @@ function boot(): void {
     topbar.setTab(next);
     officeHost.classList.toggle('active', next === 'office');
     tableHost.classList.toggle('active', next === 'table');
+    settingsHost.classList.toggle('active', next === 'settings');
     office?.setActive(next === 'office');
   };
 
   const topbar = mountTopbar(store, showTab);
-  root.replaceChildren(topbar.root, el('main', 'main', officeHost, tableHost, notice), panelHost, toastHost);
+  root.replaceChildren(topbar.root, el('main', 'main', officeHost, tableHost, settingsHost, notice), panelHost, toastHost);
 
-  const actions: Actions = replayUrl ? replayActions(store) : liveActions(store, new OfficeApi(key));
+  const api = replayUrl || !key ? null : new OfficeApi(key);
+  const actions: Actions = api ? liveActions(store, api) : replayActions(store);
 
   mountTable(tableHost, store);
-  mountPanel(panelHost, store, actions);
+  mountPanel(panelHost, store, actions, api);
+  mountSettings(settingsHost, store, api);
   mountToasts(toastHost, store);
 
-  mountOffice(officeHost, store)
+  (view === '3d' ? mountScene(officeHost, store) : mountOffice(officeHost, store))
     .then((handle) => {
       office = handle;
       handle.setActive(tab === 'office');

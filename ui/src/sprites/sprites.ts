@@ -42,6 +42,67 @@ type Tone = (color: number) => number;
 const SKIN = [0xf1c9a5, 0xe0ac86, 0xc68642, 0x8d5524, 0xffdbb4] as const;
 const HAIR = [0x2b2118, 0x5a3825, 0xa0522d, 0xd9b45a, 0x1c1c24, 0x7a7a82] as const;
 const SHOES = 0x15161b;
+const GLASSES: ReadonlySet<RoleKind> = new Set<RoleKind>(['reviewer', 'planReviewer', 'skillReviewer']);
+
+type CoatColors = {
+  coat: number;
+  placket: number;
+  lapel: number;
+  pocket: number;
+  accent: number;
+  pen: number;
+  pants: number;
+};
+
+function vestOutfit(tone: Tone, shirt: number, vestColor: number): Outfit {
+  const vest = tone(vestColor);
+  return {
+    body: tone(shirt),
+    sleeve: tone(shirt),
+    pants: tone(0x2f3b4c),
+    shortSleeves: false,
+    paint: (g) => {
+      px(g, 3, 9, 3, 9, vest);
+      px(g, 10, 9, 3, 9, vest);
+      px(g, 6, 9, 4, 1, 0xffffff);
+      px(g, 8, 12, 1, 1, 0x1b1e24);
+      px(g, 8, 15, 1, 1, 0x1b1e24);
+      px(g, 3, 16, 10, 1, shade(vest, -0.25));
+    },
+  };
+}
+
+function coatOutfit(tone: Tone, colors: CoatColors): Outfit {
+  const coat = tone(colors.coat);
+  return {
+    body: coat,
+    sleeve: coat,
+    pants: tone(colors.pants),
+    shortSleeves: false,
+    paint: (g) => {
+      px(g, 7, 10, 2, 8, colors.placket);
+      px(g, 4, 9, 3, 2, colors.lapel);
+      px(g, 9, 9, 3, 2, colors.lapel);
+      px(g, 7, 9, 2, 1, tone(colors.accent));
+      px(g, 4, 14, 3, 3, colors.pocket);
+      px(g, 5, 13, 1, 2, tone(colors.pen));
+    },
+  };
+}
+
+function sweaterOutfit(tone: Tone, color: number): Outfit {
+  const sweater = tone(color);
+  return {
+    body: sweater,
+    sleeve: sweater,
+    pants: tone(0x2e3340),
+    shortSleeves: false,
+    paint: (g) => {
+      for (const row of [10, 12, 14, 16]) px(g, 3, row, 10, 1, shade(sweater, 0.14));
+      px(g, 6, 9, 4, 1, shade(sweater, -0.22));
+    },
+  };
+}
 
 function outfitFor(look: Look, tone: Tone): Outfit {
   const hue = look.seed % 360;
@@ -63,23 +124,10 @@ function outfitFor(look: Look, tone: Tone): Outfit {
         },
       };
     }
-    case 'lead': {
-      const vest = tone(0x3b5b7a);
-      return {
-        body: tone(0xe8edf3),
-        sleeve: tone(0xe8edf3),
-        pants: tone(0x2f3b4c),
-        shortSleeves: false,
-        paint: (g) => {
-          px(g, 3, 9, 3, 9, vest);
-          px(g, 10, 9, 3, 9, vest);
-          px(g, 6, 9, 4, 1, 0xffffff);
-          px(g, 8, 12, 1, 1, 0x1b1e24);
-          px(g, 8, 15, 1, 1, 0x1b1e24);
-          px(g, 3, 16, 10, 1, shade(vest, -0.25));
-        },
-      };
-    }
+    case 'lead':
+      return vestOutfit(tone, 0xe8edf3, 0x3b5b7a);
+    case 'writer':
+      return vestOutfit(tone, 0xf3ead6, 0xc2410c);
     case 'dev': {
       const hoodie = tone(hsl(hue, 0.5, 0.42));
       return {
@@ -95,36 +143,32 @@ function outfitFor(look: Look, tone: Tone): Outfit {
         },
       };
     }
-    case 'tester': {
-      const coat = tone(0xf5f7fa);
-      return {
-        body: coat,
-        sleeve: coat,
-        pants: tone(0x4a5568),
-        shortSleeves: false,
-        paint: (g) => {
-          px(g, 7, 10, 2, 8, 0xd5dbe3);
-          px(g, 4, 9, 3, 2, 0xe1e6ec);
-          px(g, 9, 9, 3, 2, 0xe1e6ec);
-          px(g, 7, 9, 2, 1, tone(0x2a9d8f));
-          px(g, 4, 14, 3, 3, 0xe3e8ee);
-          px(g, 5, 13, 1, 2, tone(0x1d4ed8));
-        },
-      };
-    }
-    case 'reviewer': {
-      const sweater = tone(0x6a4c93);
-      return {
-        body: sweater,
-        sleeve: sweater,
-        pants: tone(0x2e3340),
-        shortSleeves: false,
-        paint: (g) => {
-          for (const row of [10, 12, 14, 16]) px(g, 3, row, 10, 1, shade(sweater, 0.14));
-          px(g, 6, 9, 4, 1, shade(sweater, -0.22));
-        },
-      };
-    }
+    case 'tester':
+      return coatOutfit(tone, {
+        coat: 0xf5f7fa,
+        placket: 0xd5dbe3,
+        lapel: 0xe1e6ec,
+        pocket: 0xe3e8ee,
+        accent: 0x2a9d8f,
+        pen: 0x1d4ed8,
+        pants: 0x4a5568,
+      });
+    case 'skillwright':
+      return coatOutfit(tone, {
+        coat: 0xe6d3b0,
+        placket: 0xc9b48a,
+        lapel: 0xd8c59f,
+        pocket: 0xd0bb92,
+        accent: 0xc2410c,
+        pen: 0x7c2d12,
+        pants: 0x4b4034,
+      });
+    case 'reviewer':
+      return sweaterOutfit(tone, 0x6a4c93);
+    case 'planReviewer':
+      return sweaterOutfit(tone, 0x2a9d8f);
+    case 'skillReviewer':
+      return sweaterOutfit(tone, 0x3f7d4e);
     case 'intern': {
       const tee = tone(hsl(hue, 0.55, 0.55));
       return {
@@ -190,7 +234,7 @@ function buildHead(look: Look, skin: number, hair: number, hairStyle: number): {
   px(g, 3, 5, 1, 2, shade(skin, -0.1));
   px(g, 12, 5, 1, 2, shade(skin, -0.1));
   paintHair(g, hairStyle, hair);
-  if (look.roleKind === 'reviewer') {
+  if (GLASSES.has(look.roleKind)) {
     px(g, 5, 4, 3, 3, 0x20242c);
     px(g, 8, 4, 3, 3, 0x20242c);
     px(g, 6, 5, 1, 1, 0xdbeaff);

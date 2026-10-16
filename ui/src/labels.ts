@@ -1,4 +1,15 @@
-import type { AgentState, AgentView, RoleKind, Stack } from './types';
+import type {
+  AgentState,
+  AgentView,
+  DocumentKind,
+  DocumentStatus,
+  DocumentView,
+  FloorKind,
+  GuardAlertLevel,
+  RoleKind,
+  Stack,
+  VerdictKind,
+} from './types';
 
 export const ROLE_LABELS: Record<RoleKind, string> = {
   director: 'Director',
@@ -6,10 +17,25 @@ export const ROLE_LABELS: Record<RoleKind, string> = {
   dev: 'Desarrollador',
   tester: 'Tester',
   reviewer: 'Revisor',
+  writer: 'Redactor',
+  planReviewer: 'Revisor de planes',
+  skillwright: 'Artesano',
+  skillReviewer: 'Revisor de skills',
   intern: 'Becario',
 };
 
-export const ROLE_ORDER: readonly RoleKind[] = ['director', 'lead', 'dev', 'tester', 'reviewer', 'intern'];
+export const ROLE_ORDER: readonly RoleKind[] = [
+  'director',
+  'lead',
+  'dev',
+  'tester',
+  'reviewer',
+  'writer',
+  'planReviewer',
+  'skillwright',
+  'skillReviewer',
+  'intern',
+];
 
 export const STATE_LABELS: Record<AgentState, string> = {
   idle: 'Libre',
@@ -44,6 +70,44 @@ export const STACK_LABELS: Record<Stack, string> = {
   generic: 'Genérico',
 };
 
+export const FLOOR_KIND_LABELS: Record<FloorKind, string> = {
+  direccion: 'Dirección',
+  managed: 'Gestionada',
+  observed: 'Observada',
+  redaccion: 'Redacción',
+  mantenimiento: 'Mantenimiento',
+};
+
+export const VERDICT_LABELS: Record<VerdictKind, string> = {
+  tests: 'Tests',
+  approved: 'Aprobado',
+  improve: 'Mejorar',
+  'no-agreement': 'Sin acuerdo',
+};
+
+export const ALERT_LEVEL_LABELS: Record<GuardAlertLevel, string> = {
+  alerta: 'Alerta',
+  posible: 'Posible',
+};
+
+export const DOCUMENT_STATUS_LABELS: Record<DocumentStatus, string> = {
+  borrador: 'Borrador',
+  revision: 'En revisión',
+  aprobado: 'Aprobado',
+  'sin-acuerdo': 'Sin acuerdo',
+  cerrado: 'Entregado',
+  descartado: 'Descartado',
+};
+
+export const DOCUMENT_STATUS_COLORS: Record<DocumentStatus, string> = {
+  borrador: '#94a3b8',
+  revision: '#eab308',
+  aprobado: '#22c55e',
+  'sin-acuerdo': '#ef4444',
+  cerrado: '#4f7cff',
+  descartado: '#64748b',
+};
+
 export function agentName(agent: Pick<AgentView, 'key' | 'name' | 'role'>): string {
   return agent.name || agent.role || agent.key.slice(0, 8);
 }
@@ -56,4 +120,25 @@ export function compareAgents(a: AgentView, b: AgentView): number {
   const byRole = roleRank(a.roleKind) - roleRank(b.roleKind);
   if (byRole !== 0) return byRole;
   return agentName(a).localeCompare(agentName(b), 'es');
+}
+
+export function scoreText(score: number): string {
+  return `nota ${score}/10`;
+}
+
+export function documentStatusText(doc: Pick<DocumentView, 'status' | 'round' | 'score'>): string {
+  switch (doc.status) {
+    case 'revision':
+      return doc.round > 0 ? `En revisión · ronda ${doc.round}` : DOCUMENT_STATUS_LABELS.revision;
+    case 'aprobado':
+      return doc.score === null ? DOCUMENT_STATUS_LABELS.aprobado : `Aprobado · ${scoreText(doc.score)}`;
+    default:
+      return DOCUMENT_STATUS_LABELS[doc.status];
+  }
+}
+
+export function documentKindFor(kind: FloorKind): DocumentKind | null {
+  if (kind === 'redaccion') return 'plan';
+  if (kind === 'mantenimiento') return 'skill';
+  return null;
 }

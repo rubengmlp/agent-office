@@ -1,16 +1,27 @@
 import { stateBadge } from '../badge';
-import { el } from '../dom';
-import { agentName, compareAgents, ROLE_LABELS, STACK_LABELS } from '../labels';
+import { button, el } from '../dom';
+import {
+  agentName,
+  ALERT_LEVEL_LABELS,
+  compareAgents,
+  DOCUMENT_STATUS_LABELS,
+  documentKindFor,
+  FLOOR_KIND_LABELS,
+  ROLE_LABELS,
+  scoreText,
+  STACK_LABELS,
+} from '../labels';
+import { documentBadge, openDocument } from '../panel/deliverables';
 import type { Store } from '../store';
 import { relativeTime } from '../time';
-import type { AgentView, FloorKind, FloorView } from '../types';
+import type { AgentView, DocumentKind, DocumentView, FloorView, GuardAlert } from '../types';
 
 const COLUMNS = ['Agente', 'Rol', 'Estado', 'Detalle', 'Último test', 'Desde'] as const;
+const ALERT_COUNT = 5;
 
-const KIND_LABELS: Record<FloorKind, string> = {
-  direccion: 'Dirección',
-  managed: 'Gestionada',
-  observed: 'Observada',
+const ALERT_HINTS: Record<GuardAlert['level'], string> = {
+  alerta: 'Cambio en la planta sin que trabajara ningún agente de ella',
+  posible: 'Puede venir de un comando Bash de un agente de la planta',
 };
 
 type Row = { agent: AgentView; depth: number };
@@ -82,13 +93,41 @@ function agentRow(store: Store, row: Row, now: number): HTMLTableRowElement {
   return tr;
 }
 
+function documentRow(doc: DocumentView): HTMLElement {
+  const open = button('', 'doc-row');
+  open.dataset.doc = doc.path;
+  open.title = doc.path;
+  open.append(
+    el('span', 'doc-row-title', doc.title),
+    documentBadge(doc, DOCUMENT_STATUS_LABELS[doc.status]),
+    el('span', 'doc-row-round muted', doc.round > 0 ? `ronda ${doc.round}` : '—'),
+    el('span', 'doc-row-score muted', doc.score !== null ? scoreText(doc.score) : '—'),
+  );
+  return el('li', 'doc-row-item', open);
+}
+
+function documentList(store: Store, kind: DocumentKind): HTMLElement {
+  const documents = store.documents.filter((doc) => doc.kind === kind).sort((a, b) => b.updatedAt - a.updatedAt);
+  const title = kind === 'plan' ? 'Planes' : 'Skills';
+  const empty = kind === 'plan' ? 'Sin planes todavía.' : 'Sin skills todavía.';
+  return el(
+    'div',
+    'floor-docs',
+    el('h3', 'section-title', title),
+    documents.length > 0
+      ? el('ul', 'doc-rows', ...documents.map(documentRow))
+      : el('p', 'muted floor-docs-empty', empty),
+  );
+}
+
 function floorSection(store: Store, floor: FloorView, agents: readonly AgentView[], now: number): HTMLElement {
+  const documentKind = documentKindFor(floor.kind);
   const header = el(
     'header',
     'floor-header',
     el('h2', 'floor-title', floor.label),
-    el('span', 'chip', STACK_LABELS[floor.stack]),
-    el('span', 'chip chip-kind', KIND_LABELS[floor.kind]),
+    documentKind === null ? el('span', 'chip', STACK_LABELS[floor.stack]) : null,
+    el('span', 'chip chip-kind', FLOOR_KIND_LABELS[floor.kind]),
     el('code', 'floor-path', floor.path ?? '—'),
   );
 
@@ -102,12 +141,58 @@ function floorSection(store: Store, floor: FloorView, agents: readonly AgentView
   }
   for (const row of rows) body.append(agentRow(store, row, now));
 
-  return el('section', `floor-section floor-${floor.kind}`, header, el('table', 'agents-table', head, body));
+  return el(
+    'section',
+    `floor-section floor-${floor.kind}`,
+    header,
+    el('table', 'agents-table', head, body),
+    documentKind === null ? null : documentList(store, documentKind),
+  );
+}
+
+function alertItem(store: Store, alert: GuardAlert, now: number, open: boolean): HTMLElement {
+  const floor = store.floorBySlug(alert.floor)?.label ?? alert.floor;
+  const agent = store.agents.get(alert.agentKey);
+  const count = alert.files.length;
+
+  const level = el('span', `alert-level alert-level-${alert.level}`, ALERT_LEVEL_LABELS[alert.level]);
+  level.title = ALERT_HINTS[alert.level];
+
+  const files = el(
+    'details',
+    'alert-files',
+    el('summary', '', `${count} ${count === 1 ? 'fichero' : 'ficheros'}`),
+    el('ul', 'alert-file-list', ...alert.files.map((file) => el('li', '', el('code', '', file)))),
+  );
+  files.dataset.alert = String(alert.id);
+  files.open = open;
+
+  return el(
+    'li',
+    `alert alert-${alert.level}`,
+    level,
+    el('span', 'alert-floor', floor),
+    files,
+    agent ? el('span', 'alert-agent muted', `tras ${agentName(agent)}`) : null,
+    el('time', 'alert-time muted', relativeTime(alert.ts, now)),
+  );
+}
+
+function alertsSection(store: Store, openAlerts: ReadonlySet<number>, now: number): HTMLElement | null {
+  const latest = [...store.alerts].sort((a, b) => a.ts - b.ts).slice(-ALERT_COUNT).reverse();
+  if (latest.length === 0) return null;
+  return el(
+    'section',
+    'alerts',
+    el('h2', 'alerts-title', 'Alertas de la guardia'),
+    el('ul', 'alert-list', ...latest.map((alert) => alertItem(store, alert, now, openAlerts.has(alert.id)))),
+  );
 }
 
 export function mountTable(host: HTMLElement, store: Store): void {
   let scheduled = false;
   let scrolledTo: string | null = null;
+  const openAlerts = new Set<number>();
 
   const render = (): void => {
     const now = store.now();
@@ -118,11 +203,14 @@ export function mountTable(host: HTMLElement, store: Store): void {
       byFloor.set(agent.floor, list);
     }
     const floors = store.floorList();
+    const fragment = document.createDocumentFragment();
+    const alerts = alertsSection(store, openAlerts, now);
+    if (alerts) fragment.append(alerts);
     if (floors.length === 0) {
-      host.replaceChildren(el('p', 'placeholder', 'Esperando agentes…'));
+      fragment.append(el('p', 'placeholder', 'Esperando agentes…'));
+      host.replaceChildren(fragment);
       return;
     }
-    const fragment = document.createDocumentFragment();
     for (const floor of floors) fragment.append(floorSection(store, floor, byFloor.get(floor.slug) ?? [], now));
     host.replaceChildren(fragment);
 
@@ -144,9 +232,27 @@ export function mountTable(host: HTMLElement, store: Store): void {
   host.addEventListener('click', (event) => {
     const target = event.target;
     if (!(target instanceof Element)) return;
+    const path = target.closest<HTMLElement>('[data-doc]')?.dataset.doc;
+    if (path !== undefined) {
+      const doc = store.documents.find((item) => item.path === path);
+      if (doc) openDocument(store, doc);
+      return;
+    }
     const key = target.closest<HTMLElement>('tr[data-key]')?.dataset.key;
     if (key) store.select(key);
   });
 
-  store.watch(['agents', 'floors', 'questions', 'selection', 'tick'], schedule);
+  host.addEventListener(
+    'toggle',
+    (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLDetailsElement) || target.dataset.alert === undefined) return;
+      const id = Number(target.dataset.alert);
+      if (target.open) openAlerts.add(id);
+      else openAlerts.delete(id);
+    },
+    true,
+  );
+
+  store.watch(['agents', 'floors', 'questions', 'selection', 'tick', 'alerts', 'documents'], schedule);
 }

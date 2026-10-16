@@ -1,7 +1,7 @@
 import { button, el } from './dom';
 import type { ConnectionStatus, Store } from './store';
 
-export type Tab = 'office' | 'table';
+export type Tab = 'office' | 'table' | 'settings';
 
 export type Topbar = {
   root: HTMLElement;
@@ -21,6 +21,7 @@ const STATUS_TEXT: Record<ConnectionStatus, string> = {
 const TABS: readonly { tab: Tab; label: string }[] = [
   { tab: 'office', label: 'Oficina' },
   { tab: 'table', label: 'Tabla' },
+  { tab: 'settings', label: 'Ajustes' },
 ];
 
 export function mountTopbar(store: Store, onTab: (tab: Tab) => void): Topbar {

@@ -36,8 +36,8 @@ export type FloorLayout = {
 
 function leadKindFor(floor: FloorView): RoleKind | null {
   if (floor.kind === 'direccion') return 'director';
-  if (floor.kind === 'managed') return 'lead';
-  return null;
+  if (floor.kind === 'observed') return null;
+  return 'lead';
 }
 
 export function computeFloorLayout(

@@ -3,13 +3,17 @@ import type {
   ActivityView,
   AgentState,
   AgentView,
+  DocumentView,
   FloorKind,
   FloorView,
+  GuardAlert,
   MessageView,
   QuestionOutcome,
   QuestionView,
+  RoleId,
   ServerMessage,
   SessionView,
+  SettingsView,
   Snapshot,
 } from './types';
 
@@ -24,7 +28,11 @@ export type Topic =
   | 'activity'
   | 'selection'
   | 'toasts'
-  | 'tick';
+  | 'tick'
+  | 'documents'
+  | 'alerts'
+  | 'memory'
+  | 'settings';
 
 export type ConnectionStatus = 'nokey' | 'connecting' | 'online' | 'offline' | 'denied' | 'replay';
 export type ToastKind = 'ok' | 'info' | 'error';
@@ -34,6 +42,7 @@ type Listener = (topics: ReadonlySet<Topic>) => void;
 
 const MESSAGE_LIMIT = 200;
 const ACTIVITY_LIMIT = 500;
+const ALERT_LIMIT = 50;
 const TOAST_MS = 4000;
 export const ENDED_VISIBLE_MS = 60_000;
 
@@ -43,7 +52,7 @@ const OUTCOME_TEXT: Record<QuestionOutcome, string> = {
   expired: 'Caducada',
 };
 
-const FLOOR_KIND_RANK: Record<FloorKind, number> = { direccion: 0, managed: 1, observed: 2 };
+const FLOOR_KIND_RANK: Record<FloorKind, number> = { direccion: 0, redaccion: 1, managed: 2, observed: 3, mantenimiento: 4 };
 
 export class Store {
   floors: FloorView[] = [];
@@ -52,6 +61,10 @@ export class Store {
   questions: QuestionView[] = [];
   messages: MessageView[] = [];
   activity: ActivityView[] = [];
+  documents: DocumentView[] = [];
+  alerts: GuardAlert[] = [];
+  settings: SettingsView | null = null;
+  memoryVersion = new Map<string, number>();
   toasts: Toast[] = [];
   selectedKey: string | null = null;
   connection: ConnectionStatus = 'connecting';
@@ -141,6 +154,28 @@ export class Store {
         if (this.activity.length > ACTIVITY_LIMIT) this.activity.splice(0, this.activity.length - ACTIVITY_LIMIT);
         this.mark('activity');
         break;
+      case 'documents':
+        this.documents = message.data;
+        this.mark('documents');
+        break;
+      case 'alert':
+        this.alerts = [...this.alerts.filter((a) => a.id !== message.data.id), message.data].slice(-ALERT_LIMIT);
+        this.mark('alerts');
+        this.toast(
+          `${message.data.level === 'alerta' ? 'Alerta' : 'Posible cambio'} en ${message.data.floor}: ${message.data.files.length} fichero(s) fuera de su sitio`,
+          message.data.level === 'alerta' ? 'error' : 'info',
+        );
+        break;
+      case 'memory': {
+        const key = memoryKey(message.floor, message.role);
+        this.memoryVersion.set(key, (this.memoryVersion.get(key) ?? 0) + 1);
+        this.mark('memory');
+        break;
+      }
+      case 'settings':
+        this.settings = message.data;
+        this.mark('settings');
+        break;
     }
   }
 
@@ -151,6 +186,8 @@ export class Store {
     this.questions = [];
     this.messages = [];
     this.activity = [];
+    this.documents = [];
+    this.alerts = [];
     this.debouncer.clear();
     this.markAll();
   }
@@ -196,7 +233,7 @@ export class Store {
     const known = new Map<string, FloorView>(this.floors.map((floor) => [floor.slug, floor]));
     for (const agent of this.agents.values()) {
       if (known.has(agent.floor) || !this.isVisible(agent)) continue;
-      known.set(agent.floor, { slug: agent.floor, label: agent.floor, path: null, stack: 'generic', kind: 'observed' });
+      known.set(agent.floor, { slug: agent.floor, label: agent.floor, path: null, stack: 'generic', kind: 'observed', building: 'principal' });
     }
     return [...known.values()].sort((a, b) => {
       const byKind = FLOOR_KIND_RANK[a.kind] - FLOOR_KIND_RANK[b.kind];
@@ -238,6 +275,8 @@ export class Store {
     this.questions = [...snapshot.questions];
     this.messages = snapshot.messages.slice(-MESSAGE_LIMIT);
     this.activity = snapshot.activity.slice(-ACTIVITY_LIMIT);
+    this.documents = snapshot.documents ?? [];
+    this.alerts = (snapshot.alerts ?? []).slice(-ALERT_LIMIT);
     this.markAll();
   }
 
@@ -250,7 +289,7 @@ export class Store {
   }
 
   private markAll(): void {
-    const all: Topic[] = ['floors', 'agents', 'sessions', 'questions', 'messages', 'activity', 'selection'];
+    const all: Topic[] = ['floors', 'agents', 'sessions', 'questions', 'messages', 'activity', 'selection', 'documents', 'alerts', 'memory'];
     for (const topic of all) this.mark(topic);
   }
 
@@ -267,4 +306,8 @@ export class Store {
     this.dirty.clear();
     for (const listener of [...this.listeners]) listener(changed);
   }
+}
+
+export function memoryKey(floor: string, role: RoleId): string {
+  return `${floor}|${role}`;
 }

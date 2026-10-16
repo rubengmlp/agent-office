@@ -20,8 +20,15 @@ import { makeText, px } from './pixel';
 
 const TABLE_BASE = 15;
 
+function plateTitle(view: FloorView): string {
+  if (view.kind !== 'mantenimiento' || /anexo/i.test(view.label)) return view.label;
+  return `${view.label} (anexo)`;
+}
+
 function plateSubtitle(view: FloorView): string {
   if (view.kind === 'direccion') return 'Despacho del director';
+  if (view.kind === 'redaccion') return 'Planes y documentos';
+  if (view.kind === 'mantenimiento') return 'Taller de skills';
   const stack = STACK_LABELS[view.stack];
   return view.kind === 'observed' ? `${stack} · observada` : stack;
 }
@@ -178,7 +185,7 @@ export class FloorScene {
 
   private drawPlate(palette: FloorPalette): void {
     for (const child of this.plate.removeChildren()) child.destroy();
-    const label = makeText(this.view.label, 9, palette.plateText);
+    const label = makeText(plateTitle(this.view), 9, palette.plateText);
     const subtitle = makeText(plateSubtitle(this.view), 6, mix(palette.plateText, palette.plate, 0.35));
     label.position.set(8, 4);
     subtitle.position.set(8, 16);
