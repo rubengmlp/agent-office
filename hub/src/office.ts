@@ -1054,6 +1054,7 @@ export class Office {
     agent.retiredAt = row.ts;
     agent.retiredAwake = false;
     agent.state = 'done';
+    agent.sentState = 'done';
     agent.stateSince = row.ts;
     if (agent.endedAt === null) agent.endedAt = row.ts;
     this.persistAgent(agent);
