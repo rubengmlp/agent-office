@@ -74,6 +74,7 @@ export function harness(
   const db = openDb(':memory:');
   const { configure: _configure, floors: _floors, ...options } = overrides;
   const office = new Office({
+    hubId: 'hub-test',
     db,
     config,
     profiles: loadProfiles(PROFILES_DIR),

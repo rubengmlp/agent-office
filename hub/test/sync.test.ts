@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { openDb } from '../src/db';
 import { ensureDocsRepo } from '../src/docs-repo';
@@ -20,9 +20,25 @@ function setup() {
   const floors = { mobile: floor(mobile.repo), backend: floor(backend.repo, true, 'laravel') };
   const db = openDb(':memory:');
   let changes = 0;
-  const desk = new SyncDesk({ db, git: runGit, root: () => docs, floors: () => floors, now: () => Date.now(), onChange: () => changes++ });
+  const foreign: string[] = [];
+  const desk = new SyncDesk({
+    db,
+    git: runGit,
+    root: () => docs,
+    floors: () => floors,
+    now: () => Date.now(),
+    onChange: () => changes++,
+    id: 'hub-a',
+    onForeign: (dirs) => foreign.push(...dirs),
+  });
   const fuentes = (slug: string, name: string) => join(docs, 'redaccion', '.fuentes', slug, name);
-  return { ...t, root, docs, mobile, backend, db, desk, fuentes, changes: () => changes };
+  // A snapshot made by hand, as another hub would leave it, with its marker (or none).
+  const handmade = (slug: string, owner: string | null) => {
+    mkdirSync(join(docs, 'redaccion', '.fuentes', slug), { recursive: true });
+    git(mobile.repo, 'worktree', 'add', '-q', '--detach', fuentes(slug, 'mobile'), 'origin/develop');
+    if (owner) writeFileSync(fuentes(slug, '.office'), `${owner}\n`);
+  };
+  return { ...t, root, docs, mobile, backend, db, desk, fuentes, handmade, foreign, changes: () => changes };
 }
 
 function ok(result: SyncResult) {
@@ -105,14 +121,110 @@ describe('Redacción sources', () => {
     expect(worktrees(s.backend.repo)).not.toContain(s.fuentes('login', 'backend'));
     expect(s.desk.base('login')).toEqual([]);
 
-    git(s.mobile.repo, 'worktree', 'add', '-q', '--detach', s.fuentes('fantasma', 'mobile'), 'origin/develop');
+    s.handmade('fantasma', 'hub-a');
     const removed = await s.desk.cleanup(new Set());
     expect(removed).toContain('fantasma/mobile');
     expect(existsSync(s.fuentes('fantasma', 'mobile'))).toBe(false);
+    expect(existsSync(join(s.docs, 'redaccion', '.fuentes', 'fantasma'))).toBe(false);
     expect(worktrees(s.mobile.repo)).not.toContain('fantasma');
     expect(existsSync(s.fuentes('abierto', 'mobile'))).toBe(true);
     expect(await s.desk.cleanup(new Set(['abierto']))).toContain('abierto');
     expect(existsSync(s.fuentes('abierto', 'mobile'))).toBe(false);
+    s.cleanup();
+  });
+
+  test('a snapshot owned by another hub survives cleanup with an empty database', async () => {
+    const s = setup();
+    s.handmade('ajeno', 'hub-b');
+    expect(await s.desk.cleanup(new Set())).toEqual([]);
+    expect(existsSync(s.fuentes('ajeno', 'mobile'))).toBe(true);
+    expect(existsSync(s.fuentes('ajeno', '.office'))).toBe(true);
+    expect(worktrees(s.mobile.repo)).toContain(s.fuentes('ajeno', 'mobile'));
+    expect(s.foreign).toEqual(['ajeno/mobile']);
+    s.cleanup();
+  });
+
+  test('with an empty database and a foreign snapshot, own orphans are kept too', async () => {
+    const s = setup();
+    s.handmade('ajeno', 'hub-b');
+    s.handmade('propio', 'hub-a');
+    expect(await s.desk.cleanup(new Set())).toEqual([]);
+    expect(existsSync(s.fuentes('ajeno', 'mobile'))).toBe(true);
+    expect(existsSync(s.fuentes('propio', 'mobile'))).toBe(true);
+    expect(s.foreign).toEqual(['ajeno/mobile', 'propio/mobile']);
+    s.cleanup();
+  });
+
+  test('with an empty database even snapshots with its own id are kept: office.db may have been recreated', async () => {
+    const s = setup();
+    s.handmade('propio', 'hub-a');
+    expect(await s.desk.cleanup(new Set())).toEqual([]);
+    expect(existsSync(s.fuentes('propio', 'mobile'))).toBe(true);
+    expect(worktrees(s.mobile.repo)).toContain(s.fuentes('propio', 'mobile'));
+    expect(s.foreign).toEqual(['propio/mobile']);
+    s.cleanup();
+  });
+
+  test('links inside .fuentes are never followed nor removed', async () => {
+    const s = setup();
+    ok(await s.desk.sync({ slug: 'login', floors: ['mobile'] }));
+    const outside = join(s.root, 'fuera');
+    mkdirSync(join(outside, 'mobile'), { recursive: true });
+    writeFileSync(join(outside, 'mobile', 'valioso.txt'), 'x');
+    writeFileSync(join(outside, '.office'), 'hub-a\n');
+    mkdirSync(join(s.docs, 'redaccion', '.fuentes', 'enlace'), { recursive: true });
+    writeFileSync(s.fuentes('enlace', '.office'), 'hub-a\n');
+    symlinkSync(join(outside, 'mobile'), s.fuentes('enlace', 'mobile'));
+    symlinkSync(outside, join(s.docs, 'redaccion', '.fuentes', 'carpeta'));
+    expect(await s.desk.cleanup(new Set())).toEqual([]);
+    expect(existsSync(join(outside, 'mobile', 'valioso.txt'))).toBe(true);
+    expect(existsSync(s.fuentes('enlace', 'mobile'))).toBe(true);
+    expect(s.foreign.sort()).toEqual(['carpeta/mobile', 'enlace/mobile']);
+    s.cleanup();
+  });
+
+  test('the marker is never written through a link', async () => {
+    const s = setup();
+    ok(await s.desk.sync({ slug: 'login', floors: ['mobile'] }));
+    rmSync(s.fuentes('login', '.office'));
+    const stolen = join(s.root, 'robado.txt');
+    symlinkSync(stolen, s.fuentes('login', '.office'));
+    expect(await s.desk.cleanup(new Set())).toEqual([]);
+    expect(existsSync(stolen)).toBe(false);
+    expect(existsSync(s.fuentes('login', 'mobile'))).toBe(true);
+    s.cleanup();
+  });
+
+  test('entries starting with a dot are ignored at every level of .fuentes', async () => {
+    const s = setup();
+    ok(await s.desk.sync({ slug: 'login', floors: ['mobile'] }));
+    mkdirSync(join(s.docs, 'redaccion', '.fuentes', '.tmp', 'x'), { recursive: true });
+    writeFileSync(join(s.docs, 'redaccion', '.fuentes', '.tmp', 'x', 'a.txt'), 'x');
+    expect(await s.desk.cleanup(new Set())).toEqual([]);
+    expect(existsSync(join(s.docs, 'redaccion', '.fuentes', '.tmp', 'x', 'a.txt'))).toBe(true);
+    expect(s.foreign).toEqual([]);
+    s.cleanup();
+  });
+
+  test('syncFloor marks the plan folder and cleanup adopts unmarked folders of its own database', async () => {
+    const s = setup();
+    ok(await s.desk.sync({ slug: 'login', floors: ['mobile'] }));
+    expect(readFileSync(s.fuentes('login', '.office'), 'utf8')).toBe('hub-a\n');
+    rmSync(s.fuentes('login', '.office'));
+    expect(await s.desk.cleanup(new Set())).toEqual([]);
+    expect(readFileSync(s.fuentes('login', '.office'), 'utf8')).toBe('hub-a\n');
+    expect(existsSync(s.fuentes('login', 'mobile'))).toBe(true);
+    expect(s.foreign).toEqual([]);
+    s.cleanup();
+  });
+
+  test('an unmarked folder outside the database is reported, not removed', async () => {
+    const s = setup();
+    ok(await s.desk.sync({ slug: 'login', floors: ['mobile'] }));
+    s.handmade('viejo', null);
+    expect(await s.desk.cleanup(new Set())).toEqual([]);
+    expect(existsSync(s.fuentes('viejo', 'mobile'))).toBe(true);
+    expect(s.foreign).toEqual(['viejo/mobile']);
     s.cleanup();
   });
 

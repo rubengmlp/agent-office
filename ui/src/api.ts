@@ -2,6 +2,8 @@ import { t } from './i18n';
 import { errorText } from './i18n/hub';
 import type {
   AnswerRequest,
+  ChatMessageView,
+  ChatUserResult,
   DocumentContent,
   FloorAddRequest,
   FloorAddResult,
@@ -106,6 +108,15 @@ export class OfficeApi {
 
   deleteFloor(slug: string): Promise<ApiData<Extract<FloorRemoveResult, { ok: true }>>> {
     return this.send('DELETE', `/api/floors/${encodeURIComponent(slug)}`, undefined);
+  }
+
+  chatHistory(channel: string, before: number | null): Promise<ApiData<ChatMessageView[]>> {
+    const query = before === null ? '' : `?before=${before}`;
+    return this.get(`/api/chat/${encodeURIComponent(channel)}${query}`);
+  }
+
+  postChat(channel: string, text: string): Promise<ApiData<ChatUserResult>> {
+    return this.send('POST', `/api/chat/${encodeURIComponent(channel)}`, { text });
   }
 
   private get<T>(path: string): Promise<ApiData<T>> {

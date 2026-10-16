@@ -2,13 +2,14 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, normalize, resolve, sep } from 'node:path';
 import type { Server, ServerWebSocket } from 'bun';
 import { Hono, type Context, type Next } from 'hono';
+import { clampWait, errorTextFor } from './chat';
 import type { FloorAdmin } from './floor-admin';
 import { isRoleId } from './memory';
 import { isHookEvent, type Office } from './office';
 import { hostAllowed, injectKey, keyMatches, originAllowed } from './security';
 import type { SettingsService } from './settings';
 import { record, text } from './state-machine';
-import type { ClientMessage, HookMeta, HubText, PlanDecision, ServerMessage } from './types';
+import type { ChatKind, ChatPostRequest, ClientMessage, HookMeta, HubText, PlanDecision, ServerMessage } from './types';
 
 type WsData = { authed: boolean; timer: ReturnType<typeof setTimeout> | null };
 
@@ -90,6 +91,28 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
   });
 
   app.post('/usage', requireKey, async (c) => c.text(office.ingestUsage(await readJson(c))));
+
+  // The chat script of the agents: a form, and plain text back with ?format=text.
+  app.post('/chat', requireKey, async (c) => {
+    const asText = c.req.query('format') === 'text';
+    const result = office.postChat(await readChatPost(c), metaOf(c));
+    if (!result.ok) return asText ? c.text(`ERROR: ${errorTextFor(result.error)}\n`, result.status) : c.json({ error: result.error }, result.status);
+    if (asText) return c.text(`${office.chat.postText(result.message, result.warnings)}\n`);
+    return c.json({ message: result.message, warnings: result.warnings });
+  });
+
+  app.get('/chat/:channel', requireKey, async (c) => {
+    const asText = c.req.query('format') === 'text';
+    const channel = c.req.param('channel') ?? '';
+    const waitMs = clampWait(c.req.query('esperar'));
+    if (waitMs > 0) holdRequest(c.req.raw);
+    const result = await office.readChat(channel, idOf(c.req.query('desde')), waitMs, c.req.raw.signal);
+    if (result === 'no-channel') {
+      const error: HubText = { key: 'hub.api.chatChannelUnknown' };
+      return asText ? c.text(`ERROR: ${errorTextFor(error)}\n`, 404) : c.json({ error }, 404);
+    }
+    return asText ? c.text(`${office.chat.readText(channel, result.afterId, result.messages)}\n`) : c.json(result.messages);
+  });
 
   app.get('/api/state', requireKey, (c) => c.json(office.snapshot()));
 
@@ -200,6 +223,19 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
     const asText = c.req.query('format') === 'text';
     if (!result.ok) return asText ? c.text(`ERROR: ${result.error}\n`, 400) : c.json({ error: result.error }, 400);
     return asText ? c.text(`${result.text}\n`) : c.json(result);
+  });
+
+  app.get('/api/chat/:channel', requireKey, (c) => {
+    const result = office.chatHistory(c.req.param('channel') ?? '', idOf(c.req.query('before')));
+    return result === 'no-channel' ? c.json({ error: { key: 'hub.api.chatChannelUnknown' } }, 404) : c.json(result);
+  });
+
+  app.post('/api/chat/:channel', requireKey, async (c) => {
+    const body = text(record(await readJson(c)).text);
+    if (!body) return c.json({ error: { key: 'hub.api.chatFields' } }, 400);
+    const result = await office.userChat(c.req.param('channel') ?? '', body);
+    if (!result.ok) return c.json({ error: result.error }, result.status);
+    return c.json({ message: result.message, delivered: result.delivered });
   });
 
   app.get('*', (c) => serveStatic(c.req.path, opts));
@@ -324,6 +360,28 @@ async function readJson(c: Context): Promise<unknown> {
   } catch {
     return null;
   }
+}
+
+// Form fields as the script sends them (one files= per path), or the same as JSON.
+async function readChatPost(c: Context): Promise<ChatPostRequest> {
+  let raw: Record<string, unknown> = {};
+  try {
+    raw = (c.req.header('content-type') ?? '').includes('application/json') ? record(await c.req.json()) : await c.req.parseBody({ all: true });
+  } catch {}
+  const strings = (value: unknown): string[] => (Array.isArray(value) ? value : [value]).filter((item): item is string => typeof item === 'string');
+  const one = (value: unknown): string | undefined => strings(value)[0];
+  return {
+    channel: one(raw.channel) ?? '',
+    kind: one(raw.kind) as ChatKind | undefined,
+    text: one(raw.text) ?? '',
+    files: strings(raw.files).filter((file) => file.trim() !== ''),
+    from: one(raw.from),
+    cwd: one(raw.cwd),
+  };
+}
+
+function idOf(value: string | undefined): number | null {
+  return value !== undefined && /^\d{1,15}$/.test(value) ? Number(value) : null;
 }
 
 function metaOf(c: Context): HookMeta {

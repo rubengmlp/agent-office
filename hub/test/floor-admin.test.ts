@@ -57,6 +57,7 @@ function seedFloorRows(db: Database, floor: string, session: string): void {
   db.query('INSERT INTO reports (agent_key, floor, started_at, summary, data, updated_at) VALUES (?, ?, ?, ?, ?, ?)').run(`r-${floor}`, floor, now, 's', '{}', now);
   db.query('INSERT INTO alerts (ts, level, floor, agent_key, files) VALUES (?, ?, ?, ?, ?)').run(now, 'alerta', floor, session, '[]');
   db.query('INSERT INTO floor_sync (floor, ref, last_sha, updated_at) VALUES (?, ?, ?, ?)').run(floor, 'develop', 'abc', now);
+  db.query("INSERT INTO chat_messages (ts, channel, floor, author_key, author_name, origin, kind, text, files) VALUES (?, ?, ?, ?, ?, 'agent', 'texto', 'hola', '[]')").run(now, floor, floor, session, 'dev');
 }
 
 function count(db: Database, table: string, floor: string): number {

@@ -43,7 +43,7 @@ El plan no lleva historial. Lleva el historial de rondas en `redaccion/historial
 ## Reglas
 
 - La ruta del plan va siempre como primer dato después de `REVISAR:` o `HECHO:`, tal cual: `redaccion/planes/<slug>.md`.
-- Solo escribes `redaccion/planes/<slug>.md` y `redaccion/historial/<slug>.md`. La oficina bloquea las escrituras fuera de `{{docsRepo}}/redaccion`.
+- Solo escribes `redaccion/planes/<slug>.md` y `redaccion/historial/<slug>.md`. La oficina bloquea las escrituras fuera de esos dos ficheros.
 - `REVISAR:` va solo a tu jefe; no escribas a los revisores.
 - No hagas commits: los hace la oficina.
 - Si para una decisión importante necesitas al usuario, escribe a tu jefe `PREGUNTA: <pregunta> — opciones: <a> | <b> | <c>` y espera la respuesta. `BLOQUEADO: <qué falta> — necesito <qué> de <quién>` solo si falta información del encargo. Si es una duda menor, déjala en Preguntas abiertas.

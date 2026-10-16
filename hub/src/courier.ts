@@ -8,6 +8,17 @@ export function orderText(text: string): string {
   return `${ORDER_LEAD} ${text.trim()}`;
 }
 
+// Not ORDER_PREFIX on purpose: the templates read what starts with it as an order of the user, and a chat line is not one.
+export const CHAT_PREFIX = '[Chat de Agent Office]';
+
+// What the user wrote in a channel, after the lines of the team the session had not seen yet.
+export function chatInboxText(channel: string, pending: string, text: string): string {
+  const lines = [`${CHAT_PREFIX} #${channel}`];
+  if (pending) lines.push(pending);
+  lines.push(`usuario: ${text.replace(/\s+/g, ' ').trim()}`);
+  return lines.join('\n');
+}
+
 export function encodeInbox(token: string | null, content: string): string {
   const lines: string[] = [];
   if (token) lines.push(JSON.stringify({ type: 'auth', token }));

@@ -4,6 +4,7 @@ import type {
   ActivityView,
   AgentState,
   AgentView,
+  ChatMessageView,
   DocumentView,
   FloorKind,
   FloorView,
@@ -36,7 +37,8 @@ export type Topic =
   | 'memory'
   | 'settings'
   | 'usage'
-  | 'lang';
+  | 'lang'
+  | 'chat';
 
 export type ConnectionStatus = 'nokey' | 'connecting' | 'online' | 'offline' | 'denied' | 'replay';
 export type ToastKind = 'ok' | 'info' | 'error';
@@ -47,6 +49,7 @@ type Listener = (topics: ReadonlySet<Topic>) => void;
 const MESSAGE_LIMIT = 200;
 const ACTIVITY_LIMIT = 500;
 const ALERT_LIMIT = 50;
+const CHAT_LIMIT = 500;
 const TOAST_MS = 4000;
 export const ENDED_VISIBLE_MS = 60_000;
 
@@ -69,6 +72,10 @@ export class Store {
   alerts: GuardAlert[] = [];
   settings: SettingsView | null = null;
   usage: UsageView | null = null;
+  chat: ChatMessageView[] = [];
+  // Last id seen with the Chat tab open, per channel; what came in the snapshot counts as seen.
+  chatSeen = 0;
+  private readonly chatSeenIn = new Map<string, number>();
   memoryVersion = new Map<string, number>();
   toasts: Toast[] = [];
   selectedKey: string | null = null;
@@ -206,6 +213,12 @@ export class Store {
         this.usage = message.data;
         this.mark('usage');
         break;
+      case 'chat':
+        if (this.chat.some((m) => m.id === message.data.id)) break;
+        this.chat.push(message.data);
+        if (this.chat.length > CHAT_LIMIT) this.chat.splice(0, this.chat.length - CHAT_LIMIT);
+        this.mark('chat');
+        break;
     }
   }
 
@@ -219,6 +232,9 @@ export class Store {
     this.documents = [];
     this.alerts = [];
     this.usage = null;
+    this.chat = [];
+    this.chatSeen = 0;
+    this.chatSeenIn.clear();
     this.debouncer.clear();
     this.markAll();
   }
@@ -289,6 +305,35 @@ export class Store {
     return oldest;
   }
 
+  chatOf(channel: string): ChatMessageView[] {
+    return this.chat.filter((message) => message.channel === channel);
+  }
+
+  // Messages of the agents not seen yet with the tab open, in one channel or in all of them.
+  unreadChat(channel?: string): number {
+    let count = 0;
+    for (const message of this.chat) {
+      if (message.origin !== 'agent' || (channel !== undefined && message.channel !== channel)) continue;
+      if (message.id > Math.max(this.chatSeen, this.chatSeenIn.get(message.channel) ?? 0)) count += 1;
+    }
+    return count;
+  }
+
+  markChatSeen(channel: string): void {
+    const last = this.chatOf(channel).at(-1)?.id ?? 0;
+    if (last <= Math.max(this.chatSeen, this.chatSeenIn.get(channel) ?? 0)) return;
+    this.chatSeenIn.set(channel, last);
+    this.mark('chat');
+  }
+
+  prependChat(messages: readonly ChatMessageView[]): void {
+    const known = new Set(this.chat.map((message) => message.id));
+    const older = messages.filter((message) => !known.has(message.id));
+    if (older.length === 0) return;
+    this.chat = [...older, ...this.chat].sort((a, b) => a.id - b.id);
+    this.mark('chat');
+  }
+
   oldestQuestion(): QuestionView | undefined {
     let oldest: QuestionView | undefined;
     for (const question of this.questions) {
@@ -314,6 +359,9 @@ export class Store {
     this.documents = snapshot.documents ?? [];
     this.alerts = (snapshot.alerts ?? []).slice(-ALERT_LIMIT);
     this.usage = snapshot.usage ?? null;
+    this.chat = (snapshot.chat ?? []).slice(-CHAT_LIMIT);
+    this.chatSeen = this.chat.at(-1)?.id ?? 0;
+    this.chatSeenIn.clear();
     this.markAll();
   }
 
@@ -326,7 +374,7 @@ export class Store {
   }
 
   private markAll(): void {
-    const all: Topic[] = ['floors', 'agents', 'sessions', 'questions', 'messages', 'activity', 'selection', 'documents', 'alerts', 'memory', 'usage'];
+    const all: Topic[] = ['floors', 'agents', 'sessions', 'questions', 'messages', 'activity', 'selection', 'documents', 'alerts', 'memory', 'usage', 'chat'];
     for (const topic of all) this.mark(topic);
   }
 

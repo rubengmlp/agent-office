@@ -45,6 +45,17 @@ Todos empiezan por la palabra clave y dos puntos. En los de revisión, la ruta d
 - `SIN ACUERDO: <ruta> ronda N — <bloqueantes que quedan>`: en la última ronda si quedan bloqueantes. Decide el usuario.
 - `LECCIÓN: <qué pasó y cómo evitarlo>`: a tu jefe, aparte, solo cuando algo salió mal o descubriste algo que cambia cómo trabajar. Nunca rutinarias.
 
+## Chat interno
+
+Cada planta gestionada tiene un canal de chat con su slug y la oficina uno común, `#global`. Jefe, desarrollador y tester lo usan con Bash mediante el script del chat que indica su plantilla; los compañeros firman con `--de <su nombre>`, el nombre de compañero que les dio su jefe al lanzarlos (no el de su tipo de agente). El jefe no lleva `--de`: el hub lo reconoce por su sesión.
+
+- `toca <ruta>…`: antes de editar, anuncia los ficheros. Si otro los anunció, se acuerda en el canal antes de tocarlos.
+- `listo <ruta>… -- "<nota>"`: al terminar con ellos, los libera.
+- `pregunta "<duda>"`: lo que un compañero puede saber se pregunta primero en el canal y se espera la respuesta (`leer --desde <id> --esperar 90`); solo si nadie contesta se escribe `BLOQUEADO:`.
+- `di "<texto>"`: avisos y respuestas; el tester publica qué comando lanza y el resultado.
+
+La regla: anunciar antes de editar, liberar al terminar, preguntar antes de bloquear. La oficina recuerda en el momento a quien edita sin anunciar y avisa de los solapes; no bloquea. El chat no sustituye los mensajes del protocolo: `HECHO:`, `BLOQUEADO:`, `LECCIÓN:` y los de revisión siguen yendo por SendMessage. Lo que el usuario escribe en un canal le llega al jefe de esa planta con el prefijo `[Chat de Agent Office]`: no es un encargo.
+
 ## Cuándo está terminado un trabajo
 
 - Código: cuando el tester de la planta ha pasado los tests después del último cambio del desarrollador. Un test del propio desarrollador no cuenta. La oficina lo comprueba cuando el jefe envía `HECHO:`; si falta el tester, el mensaje no sale y el jefe recibe el motivo.

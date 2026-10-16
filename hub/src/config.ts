@@ -31,6 +31,7 @@ export type Paths = {
   agentsDir: string;
   skillsDir: string;
   key: string;
+  id: string;
   config: string;
   port: string;
   db: string;
@@ -48,6 +49,7 @@ export function paths(env: Record<string, string | undefined> = process.env): Pa
     agentsDir: join(claudeHome, 'agents'),
     skillsDir: join(claudeHome, 'skills'),
     key: join(home, 'key'),
+    id: join(home, 'id'),
     config: join(home, 'config.json'),
     port: join(home, 'port'),
     db: join(home, 'office.db'),
@@ -313,6 +315,25 @@ export function createKeyIfMissing(p: Paths): { key: string; created: boolean } 
   const key = randomBytes(32).toString('hex');
   writeAtomic(p.key, `${key}\n`);
   return { key, created: true };
+}
+
+export function readId(p: Paths): string | null {
+  try {
+    const id = readFileSync(p.id, 'utf8').trim();
+    return id || null;
+  } catch {
+    return null;
+  }
+}
+
+// Not a secret: it only tells this hub's snapshots in redaccion/.fuentes from those of another hub.
+export function createIdIfMissing(p: Paths): { id: string; created: boolean } {
+  const existing = readId(p);
+  if (existing) return { id: existing, created: false };
+  ensureHome(p);
+  const id = randomBytes(8).toString('hex');
+  writeAtomic(p.id, `${id}\n`);
+  return { id, created: true };
 }
 
 export function rotateKey(p: Paths): string {

@@ -14,6 +14,7 @@ export function prune(db: Database, now: number, retentionDays: number): number 
   run('DELETE FROM messages WHERE ts < ?');
   run('DELETE FROM gate_decisions WHERE ts < ?');
   run('DELETE FROM alerts WHERE ts < ?');
+  run('DELETE FROM chat_messages WHERE ts < ?');
   run("DELETE FROM questions WHERE created_at < ? AND status != 'pending'");
   run('DELETE FROM tasks WHERE updated_at < ?');
   run('DELETE FROM agents WHERE COALESCE(ended_at, updated_at) < ?');
