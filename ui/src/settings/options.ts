@@ -2,6 +2,8 @@ import type { DepartmentsConfig, Effort, PermissionMode, RoleId } from '../types
 
 export const OTHER_MODEL = '__other__';
 
+export const DEFAULT_CHOICE = '__default__';
+
 export const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._[\]-]{0,79}$/;
 
 export const BRANCH_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/;

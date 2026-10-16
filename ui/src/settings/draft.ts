@@ -22,8 +22,11 @@ import {
 
 export type RoleDraft = { choice: string; custom: string; effort: Effort };
 
+export type FloorRolesDraft = Record<string, Partial<Record<RoleId, RoleDraft | null>>>;
+
 export type SettingsDraft = {
   roles: Record<RoleId, RoleDraft>;
+  floorRoles: FloorRolesDraft;
   departments: DepartmentsConfig;
   numbers: Record<NumberKey, string>;
   branches: Record<string, string>;
@@ -42,6 +45,10 @@ const PRESETS: ReadonlySet<string> = new Set(
 
 export function roleProblemKey(id: RoleId): string {
   return `role:${id}`;
+}
+
+export function floorRoleProblemKey(target: string, id: RoleId): string {
+  return `floorRole:${target}:${id}`;
 }
 
 export function branchProblemKey(slug: string): string {
@@ -85,13 +92,28 @@ export function modelOf(role: RoleDraft): string {
   return role.choice === OTHER_MODEL ? role.custom.trim() : role.choice;
 }
 
+export function roleDraftOf(role: RoleSettings): RoleDraft {
+  const preset = PRESETS.has(role.model);
+  return { choice: preset ? role.model : OTHER_MODEL, custom: preset ? '' : role.model, effort: role.effort };
+}
+
+function floorRolesFrom(view: SettingsView, previous: FloorRolesDraft = {}): FloorRolesDraft {
+  const floorRoles: FloorRolesDraft = {};
+  for (const target of view.targets) {
+    const rows: Partial<Record<RoleId, RoleDraft | null>> = {};
+    for (const id of target.roles) {
+      const kept = previous[target.id]?.[id];
+      const override = view.floorRoles[target.id]?.[id];
+      rows[id] = kept !== undefined ? kept : override ? roleDraftOf(override) : null;
+    }
+    floorRoles[target.id] = rows;
+  }
+  return floorRoles;
+}
+
 export function draftFrom(view: SettingsView): SettingsDraft {
   const roles = {} as Record<RoleId, RoleDraft>;
-  for (const { id } of ROLE_ROWS) {
-    const role = roleOf(view, id);
-    const preset = PRESETS.has(role.model);
-    roles[id] = { choice: preset ? role.model : OTHER_MODEL, custom: preset ? '' : role.model, effort: role.effort };
-  }
+  for (const { id } of ROLE_ROWS) roles[id] = roleDraftOf(roleOf(view, id));
 
   const values = numbersOf(view);
   const numbers = {} as Record<NumberKey, string>;
@@ -100,7 +122,14 @@ export function draftFrom(view: SettingsView): SettingsDraft {
   const branches: Record<string, string> = {};
   for (const floor of managedFloors(view)) branches[floor.slug] = floor.baseBranch;
 
-  return { roles, departments: { ...view.departments }, numbers, branches, modes: { ...view.permissionModes } };
+  return {
+    roles,
+    floorRoles: floorRolesFrom(view),
+    departments: { ...view.departments },
+    numbers,
+    branches,
+    modes: { ...view.permissionModes },
+  };
 }
 
 export function reconcileDraft(draft: SettingsDraft, view: SettingsView): SettingsDraft {
@@ -108,7 +137,7 @@ export function reconcileDraft(draft: SettingsDraft, view: SettingsView): Settin
   for (const floor of managedFloors(view)) branches[floor.slug] = draft.branches[floor.slug] ?? floor.baseBranch;
   const modes: Record<string, PermissionMode> = {};
   for (const [slug, mode] of Object.entries(view.permissionModes)) modes[slug] = draft.modes[slug] ?? mode;
-  return { ...draft, branches, modes };
+  return { ...draft, floorRoles: floorRolesFrom(view, draft.floorRoles), branches, modes };
 }
 
 export function sameDraft(a: SettingsDraft, b: SettingsDraft): boolean {
@@ -122,6 +151,17 @@ export function validateDraft(draft: SettingsDraft): Problems {
     const model = modelOf(draft.roles[id]);
     if (model === '') problems.set(roleProblemKey(id), `${label}: indica el id del modelo`);
     else if (!MODEL_PATTERN.test(model)) problems.set(roleProblemKey(id), `${label}: el id del modelo no es válido`);
+  }
+
+  for (const [target, rows] of Object.entries(draft.floorRoles)) {
+    for (const { id, label } of ROLE_ROWS) {
+      const role = rows[id];
+      if (!role) continue;
+      const model = modelOf(role);
+      const key = floorRoleProblemKey(target, id);
+      if (model === '') problems.set(key, `${label} en ${target}: indica el id del modelo`);
+      else if (!MODEL_PATTERN.test(model)) problems.set(key, `${label} en ${target}: el id del modelo no es válido`);
+    }
   }
 
   for (const field of NUMBER_FIELDS) {
@@ -153,6 +193,26 @@ export function diffDraft(baseline: SettingsView, draft: SettingsDraft): Setting
     if (Object.keys(change).length > 0) roles[id] = change;
   }
   if (Object.keys(roles).length > 0) update.roles = roles;
+
+  const floorRoles: NonNullable<SettingsUpdate['floorRoles']> = {};
+  for (const target of baseline.targets) {
+    const changes: Partial<Record<RoleId, RoleSettings | null>> = {};
+    for (const id of target.roles) {
+      const before = baseline.floorRoles[target.id]?.[id] ?? null;
+      const after = draft.floorRoles[target.id]?.[id] ?? null;
+      if (after === null) {
+        if (before !== null) changes[id] = null;
+        continue;
+      }
+      const model = modelOf(after);
+      if (model === '') continue;
+      if (before === null || before.model !== model || before.effort !== after.effort) {
+        changes[id] = { model, effort: after.effort };
+      }
+    }
+    if (Object.keys(changes).length > 0) floorRoles[target.id] = changes;
+  }
+  if (Object.keys(floorRoles).length > 0) update.floorRoles = floorRoles;
 
   const departments: Partial<DepartmentsConfig> = {};
   for (const { key } of DEPARTMENT_ROWS) {
@@ -203,9 +263,22 @@ export function applyUpdate(view: SettingsView, update: SettingsUpdate): Setting
     const change = update.roles?.[id];
     if (change) roles[id] = { ...roleOf(view, id), ...change };
   }
+  const floorRoles: SettingsView['floorRoles'] = {};
+  for (const [target, rows] of Object.entries(view.floorRoles)) floorRoles[target] = { ...rows };
+  for (const [target, changes] of Object.entries(update.floorRoles ?? {})) {
+    const rows = { ...floorRoles[target] };
+    for (const [id, change] of Object.entries(changes) as [RoleId, Partial<RoleSettings> | null | undefined][]) {
+      if (change === undefined) continue;
+      if (change === null) delete rows[id];
+      else rows[id] = { ...(rows[id] ?? roleOf(view, id)), ...change };
+    }
+    if (Object.keys(rows).length > 0) floorRoles[target] = rows;
+    else delete floorRoles[target];
+  }
   return {
     ...view,
     roles,
+    floorRoles,
     departments: { ...view.departments, ...update.departments },
     review: { ...view.review, ...update.review },
     memory: { ...view.memory, ...update.memory },

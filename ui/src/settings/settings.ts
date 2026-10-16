@@ -1,16 +1,18 @@
 import type { OfficeApi } from '../api';
-import { button, el, type Child } from '../dom';
+import { append, button, el, type Child } from '../dom';
 import { STACK_LABELS } from '../labels';
 import type { Store } from '../store';
-import type { DepartmentsConfig, Effort, PermissionMode, RoleId, SettingsView } from '../types';
+import type { DepartmentsConfig, Effort, PermissionMode, RoleId, SettingsTarget, SettingsView } from '../types';
 import {
   applyUpdate,
   branchProblemKey,
   diffDraft,
   draftFrom,
+  floorRoleProblemKey,
   isEmptyUpdate,
   managedFloors,
   reconcileDraft,
+  modelOf,
   roleProblemKey,
   sameDraft,
   validateDraft,
@@ -18,6 +20,7 @@ import {
   type SettingsDraft,
 } from './draft';
 import {
+  DEFAULT_CHOICE,
   DEPARTMENT_ROWS,
   EFFORTS,
   MEMORY_FIELDS,
@@ -33,12 +36,18 @@ import {
 
 type Outcome = { text: string; kind: 'ok' | 'error' };
 
-type RoleControls = { model: HTMLSelectElement; custom: HTMLInputElement; effort: HTMLSelectElement };
+type RoleControls = {
+  model: HTMLSelectElement;
+  custom: HTMLInputElement;
+  effort: HTMLSelectElement;
+  inherited: HTMLOptionElement | null;
+};
 
 type Controls = {
   root: HTMLElement;
   fieldset: HTMLFieldSetElement;
   roles: Map<RoleId, RoleControls>;
+  floorRoles: Map<string, Map<RoleId, RoleControls>>;
   departments: Map<keyof DepartmentsConfig, HTMLInputElement>;
   numbers: Map<NumberKey, HTMLInputElement>;
   branches: Map<string, HTMLInputElement>;
@@ -70,14 +79,34 @@ function setValue(control: HTMLInputElement | HTMLSelectElement, value: string):
   if (control.value !== value) control.value = value;
 }
 
-function section(title: string, hint: string, ...body: Child[]): HTMLElement {
+function section(title: Child | Child[], hint: string, ...body: Child[]): HTMLElement {
   return el(
     'section',
     'settings-section',
-    el('h2', 'settings-title', title),
+    el('h2', 'settings-title', ...(Array.isArray(title) ? title : [title])),
     el('p', 'settings-hint muted', hint),
     ...body,
   );
+}
+
+function roleInputs(label: string, inheritable: boolean): RoleControls {
+  const inherited = inheritable ? option(DEFAULT_CHOICE, 'Por defecto') : null;
+  const model = el('select', 'role-model');
+  model.setAttribute('aria-label', `Modelo de ${label}`);
+  append(model, [inherited, ...MODEL_OPTIONS.map((entry) => option(entry.value, entry.label))]);
+  const custom = textInput('role-custom', `Id del modelo de ${label}`, 'p. ej. claude-opus-5-5');
+  const effort = el('select', 'role-effort');
+  effort.setAttribute('aria-label', `Esfuerzo de ${label}`);
+  append(effort, [inheritable ? option(DEFAULT_CHOICE, 'Por defecto') : null, ...EFFORTS.map((value) => option(value, value))]);
+  return { model, custom, effort, inherited };
+}
+
+function roleHead(): HTMLElement[] {
+  return [
+    el('span', 'role-head muted', 'Rol'),
+    el('span', 'role-head muted', 'Modelo'),
+    el('span', 'role-head muted', 'Esfuerzo'),
+  ];
 }
 
 function toggleRow(label: string, hint: string): { root: HTMLElement; input: HTMLInputElement } {
@@ -202,7 +231,7 @@ class SettingsPage {
 
     this.actions.hidden = false;
     const floors = managedFloors(view).map((floor) => [floor.slug, floor.path, floor.stack]);
-    const signature = JSON.stringify([view.docsRepo, view.port, floors, Object.keys(view.permissionModes)]);
+    const signature = JSON.stringify([view.docsRepo, view.port, floors, Object.keys(view.permissionModes), view.targets]);
     if (this.controls === null || signature !== this.signature) {
       this.signature = signature;
       this.controls = this.buildControls(view);
@@ -225,27 +254,16 @@ class SettingsPage {
 
   private buildControls(view: SettingsView): Controls {
     const roles = new Map<RoleId, RoleControls>();
+    const floorRoles = new Map<string, Map<RoleId, RoleControls>>();
     const departments = new Map<keyof DepartmentsConfig, HTMLInputElement>();
     const numbers = new Map<NumberKey, HTMLInputElement>();
     const branches = new Map<string, HTMLInputElement>();
     const modes = new Map<string, HTMLSelectElement>();
 
-    const roleGrid = el(
-      'div',
-      'role-grid',
-      el('span', 'role-head muted', 'Rol'),
-      el('span', 'role-head muted', 'Modelo'),
-      el('span', 'role-head muted', 'Esfuerzo'),
-    );
+    const roleGrid = el('div', 'role-grid', ...roleHead());
     for (const { id, label } of ROLE_ROWS) {
-      const model = el('select', 'role-model');
-      model.setAttribute('aria-label', `Modelo de ${label}`);
-      model.append(...MODEL_OPTIONS.map((entry) => option(entry.value, entry.label)));
-      const custom = textInput('role-custom', `Id del modelo de ${label}`, 'p. ej. claude-opus-5-5');
-      const effort = el('select', 'role-effort');
-      effort.setAttribute('aria-label', `Esfuerzo de ${label}`);
-      effort.append(...EFFORTS.map((value) => option(value, value)));
-
+      const row = roleInputs(label, false);
+      const { model, custom, effort } = row;
       model.addEventListener('change', () => {
         this.edit((draft) => {
           draft.roles[id].choice = model.value;
@@ -264,8 +282,10 @@ class SettingsPage {
       });
 
       roleGrid.append(el('span', 'role-name', label), el('div', 'role-model-cell', model, custom), effort);
-      roles.set(id, { model, custom, effort });
+      roles.set(id, row);
     }
+
+    const targetSections = view.targets.map((target) => this.targetSection(target, floorRoles));
 
     const departmentRows = DEPARTMENT_ROWS.map(({ key, label, hint }) => {
       const row = toggleRow(label, hint);
@@ -329,10 +349,11 @@ class SettingsPage {
       'fieldset',
       'settings-fieldset',
       section(
-        'Roles',
-        'Modelo y esfuerzo por defecto de cada rol. Se aplican a las sesiones y equipos nuevos.',
+        'Modelos por defecto',
+        'Modelo y esfuerzo de cada rol. Se aplican a las sesiones y equipos nuevos, salvo donde una planta lo anule.',
         roleGrid,
       ),
+      ...targetSections,
       section('Departamentos', 'Activa o desactiva las plantas de Redacción y Mantenimiento.', ...departmentRows),
       section(
         'Permisos',
@@ -362,7 +383,52 @@ class SettingsPage {
       readonlyRow('Puerto', String(view.port)),
     );
 
-    return { root: el('div', 'settings-form', fieldset, hub), fieldset, roles, departments, numbers, branches, modes };
+    return { root: el('div', 'settings-form', fieldset, hub), fieldset, roles, floorRoles, departments, numbers, branches, modes };
+  }
+
+  private targetSection(target: SettingsTarget, registry: Map<string, Map<RoleId, RoleControls>>): HTMLElement {
+    const rows = new Map<RoleId, RoleControls>();
+    const grid = el('div', 'role-grid', ...roleHead());
+    for (const id of target.roles) {
+      const label = ROLE_ROWS.find((row) => row.id === id)?.label ?? id;
+      const row = roleInputs(`${label} en ${target.label}`, true);
+      const { model, custom, effort } = row;
+      const ensure = (draft: SettingsDraft) => {
+        const targetRows = (draft.floorRoles[target.id] ??= {});
+        return (targetRows[id] ??= { ...draft.roles[id] });
+      };
+      const clear = (draft: SettingsDraft) => {
+        (draft.floorRoles[target.id] ??= {})[id] = null;
+      };
+      model.addEventListener('change', () => {
+        this.edit((draft) => {
+          if (model.value === DEFAULT_CHOICE) clear(draft);
+          else ensure(draft).choice = model.value;
+        });
+        if (model.value === OTHER_MODEL) custom.focus();
+      });
+      custom.addEventListener('input', () => {
+        this.edit((draft) => {
+          ensure(draft).custom = custom.value;
+        });
+      });
+      effort.addEventListener('change', () => {
+        this.edit((draft) => {
+          if (effort.value === DEFAULT_CHOICE) clear(draft);
+          else ensure(draft).effort = effort.value as Effort;
+        });
+      });
+      grid.append(el('span', 'role-name', label), el('div', 'role-model-cell', model, custom), effort);
+      rows.set(id, row);
+    }
+    registry.set(target.id, rows);
+    const title: Child[] = [target.label];
+    if (target.stack) title.push(el('span', 'chip', STACK_LABELS[target.stack]));
+    return section(
+      title,
+      '«Por defecto» hereda el rol de Modelos por defecto. Elegir un valor crea una anulación solo para este destino.',
+      grid,
+    );
   }
 
   private syncControls(): void {
@@ -373,6 +439,16 @@ class SettingsPage {
       setValue(row.model, role.choice);
       setValue(row.custom, role.custom);
       setValue(row.effort, role.effort);
+    }
+    for (const [target, rows] of controls.floorRoles) {
+      for (const [id, row] of rows) {
+        const inherited = draft.roles[id];
+        const role = draft.floorRoles[target]?.[id] ?? null;
+        if (row.inherited) row.inherited.textContent = `Por defecto (${modelOf(inherited) || '…'} · ${inherited.effort})`;
+        setValue(row.model, role ? role.choice : DEFAULT_CHOICE);
+        setValue(row.custom, role ? role.custom : '');
+        setValue(row.effort, role ? role.effort : DEFAULT_CHOICE);
+      }
     }
     for (const [key, input] of controls.departments) input.checked = draft.departments[key];
     for (const [key, input] of controls.numbers) setValue(input, draft.numbers[key]);
@@ -398,6 +474,13 @@ class SettingsPage {
     for (const [id, row] of controls.roles) {
       row.custom.hidden = draft.roles[id].choice !== OTHER_MODEL;
       markInvalid(row.custom, problems.has(roleProblemKey(id)));
+    }
+    for (const [target, rows] of controls.floorRoles) {
+      for (const [id, row] of rows) {
+        const role = draft.floorRoles[target]?.[id] ?? null;
+        row.custom.hidden = role === null || role.choice !== OTHER_MODEL;
+        markInvalid(row.custom, problems.has(floorRoleProblemKey(target, id)));
+      }
     }
     for (const [key, input] of controls.numbers) markInvalid(input, problems.has(key));
     for (const [slug, input] of controls.branches) markInvalid(input, problems.has(branchProblemKey(slug)));

@@ -952,6 +952,11 @@ textarea {
   font-size: 15px;
 }
 
+.settings-title .chip {
+  margin-left: 8px;
+  font-weight: 400;
+}
+
 .settings-hint {
   margin: 4px 0 12px;
   line-height: 1.4;
