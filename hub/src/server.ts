@@ -28,8 +28,9 @@ export type RunningServer = { server: Server<WsData>; stop: () => void };
 export const AUTH_TIMEOUT_MS = 1000;
 const PLAN_DECISIONS: readonly PlanDecision[] = ['ejecutar', 'aparcar', 'cerrar'];
 const MAX_ORDER_LENGTH = 4000;
-const RELAUNCH_FAILURES: Record<Exclude<RelaunchResult, 'ok'>, { key: HubTextKey; status: 404 | 409 | 501 | 502 }> = {
+const RELAUNCH_FAILURES: Record<Exclude<RelaunchResult, 'ok'>, { key: HubTextKey; status: 403 | 404 | 409 | 501 | 502 }> = {
   'not-found': { key: 'hub.api.sessionNotFound', status: 404 },
+  'not-office': { key: 'hub.api.sessionNotOffice', status: 403 },
   busy: { key: 'hub.api.relaunchBusy', status: 409 },
   'no-script': { key: 'hub.api.relaunchNoScript', status: 404 },
   'no-tmux': { key: 'hub.api.relaunchNoTmux', status: 501 },
@@ -145,6 +146,7 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
     const result = await office.order(sessionId, order);
     if (result === 'ok') return c.json({ ok: true });
     if (result === 'not-found') return c.json({ error: { key: 'hub.api.sessionNotFound' } }, 404);
+    if (result === 'not-office') return c.json({ error: { key: 'hub.api.sessionNotOffice' } }, 403);
     return c.json({ error: { key: 'hub.api.orderFailed' } }, 502);
   });
 
@@ -152,6 +154,7 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
     const result = await office.requestStatus(c.req.param('id') ?? '');
     if (result === 'ok') return c.json({ ok: true });
     if (result === 'not-found') return c.json({ error: { key: 'hub.api.sessionNotFound' } }, 404);
+    if (result === 'not-office') return c.json({ error: { key: 'hub.api.sessionNotOffice' } }, 403);
     return c.json({ error: { key: 'hub.api.orderFailed' } }, 502);
   });
 

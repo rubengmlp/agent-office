@@ -761,6 +761,7 @@ export const en: Messages = {
   'hub.api.orderFields': 'sessionId and text are required',
   'hub.api.orderTooLong': 'The order is too long',
   'hub.api.sessionNotFound': 'Session not found',
+  'hub.api.sessionNotOffice': 'That session is not part of the office: it gets no orders and is not relaunched from the panel',
   'hub.api.orderFailed': 'The order could not be delivered',
   'hub.api.settingsUnavailable': 'Settings unavailable',
   'hub.api.floorsUnavailable': 'Projects unavailable',
