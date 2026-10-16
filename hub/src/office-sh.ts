@@ -57,6 +57,19 @@ export function directorReadDirs(config: OfficeConfig, p: Paths): string[] {
   return dirs.filter((dir, index) => dirs.indexOf(dir) === index && existsSync(dir));
 }
 
+export function floorReadDirs(config: OfficeConfig): string[] {
+  if (!config.departments.redaccion) return [];
+  const plans = join(docsRepoPath(config), REDACCION_DIR, 'planes');
+  return existsSync(plans) ? [plans] : [];
+}
+
+export function denyWrites(dirs: readonly string[]): string[] {
+  return dirs.flatMap((dir) => {
+    const rule = `//${dir.replace(/^\/+/, '').replace(/\/+$/, '')}/**`;
+    return [`Edit(${rule})`, `Write(${rule})`];
+  });
+}
+
 export function sessionSpecs(config: OfficeConfig, p: Paths, workspaceDir = WORKSPACE_DIR, liveRoot = REPO_ROOT): SessionSpec[] {
   const lead = modelArgs(config.roles.lead);
   const addDirs = directorReadDirs(config, p).flatMap((dir) => ['--add-dir', dir]);
@@ -72,17 +85,20 @@ export function sessionSpecs(config: OfficeConfig, p: Paths, workspaceDir = WORK
       settings: BASE_SETTINGS,
     },
   ];
+  const plans = floorReadDirs(config);
+  const deny = denyWrites(plans);
   for (const [slug, floor] of managedFloors(config)) {
     const ask = isOfficeClone(floor.path, liveRoot) ? clonePermissions() : [];
+    const permissions = { ...(ask.length > 0 ? { ask } : {}), ...(deny.length > 0 ? { deny } : {}) };
     specs.push({
       name: `lead-${slug}`,
       cwd: floor.path,
       role: `office-lead-${slug}`,
       agent: `office-lead-${slug}`,
-      extraArgs: lead,
+      extraArgs: [...plans.flatMap((dir) => ['--add-dir', dir]), ...lead],
       needsHub: false,
       permissionMode: permissionModeFor(config, slug),
-      settings: ask.length > 0 ? { ...BASE_SETTINGS, permissions: { ask } } : BASE_SETTINGS,
+      settings: Object.keys(permissions).length > 0 ? { ...BASE_SETTINGS, permissions } : BASE_SETTINGS,
     });
   }
   const docs = docsRepoPath(config);

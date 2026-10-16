@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PROFILES_DIR, REPO_ROOT, normalizeConfig } from '../src/config';
 import { FloorError, planFloor } from '../src/floor-cli';
@@ -110,6 +110,35 @@ describe('permission modes and clone floors in the launchers', () => {
     const script = sessionScript(specs.find((s) => s.name === 'lead-mobile')!, 4747);
     expect(script).toContain("'--permission-mode' 'plan'");
     expect(script).toContain(`'--settings' '{"subagentPromptCacheTtl":"1h"}'`);
+    cleanup();
+  });
+
+  test('floor leads read the plans folder and may not write it, only while Redacción is active', () => {
+    const { dir, cleanup } = tempDir();
+    const p = fakePaths(dir);
+    const mobile = makeRepo(dir, 'mobile');
+    const docs = join(dir, 'docs');
+    const plans = join(docs, 'redaccion', 'planes');
+    mkdirSync(plans, { recursive: true });
+    mkdirSync(p.skillsDir, { recursive: true });
+    const config = testConfig({ docsRepo: docs, departments: { redaccion: true, mantenimiento: false }, floors: { mobile: floor(mobile) } });
+    const specs = sessionSpecs(config, p, '/ws');
+    const lead = specs.find((s) => s.name === 'lead-mobile')!;
+    expect(lead.extraArgs.slice(0, 2)).toEqual(['--add-dir', plans]);
+    const deny = [`Edit(//${plans.slice(1)}/**)`, `Write(//${plans.slice(1)}/**)`];
+    expect(deny[0]).toStartWith('Edit(//');
+    expect(lead.settings).toEqual({ subagentPromptCacheTtl: '1h', permissions: { deny } });
+    expect(sessionScript(lead, 4747)).toContain(`"permissions":{"deny":["Edit(//${plans.slice(1)}/**)"`);
+    const director = specs.find((s) => s.name === 'director')!;
+    expect(director.extraArgs.flatMap((arg, i) => (arg === '--add-dir' ? [director.extraArgs[i + 1]] : []))).toEqual([mobile, docs, p.skillsDir]);
+    expect(director.settings).toEqual({ subagentPromptCacheTtl: '1h' });
+    expect(specs.find((s) => s.name === 'lead-redaccion')!.extraArgs).not.toContain('--add-dir');
+
+    const off = sessionSpecs({ ...config, departments: { redaccion: false, mantenimiento: false } }, p, '/ws').find((s) => s.name === 'lead-mobile')!;
+    expect(off.extraArgs).not.toContain('--add-dir');
+    expect(off.settings).toEqual({ subagentPromptCacheTtl: '1h' });
+    rmSync(plans, { recursive: true });
+    expect(sessionSpecs(config, p, '/ws').find((s) => s.name === 'lead-mobile')!.extraArgs).not.toContain('--add-dir');
     cleanup();
   });
 
