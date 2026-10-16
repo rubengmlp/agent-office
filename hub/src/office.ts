@@ -34,7 +34,6 @@ import {
   HOLDS_QUESTION,
   MAX_ALERTS,
   MAX_MESSAGES,
-  METER_SWEEP_MS,
   NEW_TURN,
   NOT_DISCARDABLE,
   NOT_PERMISSIONS,
@@ -76,6 +75,7 @@ import {
   taskLine,
   withoutDiscardMark,
 } from './office-texts';
+import { MeterDesk } from './meter-desk';
 import { OfficeBus } from './office-bus';
 import { RulesDesk } from './rules-desk';
 import { SessionBook } from './session-book';
@@ -114,7 +114,7 @@ import {
 } from './state-machine';
 import { SyncDesk, type SyncResult } from './sync';
 import { floorText, plural, roleText, roundText, scoreText } from './texts';
-import { planSlugIn, planSlugOf, SWEEP_BUDGET, TokenMeter, type MeterAgent, type PlanSubject } from './tokens';
+import { planSlugIn } from './tokens';
 import { UsageDesk } from './usage';
 import type {
   ActivityView,
@@ -228,8 +228,7 @@ export class Office {
   private readonly pendingWrites = new Map<string, { root: string; paths: Map<string, string>; gitTree: boolean }>();
   private readonly fingerprintEdits = new Map<string, true>();
   private readonly usage: UsageDesk;
-  private readonly meter: TokenMeter;
-  private meterSweptAt: number;
+  private readonly meter: MeterDesk;
   readonly chat: ChatDesk;
   private readonly chatNudged = new Set<string>();
   private readonly chatWarned = new Set<string>();
@@ -311,7 +310,7 @@ export class Office {
       installTargets: () => this.installTargets(),
       base: (slug) => this.sync.base(slug),
       ahead: (slug) => this.sync.ahead(slug),
-      onChange: (docs) => this.bus.emit({ type: 'documents', data: this.withPlanTokens(docs) }),
+      onChange: (docs) => this.bus.emit({ type: 'documents', data: this.meter.withPlanTokens(docs) }),
       maxRounds: () => this.config.review.maxRounds,
     });
     this.watch = new GuardWatch({
@@ -338,13 +337,7 @@ export class Office {
       report: (finding) => this.recordBashChanges(finding),
     });
     this.usage = new UsageDesk(this.now, (view) => this.bus.emit({ type: 'usage', data: view }));
-    this.meter = new TokenMeter({
-      db: opts.db,
-      claudeHome: opts.claudeHome,
-      now: this.now,
-      onRead: (data) => this.bus.emit({ type: 'tokens', data }),
-    });
-    this.meterSweptAt = this.now();
+    this.meter = new MeterDesk({ db: opts.db, claudeHome: opts.claudeHome, now: this.now, bus: this.bus, book: this.book });
     this.chat = new ChatDesk({
       db: opts.db,
       now: this.now,
@@ -391,7 +384,7 @@ export class Office {
       questions: this.desk.list(),
       messages: this.messages.slice(-100),
       activity: this.bus.recent(),
-      documents: this.withPlanTokens(recentDocuments(this.docs.list())),
+      documents: this.meter.withPlanTokens(recentDocuments(this.docs.list())),
       alerts: this.alerts(),
       usage: this.usage.view(),
       chat: this.chat.recent(SNAPSHOT_LIMIT),
@@ -399,11 +392,7 @@ export class Office {
   }
 
   ingestUsage(raw: unknown): string {
-    const sessionId = text(record(raw).session_id);
-    if (sessionId) {
-      this.meter.noteSession(sessionId, record(raw).transcript_path);
-      this.meter.noteAgent(sessionId, record(raw).transcript_path);
-    }
+    this.meter.noteUsage(raw);
     return this.usage.ingest(raw);
   }
 
@@ -429,7 +418,7 @@ export class Office {
       return null;
     }
     this.stall.trackOpenTools(e, c, session, now);
-    this.noteTranscripts(e, c.agentKey);
+    this.meter.noteTranscripts(e, c.agentKey);
     const agent = this.book.touchAgent(e, c, session, now);
     if (this.book.isRetired(agent)) {
       this.ingestRetired(e, c, agent, session, now);
@@ -485,7 +474,7 @@ export class Office {
         this.stall.openTask(agent, now);
       }
       const plan = planSlugIn(text(e.prompt));
-      if (plan) this.setPlan(agent, plan);
+      if (plan) this.meter.setPlan(agent, plan);
       if (isUserPrompt(text(e.prompt))) this.userInstructed(session.sessionId, now);
     }
     if (c.event === 'PostToolUse' && isMain && c.tool === 'AskUserQuestion') this.userInstructed(session.sessionId, now);
@@ -530,7 +519,7 @@ export class Office {
     this.settlePermissions(agent.key, c.event, c.tool, e.tool_input);
     if (c.event === 'SubagentStop' || c.event === 'Stop' || c.event === 'SessionEnd') this.storeReport(agent, now);
 
-    if (TURN_OVER.has(c.event)) this.meterLater(agent);
+    if (TURN_OVER.has(c.event)) this.meter.later(agent);
     if (c.sessionEnded) this.endSession(session, now);
     if (c.event === 'SubagentStart' || c.event === 'SessionStart' || c.event === 'UserPromptSubmit') return this.injection(c.event, agent, session);
     if (c.event === 'PreToolUse' && c.tool && EDIT_TOOLS.has(c.tool) && c.filePath) return this.chatReminder(agent, session, c.filePath, now);
@@ -765,7 +754,7 @@ export class Office {
     });
     const main = this.book.agents.get(sessionId);
     const plan = opts.asTask ? planSlugIn(body) : null;
-    if (main && main.retiredAt === null && plan) this.setPlan(main, plan);
+    if (main && main.retiredAt === null && plan) this.meter.setPlan(main, plan);
     const task = opts.asTask ? taskLine(publicText(body, session.floorKind)) : null;
     if (main && main.retiredAt === null && task) {
       main.task = task;
@@ -893,7 +882,7 @@ export class Office {
   }
 
   documents(): DocumentView[] {
-    return this.withPlanTokens(this.docs.list());
+    return this.meter.withPlanTokens(this.docs.list());
   }
 
   documentContent(path: string): DocumentContent | null {
@@ -1016,7 +1005,7 @@ export class Office {
       }
       if (this.book.view(agent, now).state !== agent.sentState) this.book.emitAgent(agent, now);
     }
-    this.meterSweep(now);
+    this.meter.sweep(now);
     for (const session of [...this.book.sessions.values()]) {
       if (session.endedAt === null && session.socket && !existsSync(session.socket)) this.endSession(session, now);
       else if (this.stall.isGhost(session, now)) this.endSession(session, now, true);
@@ -1599,7 +1588,7 @@ export class Office {
     this.book.persistAgent(agent);
     this.book.emitAgent(agent, now);
     this.storeReport(agent, now);
-    this.meterLater(agent);
+    this.meter.later(agent);
   }
 
   // The script is not a hook and brings no agent_id: the floor comes from its folder. Who signs comes from the
@@ -1694,7 +1683,7 @@ export class Office {
     this.sql.insertEvent.run(now, e.session_id, agent.key, session.floor, c.event, c.tool, null, c.filePath, storedPayload(e, kind));
     if (TURN_OVER.has(c.event)) {
       agent.retiredAwake = false;
-      this.meterLater(agent);
+      this.meter.later(agent);
     } else if (!agent.retiredAwake) {
       agent.retiredAwake = true;
       this.pushActivity({
@@ -1808,7 +1797,7 @@ export class Office {
   private messageReceived(agent: AgentRuntime, body: string | null, now: number): void {
     if (agent.retiredAt !== null || agent.endedAt !== null) return;
     const plan = planSlugIn(body);
-    if (plan) this.setPlan(agent, plan);
+    if (plan) this.meter.setPlan(agent, plan);
     const task = taskLine(body);
     if (!task && !agent.away) return;
     if (task) {
@@ -1878,7 +1867,7 @@ export class Office {
       this.book.persistAgent(agent);
       this.book.emitAgent(agent, now);
       this.storeReport(agent, now);
-      this.meterLater(agent);
+      this.meter.later(agent);
       if (this.watch.watching(agent.key)) this.bus.background(this.watch.finish(agent.key));
       if (this.changes.watching(agent.key)) this.bus.background(this.changes.finish(agent.key));
     }
@@ -1907,59 +1896,6 @@ export class Office {
 
   private pushActivity(entry: ActivityView): void {
     this.bus.pushActivity(entry);
-  }
-
-  private noteTranscripts(e: HookEvent, agentKey: string): void {
-    this.meter.noteSession(e.session_id, e.transcript_path);
-    this.meter.noteAgent(agentKey, agentKey === e.session_id ? e.transcript_path : e.agent_transcript_path);
-  }
-
-  private planSubject(agent: AgentRuntime): PlanSubject {
-    return { name: agent.name, roleId: roleIdOf(agent.role), floorKind: agent.floorKind, planSlug: agent.planSlug };
-  }
-
-  private meterAgent(agent: AgentRuntime): MeterAgent | null {
-    const lead = this.book.agents.get(agent.sessionId) ?? null;
-    if (!inOfficeScope({ floorKind: agent.floorKind, sessionRole: agent.role, leadRole: lead?.role ?? null })) return null;
-    return {
-      key: agent.key,
-      sessionId: agent.sessionId,
-      floor: agent.floor,
-      roleId: roleIdOf(agent.role),
-      name: agent.name,
-      cwd: this.book.sessions.get(agent.sessionId)?.cwd ?? null,
-      plan: planSlugOf(this.planSubject(agent), lead && lead !== agent ? this.planSubject(lead) : null),
-    };
-  }
-
-  private meterLater(agent: AgentRuntime): void {
-    const subject = this.meterAgent(agent);
-    if (subject) this.bus.background(this.meter.schedule(subject));
-  }
-
-  private setPlan(agent: AgentRuntime, slug: string): void {
-    if (agent.planSlug === slug) return;
-    const subject = this.meterAgent(agent);
-    if (subject) this.meter.readNow(subject);
-    agent.planSlug = slug;
-  }
-
-  private meterSweep(now: number): void {
-    if (now - this.meterSweptAt < METER_SWEEP_MS) return;
-    this.meterSweptAt = now;
-    let budget = SWEEP_BUDGET;
-    for (const agent of this.book.agents.values()) {
-      if (budget <= 0) break;
-      if (agent.endedAt !== null || agent.away) continue;
-      if (agent.updatedAt <= this.meter.lastRead(agent.key) && !this.meter.behind(agent.key)) continue;
-      const subject = this.meterAgent(agent);
-      if (subject) budget -= this.meter.readNow(subject, subject.plan, budget);
-    }
-  }
-
-  private withPlanTokens(docs: DocumentView[]): DocumentView[] {
-    const plans = this.meter.planTotals();
-    return docs.map((doc) => (doc.kind === 'plan' ? { ...doc, tokens: plans.get(doc.slug) ?? null } : doc));
   }
 
   private dumpRaw(e: HookEvent, now: number): void {
