@@ -6,7 +6,7 @@ import { BOARD_COLUMNS, doneSummary, leavesDone, manualTarget, nextStatus, order
 import { BRIEF_PREFIX } from '../src/protocol';
 import { planSlugIn } from '../src/tokens';
 import type { ActivityView, FinishedView, OrderStatus } from '../src/types';
-import { DIRECTOR, LEAD, PLAN, boardOrders, brief, deliveryRig, eventIn, orderOf, newOrder, seedPlan, startDirector, startLead, write, type Rig } from './delivery-rig';
+import { DIRECTOR, LEAD, PLAN, boardOrders, brief, checksConfig, deliveryRig, eventIn, leadMessages, newOrder, orderOf, seedPlan, startDirector, startLead, write, type Rig } from './delivery-rig';
 import { git } from './helpers';
 
 let rig: Rig | undefined;
@@ -423,3 +423,77 @@ async function newOrderFromPanel(r: Rig, title: string) {
   await r.h.office.idle();
   return orderOf(r, created.order.slug);
 }
+
+describe('the encargo script', () => {
+  const lead = { socket: null, token: 'lead-token', role: 'office-lead-mobile', name: 'lead-mobile' };
+  const ask = (r: Rig, order: string, extra: Partial<{ slug: string; reason: string; cwd: string }> = {}, meta = lead) =>
+    r.h.office.orderScript({ order, cwd: r.repo, ...extra }, meta);
+
+  test('estado lists the open orders with folder and checks, carpeta gives the folder', async () => {
+    rig = deliveryRig({ configure: checksConfig(['uno', 'exit 0']) });
+    expect(await ask(rig, 'estado')).toEqual({ status: 200, text: 'No hay encargos abiertos en esta planta.' });
+    expect(await ask(rig, 'carpeta')).toMatchObject({ status: 404, text: 'ERROR: no hay ningún encargo abierto en esta planta.' });
+    const card = await newOrder(rig, 'Pantalla de login');
+    const folder = card.worktree?.path ?? '';
+    const status = await ask(rig, 'estado');
+    expect(status.status).toBe(200);
+    expect(status.text).toContain(`encargo/${card.slug} [pendiente] Pantalla de login`);
+    expect(status.text).toContain('comprobaciones: sin ejecutar');
+    const carpeta = await ask(rig, 'carpeta');
+    expect(carpeta.text).toBe(`encargo/${card.slug} → ${folder} (base origin/develop@${card.baseSha?.slice(0, 7)}; dependencias: no hacen falta)`);
+    expect(await ask(rig, 'carpeta', { slug: `encargo/${card.slug}` })).toEqual(carpeta);
+    write(folder, 'lib/a.txt', 'a');
+    expect(await ask(rig, 'carpeta', { cwd: join(folder, 'lib') })).toEqual(carpeta);
+  });
+
+  test('with several open orders the lead has to say which, or be inside one', async () => {
+    rig = deliveryRig();
+    const first = await newOrder(rig, 'Uno');
+    const second = await newOrder(rig, 'Dos');
+    const ambiguous = await ask(rig, 'carpeta');
+    expect(ambiguous.status).toBe(409);
+    expect(ambiguous.text).toContain(`encargo/${first.slug}, encargo/${second.slug}`);
+    expect((await ask(rig, 'carpeta', { slug: second.slug })).text).toContain(`encargo/${second.slug} →`);
+    expect((await ask(rig, 'carpeta', { cwd: second.worktree?.path ?? '' })).text).toContain(`encargo/${second.slug} →`);
+    expect((await ask(rig, 'carpeta', { slug: 'no-existe' })).text).toBe('ERROR: no existe encargo/no-existe en esta planta.');
+  });
+
+  test('comprobar starts the checks and the lead hears the result', async () => {
+    rig = deliveryRig({ configure: checksConfig(['uno', 'exit 0'], ['dos', 'exit 0']) });
+    const card = await newOrder(rig);
+    const started = await ask(rig, 'comprobar');
+    expect(started).toEqual({ status: 200, text: `Comprobaciones de encargo/${card.slug} lanzadas (uno, dos). Te aviso con COMPROBACIONES cuando terminen.` });
+    await rig.h.office.idle();
+    expect(leadMessages(rig).at(-1)).toContain(`COMPROBACIONES encargo/${card.slug} en verde`);
+    expect((await ask(rig, 'estado')).text).toContain('comprobaciones: verde 2/2');
+    rig.h.config.floors.mobile!.checks = [];
+    expect(await ask(rig, 'comprobar')).toMatchObject({ status: 409, text: 'ERROR: esta planta no tiene comprobaciones configuradas.' });
+  });
+
+  test('descartar needs a reason, discards the card and keeps the reason', async () => {
+    rig = deliveryRig();
+    const card = await newOrder(rig);
+    expect(await ask(rig, 'descartar', { slug: card.slug })).toMatchObject({ status: 400 });
+    expect(await ask(rig, 'descartar', { slug: card.slug, reason: 'x' })).toMatchObject({ status: 400 });
+    const result = await ask(rig, 'descartar', { slug: card.slug, reason: 'ya no hace falta' });
+    expect(result.status).toBe(200);
+    const after = orderOf(rig, card.slug);
+    expect(after.status).toBe('descartado');
+    expect(after.description).toContain('Descartado: ya no hace falta');
+    expect(await ask(rig, 'descartar', { slug: card.slug, reason: 'otra vez' })).toMatchObject({ status: 409 });
+    expect(finishedAlerts(rig)).toEqual([]);
+  });
+
+  test('a folder outside the office, an unknown session or an unknown order is refused', async () => {
+    rig = deliveryRig();
+    expect(await rig.h.office.orderScript({ order: 'estado', cwd: rig.h.root }, lead)).toMatchObject({ status: 404 });
+    expect(await rig.h.office.orderScript({ order: 'estado' }, lead)).toMatchObject({ status: 404 });
+    expect(await ask(rig, 'estado', {}, { ...lead, token: 'otro' })).toMatchObject({ status: 403 });
+    expect(await rig.h.office.orderScript({ order: 'estado', cwd: rig.repo }, { socket: null, token: null, role: null, name: null })).toMatchObject({ status: 403 });
+    expect(await ask(rig, 'inventada')).toMatchObject({ status: 404 });
+    await newOrder(rig);
+    expect(await ask(rig, 'inventada')).toMatchObject({ status: 400, text: 'ERROR: orden desconocida.' });
+  });
+});
+
+const finishedAlerts = (r: Rig) => r.h.office.snapshot().finished;

@@ -2,8 +2,8 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { SCRIPTS_DIR, TEMPLATES_DIR, docsRepoPath, roleSettingsFor, writeAtomic, type Paths } from './config';
 import { kilobytes, planByteLimit } from './gate';
-import { profileFor, testCommandFor, type CompiledProfile, type Profiles } from './profiles';
-import type { FloorConfig, OfficeConfig, RoleId } from './types';
+import { checksOf, gateModeOf, profileFor, testCommandFor, type CompiledProfile, type Profiles } from './profiles';
+import type { FloorConfig, GateMode, OfficeConfig, RoleId } from './types';
 
 export class TemplateError extends Error {}
 
@@ -29,6 +29,7 @@ export const FIXED_AGENTS: readonly FixedAgent[] = [
 
 export const SYNC_SCRIPT = join(SCRIPTS_DIR, 'office-sync.sh');
 export const CHAT_SCRIPT = join(SCRIPTS_DIR, 'office-chat.sh');
+export const ENCARGO_SCRIPT = join(SCRIPTS_DIR, 'office-encargo.sh');
 
 export function render(template: string, vars: Record<string, string>): string {
   return template.replace(/\{\{(\w+)\}\}/g, (_match, name: string) => {
@@ -90,9 +91,27 @@ export function commonVars(
     skillsDir: p.skillsDir,
     syncScript: SYNC_SCRIPT,
     chatScript: CHAT_SCRIPT,
+    encargoScript: ENCARGO_SCRIPT,
     port: String(config.port),
     floorsList: floorsList(config, profiles),
   };
+}
+
+// What the lead is told about the tester, from the gate mode of its floor.
+export function testerRule(mode: GateMode, testCommand: string): string {
+  switch (mode) {
+    case 'tester':
+      return `Pide al tester que pruebe exactamente lo que cambió: el comando de tests de esta planta es: ${testCommand}. La puerta del HECHO exige un test en verde del tester posterior al último cambio; un test que ejecuta el propio desarrollador no cuenta.`;
+    case 'checks+tester':
+      return `Con las comprobaciones en verde, pide al tester que pruebe exactamente lo que cambió: el comando de tests de esta planta es: ${testCommand}. La puerta del HECHO exige las dos cosas: comprobaciones en verde sobre la última versión y un test en verde del tester posterior al último cambio.`;
+    case 'checks':
+      return `El tester no es obligatorio en esta planta: la puerta del HECHO solo exige las comprobaciones en verde sobre la última versión. Úsalo para lo que las comprobaciones no cubren (probar un flujo, reproducir un fallo); el comando de tests base de esta planta es: ${testCommand}.`;
+  }
+}
+
+export function checksList(floor: Pick<FloorConfig, 'path' | 'stack' | 'checks'>): string {
+  const checks = checksOf(floor);
+  return checks.length > 0 ? checks.map((check) => `${check.name} (\`${check.command}\`)`).join(', ') : 'ninguna configurada';
 }
 
 function readTemplate(templatesDir: string, name: string): string {
@@ -110,6 +129,8 @@ export function floorAgentDocs(
   templatesDir = TEMPLATES_DIR,
 ): FloorAgentDoc[] {
   const profile = profileFor(profiles, floor.stack);
+  const settings = { ...floor, ...config.floors[slug], path: floor.path, stack: floor.stack };
+  const testCommand = testCommandFor(floor.path, profile);
   return FLOOR_ROLES.map((role) => {
     const name = floorAgentName(role, slug);
     const vars = {
@@ -117,7 +138,9 @@ export function floorAgentDocs(
       slug,
       path: floor.path,
       label: profile.label,
-      testCommand: testCommandFor(floor.path, profile),
+      testCommand,
+      testerRule: testerRule(gateModeOf(settings), testCommand),
+      checksList: checksList(settings),
       skillLine: skillLine(profile),
     };
     const content = render(readTemplate(templatesDir, role), vars);

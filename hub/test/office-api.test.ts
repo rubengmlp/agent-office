@@ -46,6 +46,7 @@ const PUBLIC_METHODS = [
   'order',
   'orderCheckpoints',
   'orderChecks',
+  'orderScript',
   'panelConnected',
   'panelDisconnected',
   'permission',

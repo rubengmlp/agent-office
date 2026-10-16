@@ -78,11 +78,65 @@ describe('floor CLI', () => {
 
     const npm = makeRepo(ctx.dir, 'web', { 'package.json': JSON.stringify({ scripts: { test: 'vitest run' } }) });
     writeFloor(p, profiles, planFloor(p, profiles, npm));
-    expect(readFileSync(agentFile(p, 'lead', 'web'), 'utf8')).toContain('El comando de tests de esta planta es: npm test (el script test');
+    expect(readFileSync(agentFile(p, 'lead', 'web'), 'utf8')).toContain('el comando de tests base de esta planta es: npm test (el script test');
 
     const bare = makeRepo(ctx.dir, 'scripts-node', { 'package.json': '{}' });
     writeFloor(p, profiles, planFloor(p, profiles, bare));
     expect(readFileSync(agentFile(p, 'tester', 'scripts-node'), 'utf8')).toContain('npx vitest run <spec>');
+  });
+
+  test('the agents of a floor carry the delivery cycle: folder, checks, the encargo script and the tester rule of its gate mode', () => {
+    const repo = makeRepo(ctx.dir, 'mobile', { 'pubspec.yaml': 'name: app\n' });
+    writeFloor(p, profiles, planFloor(p, profiles, repo));
+    const script = join(TEMPLATES_DIR, '..', 'scripts', 'office-encargo.sh');
+    const lead = readFileSync(agentFile(p, 'lead', 'mobile'), 'utf8');
+    expect(lead).toContain(`\`${script} carpeta\``);
+    expect(lead).toContain('## Carpeta de cada encargo');
+    expect(lead).toContain('EnterWorktree');
+    expect(lead).toContain('[Agent Office] CARPETA: encargo/<slug> → <ruta>');
+    expect(lead).toContain('analyze (`flutter analyze`), test (`flutter test`)');
+    expect(lead).toContain('HECHO: encargo/<slug> —');
+    expect(lead).toContain('El tester no es obligatorio en esta planta');
+    expect(lead).toContain('Nadie cambia de rama, hace commit ni push');
+    expect(lead).toContain('el `HECHO:` espera a que el usuario lo confirme');
+    for (const role of ['dev', 'tester'] as const) {
+      const text = readFileSync(agentFile(p, role, 'mobile'), 'utf8');
+      expect(text).toContain('EnterWorktree');
+      expect(text).toContain('.claude/worktrees/office-<slug>');
+      expect(text).not.toContain('{{');
+    }
+    expect(readFileSync(agentFile(p, 'dev', 'mobile'), 'utf8')).toContain('`listo`');
+    expect(readFileSync(agentFile(p, 'dev', 'mobile'), 'utf8')).toContain('No hagas commits');
+    const director = readFileSync(agentPath(p, 'office-director'), 'utf8');
+    expect(director).toContain('ENCARGO: <título corto> — <qué conseguir> — criterios: … — fuera: …');
+    expect(director).toContain('Cada encargo es una rama y una tarjeta en el Tablero');
+    expect(director).toContain('nunca fusionas nada');
+  });
+
+  test('the tester rule follows the gate mode of the floor and a floor without checks keeps the tester', () => {
+    const repo = makeRepo(ctx.dir, 'mobile', { 'pubspec.yaml': '' });
+    writeFloor(p, profiles, planFloor(p, profiles, repo));
+    const config = loadConfig(p);
+    config.floors.mobile = { ...config.floors.mobile!, gateMode: 'checks+tester' };
+    config.floors.backend = { path: makeRepo(ctx.dir, 'backend', { 'artisan': '', 'composer.json': '{}' }), stack: 'laravel', managed: true, baseBranch: 'develop', checks: [] };
+    saveConfig(p, config);
+    regenerateAgents(p, profiles);
+    const both = readFileSync(agentFile(p, 'lead', 'mobile'), 'utf8');
+    expect(both).toContain('La puerta del HECHO exige las dos cosas');
+    const tester = readFileSync(agentFile(p, 'lead', 'backend'), 'utf8');
+    expect(tester).toContain('La puerta del HECHO exige un test en verde del tester posterior al último cambio');
+    expect(tester).toContain('ninguna configurada');
+    expect(tester).toContain('php artisan test --filter=<Clase>');
+  });
+
+  test('adding a floor again keeps the delivery settings it already had', () => {
+    const repo = makeRepo(ctx.dir, 'mobile', { 'pubspec.yaml': '' });
+    writeFloor(p, profiles, planFloor(p, profiles, repo));
+    const config = loadConfig(p);
+    config.floors.mobile = { ...config.floors.mobile!, checks: [{ name: 'test', command: 'make test' }], gateMode: 'checks', linkDirs: ['vendor'], baseBranch: 'main' };
+    saveConfig(p, config);
+    writeFloor(p, profiles, planFloor(p, profiles, repo));
+    expect(loadConfig(p).floors.mobile).toMatchObject({ checks: [{ name: 'test', command: 'make test' }], gateMode: 'checks', linkDirs: ['vendor'], baseBranch: 'main' });
   });
 
   test('a repository without a profile skill says so', () => {

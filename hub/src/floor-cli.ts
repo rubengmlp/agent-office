@@ -134,6 +134,7 @@ export function writeFloor(p: Paths, profiles: Profiles, plan: FloorPlan, templa
   const config = loadConfig(p);
   const previous = config.floors[plan.slug];
   config.floors[plan.slug] = {
+    ...previous,
     path: plan.path,
     stack: plan.stack,
     managed: true,

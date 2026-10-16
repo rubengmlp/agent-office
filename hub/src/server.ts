@@ -35,7 +35,7 @@ export const AUTH_TIMEOUT_MS = 1000;
 export const MAX_BODY_BYTES = 8 * 1024 * 1024;
 export const MAX_API_BODY_BYTES = 1024 * 1024;
 export const MAX_WS_PAYLOAD = 16 * 1024;
-const HOOK_ROUTE = /^\/(events|hook|ask|permission|gate[a-z-]*|guard|usage|chat)(\/|$)/;
+const HOOK_ROUTE = /^\/(events|hook|ask|permission|gate[a-z-]*|guard|usage|chat|encargo)(\/|$)/;
 const PLAN_DECISIONS: readonly PlanDecision[] = ['ejecutar', 'aparcar', 'cerrar'];
 const ORDER_STATUSES: readonly OrderStatus[] = ['pendiente', 'en-curso', 'revision', 'hecho'];
 const MAX_ORDER_LENGTH = 4000;
@@ -171,6 +171,13 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
       return asText ? c.text(`ERROR: ${errorTextFor(error)}\n`, 404) : c.json({ error }, 404);
     }
     return asText ? c.text(`${office.chat.readText(channel, result.afterId, result.messages)}\n`) : c.json(result.messages);
+  });
+
+  // The encargo script of the agents: a form, and plain text back.
+  app.post('/encargo', requireKey, async (c) => {
+    const raw = await readForm(c);
+    const result = await office.orderScript({ order: raw.order ?? '', slug: raw.slug, reason: raw.reason, cwd: raw.cwd }, metaOf(c));
+    return c.text(`${result.text}\n`, result.status);
   });
 
   app.post('/api/panel/claim', async (c) => {
@@ -604,6 +611,17 @@ async function readChatPost(c: Context): Promise<ChatPostRequest> {
     from: one(raw.from),
     cwd: one(raw.cwd),
   };
+}
+
+// A form as the scripts send it, or the same as JSON: only strings, one value per field.
+async function readForm(c: Context): Promise<Record<string, string | undefined>> {
+  let raw: Record<string, unknown> = {};
+  try {
+    raw = (c.req.header('content-type') ?? '').includes('application/json') ? record(await c.req.json()) : await c.req.parseBody();
+  } catch {}
+  const out: Record<string, string | undefined> = {};
+  for (const [name, value] of Object.entries(raw)) out[name] = typeof value === 'string' ? value : undefined;
+  return out;
 }
 
 function idOf(value: string | undefined): number | null {

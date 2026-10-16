@@ -9,6 +9,7 @@ import type { AgentRuntime, OrderResult } from './office-state';
 import { folderFailedText, folderText } from './office-texts';
 import type { OrderRow, OrderStore } from './order-store';
 import { BOARD_COLUMNS, doneSummary, leavesDone, manualTarget, nextStatus, orderSlug, randomSuffix, splitBrief } from './orders';
+import { keyMatches } from './security';
 import { gateModeOf, setupOf } from './profiles';
 import { BRIEF_PREFIX, parseProtocol } from './protocol';
 import { validRef } from './repo-ops';
@@ -16,6 +17,7 @@ import type { SessionBook } from './session-book';
 import type {
   CheckTrigger,
   FinishedView,
+  HookMeta,
   HubText,
   OfficeConfig,
   OrderSource,
@@ -44,12 +46,18 @@ export type BoardDeskOpts = {
   order: (sessionId: string, text: string) => Promise<OrderResult>;
   planTotals: () => Map<string, TokenTotals>;
   checks?: BoardChecks;
+  // The managed floor a folder belongs to, for the script of the agents.
+  floorOf: (cwd: string) => string | null;
   rand?: () => number;
 };
 
 export type BoardChecks = Pick<ChecksDesk, 'summary' | 'gateReading' | 'start' | 'force' | 'cancel' | 'latest' | 'history' | 'scheduleListo'>;
 
 export type CreateOrderRequest = { floor: string; title: string; description?: string; base?: string; via: 'lead' | 'director' };
+
+export type ScriptRequest = { order: string; slug?: string; reason?: string; cwd?: string };
+
+export type ScriptResult = { status: 200 | 400 | 403 | 404 | 409; text: string };
 
 export type BoardFailure = { ok: false; status: 400 | 404 | 409 | 502; error: HubText };
 
@@ -434,6 +442,70 @@ export class BoardDesk {
     const fresh = this.opts.store.get(id) as OrderRow;
     this.changed(fresh);
     return { ok: true, order: this.view(fresh) };
+  }
+
+  // ---- the script of the agents -------------------------------------------------------------------------------
+
+  async script(raw: ScriptRequest, meta: HookMeta): Promise<ScriptResult> {
+    const fail = (status: ScriptResult['status'], text: string): ScriptResult => ({ status, text: `ERROR: ${text}` });
+    const cwd = raw.cwd?.trim();
+    const floor = cwd ? this.opts.floorOf(cwd) : null;
+    if (!cwd || !floor) return fail(404, 'esta carpeta no es de ninguna planta gestionada por la oficina.');
+    const caller = meta.token ? [...this.opts.book.sessions.values()].find((s) => s.floor === floor && s.endedAt === null && keyMatches(meta.token, s.token ?? '')) : undefined;
+    if (!caller) return fail(403, 'no reconozco tu sesión: ejecuta el script desde la sesión de la planta.');
+    const wanted = (raw.slug ?? '').replace(/^encargo\//, '').trim();
+    const open = this.opts.store.inFloor(floor, ['pendiente', 'en-curso', 'revision']);
+    if (raw.order === 'estado') return { status: 200, text: open.length > 0 ? open.map((row) => this.statusLine(row)).join('\n') : 'No hay encargos abiertos en esta planta.' };
+    const found = wanted ? this.opts.store.bySlug(wanted) : this.here(floor, cwd, open);
+    if (found === 'ambiguous') return fail(409, `hay varios encargos abiertos (${open.map((row) => `encargo/${row.slug}`).join(', ')}): di cuál.`);
+    if (!found || found.floor !== floor) return fail(404, wanted ? `no existe encargo/${wanted} en esta planta.` : 'no hay ningún encargo abierto en esta planta.');
+    switch (raw.order) {
+      case 'carpeta':
+        return { status: 200, text: this.folderLine(found) };
+      case 'comprobar': {
+        if (!this.opts.checks) return fail(409, 'esta oficina no ejecuta comprobaciones.');
+        const started = await this.opts.checks.start(found.id, 'comprobar');
+        if (!started.ok) return fail(409, started.reason === 'no-checks' ? 'esta planta no tiene comprobaciones configuradas.' : `encargo/${found.slug} no tiene carpeta donde comprobar.`);
+        return { status: 200, text: `Comprobaciones de encargo/${found.slug} lanzadas (${started.run.checks.map((check) => check.name).join(', ')}). Te aviso con COMPROBACIONES cuando terminen.` };
+      }
+      case 'descartar': {
+        const reason = (raw.reason ?? '').trim();
+        if (reason.length < 3) return fail(400, 'descartar pide un motivo: descartar <slug> "<motivo>".');
+        const result = this.discard(found.id);
+        if (!result.ok) return fail(409, `encargo/${found.slug} ya estaba descartado.`);
+        this.opts.store.update(found.id, { description: `${found.description}${found.description ? '\n\n' : ''}Descartado: ${reason.slice(0, 300)}` });
+        this.refresh(found.id);
+        return { status: 200, text: `encargo/${found.slug} descartado. Su carpeta se conserva hasta que caduque.` };
+      }
+      default:
+        return fail(400, 'orden desconocida.');
+    }
+  }
+
+  // The order a lead means without naming it: the one whose folder it is in, or the only open one.
+  private here(floor: string, cwd: string, open: OrderRow[]): OrderRow | 'ambiguous' | null {
+    const inside = this.opts.byPath(realPath(cwd));
+    if (inside && inside.floor === floor) return inside;
+    if (open.length > 1) return 'ambiguous';
+    return open[0] ?? null;
+  }
+
+  private folderLine(row: OrderRow): string {
+    if (!row.worktree_path || row.worktree_state === 'retirado') return `encargo/${row.slug}: sin carpeta (${row.worktree_state ?? 'todavía no creada'}${row.setup_error ? `: ${row.setup_error.split('\n')[0]}` : ''}).`;
+    const text = folderText({ branch: row.branch ?? '', path: row.worktree_path, base: row.base_ref ?? '', sha: row.base_sha ?? '' }, this.dependencies(row));
+    return text.replace(/^\[Agent Office\] CARPETA: /, '');
+  }
+
+  private statusLine(row: OrderRow): string {
+    const checks = this.opts.checks?.summary(row) ?? null;
+    const verdict = !checks
+      ? 'sin comprobaciones'
+      : checks.status === 'none'
+        ? 'sin ejecutar'
+        : checks.status === 'running'
+          ? 'en marcha'
+          : `${checks.status === 'passed' ? 'verde' : 'rojo'} ${checks.passed}/${checks.total}${checks.sha ? ` @${checks.sha.slice(0, 7)}` : ''}`;
+    return `encargo/${row.slug} [${row.status}] ${row.title} — ${this.folderLine(row)} — comprobaciones: ${verdict}`;
   }
 
   checkNow(id: number, trigger: CheckTrigger): Promise<StartResult | null> {

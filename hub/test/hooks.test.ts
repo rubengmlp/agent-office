@@ -6,7 +6,7 @@ import { tempDir } from './helpers';
 
 const HOOK = join(PLUGIN_DIR, 'hooks', 'office-hook.sh');
 const KEY = 'hook-test-key';
-const SCRIPTS = [HOOK, join(SCRIPTS_DIR, 'office-sync.sh'), join(SCRIPTS_DIR, 'office-statusline.sh'), join(SCRIPTS_DIR, 'office-chat.sh')];
+const SCRIPTS = [HOOK, join(SCRIPTS_DIR, 'office-sync.sh'), join(SCRIPTS_DIR, 'office-statusline.sh'), join(SCRIPTS_DIR, 'office-chat.sh'), join(SCRIPTS_DIR, 'office-encargo.sh')];
 
 type Seen = { path: string; headers: Record<string, string>; body: string };
 
@@ -32,6 +32,12 @@ async function runScript(script: string, args: string[], env: Record<string, str
   return { stdout, code };
 }
 
+async function runScriptWithErr(script: string, args: string[], env: Record<string, string>) {
+  const proc = Bun.spawn(['sh', join(SCRIPTS_DIR, script), ...args], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: { ...process.env, CLAUDE_CODE_MESSAGING_TOKEN: '', ...env } });
+  const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+  return { stdout, stderr, code };
+}
+
 async function until(check: () => boolean, timeoutMs = 3000): Promise<void> {
   const start = Date.now();
   while (!check()) {
@@ -49,6 +55,7 @@ describe('office-hook.sh', () => {
   const seen: Seen[] = [];
   let hookAnswer = 'pass';
   let gateAnswer = 'pass';
+  let encargoStatus = 200;
   let delayMs = 0;
   let holdAsk = false;
   const aborted: boolean[] = [];
@@ -72,6 +79,7 @@ describe('office-hook.sh', () => {
         if (path === '/gate-message') return new Response(gateAnswer);
         if (path === '/ask') return new Response('{"hookSpecificOutput":{"hookEventName":"PreToolUse"}}');
         if (path === '/chat') return new Response('enviado #1\n');
+        if (path === '/encargo') return new Response(encargoStatus === 200 ? 'encargo/login-a1b2 → /r/.claude/worktrees/office-login-a1b2\n' : 'ERROR: no hay ningún encargo abierto', { status: encargoStatus });
         if (path === '/api/redaccion/sync') return new Response('fuentes listas\n');
         if (path === '/permission') return new Response('{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}');
         return new Response(null, { status: 404 });
@@ -259,6 +267,46 @@ describe('office-hook.sh', () => {
     expect(seen.at(-1)?.headers).not.toHaveProperty('x-office-token');
     expect(readdirSync(home).sort()).toEqual(['headers', 'key', 'port']);
     expect((await chat({ AGENT_OFFICE_HOME: keyOnly })).code).toBe(69);
+  });
+
+  test('office-encargo.sh posts the order as a form with the key from headers and the token from a private file it removes', async () => {
+    const encargo = (args: string[], env: Record<string, string> = {}) =>
+      runScriptWithErr('office-encargo.sh', args, { CLAUDE_CODE_MESSAGING_TOKEN: 'tok-encargo', AGENT_OFFICE_ROLE: 'office-lead-mobile', AGENT_OFFICE_NAME: 'lead-mobile', AGENT_OFFICE_HOME: home, ...env });
+    const ok = await encargo(['carpeta']);
+    expect(ok).toMatchObject({ stdout: 'encargo/login-a1b2 → /r/.claude/worktrees/office-login-a1b2\n', code: 0 });
+    const seenNow = seen.at(-1);
+    expect(seenNow?.path).toBe('/encargo');
+    expect(seenNow?.headers['x-office-key']).toBe(KEY);
+    expect(seenNow?.headers['x-office-token']).toBe('tok-encargo');
+    expect(seenNow?.headers['x-office-name']).toBe('lead-mobile');
+    const form = new URLSearchParams(seenNow?.body);
+    expect(Object.fromEntries(form.entries())).toMatchObject({ order: 'carpeta', slug: '', reason: '' });
+    expect(form.get('cwd')).toBeTruthy();
+
+    await encargo(['comprobar', 'encargo/login-a1b2']);
+    expect(new URLSearchParams(seen.at(-1)?.body).get('slug')).toBe('encargo/login-a1b2');
+    await encargo(['descartar', 'login-a1b2', 'ya', 'no', 'hace', 'falta']);
+    expect(Object.fromEntries(new URLSearchParams(seen.at(-1)?.body).entries())).toMatchObject({ order: 'descartar', slug: 'login-a1b2', reason: 'ya no hace falta' });
+    await encargo(['estado']);
+    expect(new URLSearchParams(seen.at(-1)?.body).get('order')).toBe('estado');
+
+    await encargo(['carpeta'], { CLAUDE_CODE_MESSAGING_TOKEN: '' });
+    expect(seen.at(-1)?.headers).not.toHaveProperty('x-office-token');
+    expect(readdirSync(home).sort()).toEqual(['headers', 'key', 'port']);
+  });
+
+  test('office-encargo.sh prints the error of the hub to stderr and exits 1, and checks its arguments before calling', async () => {
+    const calls = seen.length;
+    expect((await runScriptWithErr('office-encargo.sh', ['nada'], { AGENT_OFFICE_HOME: home })).code).toBe(64);
+    expect((await runScriptWithErr('office-encargo.sh', ['descartar', 'solo-slug'], { AGENT_OFFICE_HOME: home })).code).toBe(64);
+    expect((await runScriptWithErr('office-encargo.sh', ['carpeta', 'a;b'], { AGENT_OFFICE_HOME: home })).code).toBe(64);
+    expect((await runScriptWithErr('office-encargo.sh', ['estado', 'sobra'], { AGENT_OFFICE_HOME: home })).code).toBe(64);
+    expect((await runScriptWithErr('office-encargo.sh', ['carpeta'], { AGENT_OFFICE_HOME: keyOnly })).code).toBe(69);
+    expect(seen.length).toBe(calls);
+    encargoStatus = 404;
+    const refused = await runScriptWithErr('office-encargo.sh', ['carpeta'], { AGENT_OFFICE_HOME: home });
+    encargoStatus = 200;
+    expect(refused).toMatchObject({ stdout: '', stderr: 'ERROR: no hay ningún encargo abierto', code: 1 });
   });
 
   test('office-sync.sh sends the key from headers and refuses to run without them', async () => {

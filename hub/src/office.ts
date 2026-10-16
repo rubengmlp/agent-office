@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { managedFloors } from './agents';
 import { AskDesk } from './ask-desk';
-import { BoardDesk, type CreateOrderRequest, type CreateOrderResult, type MoveResult } from './board-desk';
+import { BoardDesk, type CreateOrderRequest, type CreateOrderResult, type MoveResult, type ScriptRequest, type ScriptResult } from './board-desk';
 import { ChatDesk, GLOBAL_CHANNEL, SNAPSHOT_LIMIT } from './chat';
 import { CheckpointDesk } from './checkpoints';
 import { ChecksDesk } from './checks';
@@ -361,6 +361,10 @@ export class Office {
       order: (sessionId, text) => this.orders.order(sessionId, text),
       planTotals: () => this.meter.planTotals(),
       checks: this.checks,
+      floorOf: (cwd) => {
+        const root = this.floors.rootOf(realPath(cwd));
+        return managedFloors(this.config).find(([, floor]) => realPath(floor.path) === root)?.[0] ?? null;
+      },
     });
     this.book.restoreSessions();
     this.docs.refresh();
@@ -718,6 +722,10 @@ export class Office {
   orderCheckpoints(id: number): { checkpoints: CheckpointView[]; skipped: SkippedFile[] } | null {
     const order = this.store.get(id);
     return order ? { checkpoints: this.checkpoints.list(id), skipped: this.checkpoints.skipped(order) } : null;
+  }
+
+  orderScript(request: ScriptRequest, meta: HookMeta): Promise<ScriptResult> {
+    return this.board.script(request, meta);
   }
 
   confirmOrderChecks(id: number): MoveResult {
