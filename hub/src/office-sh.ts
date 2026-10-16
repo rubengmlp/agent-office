@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { managedFloors } from './agents';
-import { PLUGIN_DIR, REPO_ROOT, WORKSPACE_DIR, docsRepoPath, permissionModeFor, roleSettingsFor, writeAtomic, type Paths } from './config';
+import { PLUGIN_DIR, REPO_ROOT, SCRIPTS_DIR, WORKSPACE_DIR, docsRepoPath, permissionModeFor, roleSettingsFor, writeAtomic, type Paths } from './config';
 import { MANTENIMIENTO, REDACCION, REDACCION_DIR, TALLER_DIR, realPath } from './floors';
 import { profileFor, type Profiles } from './profiles';
 import type { OfficeConfig, PermissionMode, RoleSettings } from './types';
@@ -19,7 +19,9 @@ export type SessionSpec = {
 
 export const CLONE_PERMISSIONS_FILE = join(PLUGIN_DIR, 'settings', 'clone-permissions.json');
 
-const BASE_SETTINGS = { subagentPromptCacheTtl: '1h' };
+export const STATUSLINE_SCRIPT = join(SCRIPTS_DIR, 'office-statusline.sh');
+export const STATUS_LINE = { type: 'command', command: `sh ${sq(STATUSLINE_SCRIPT)}`, refreshInterval: 60 };
+export const BASE_SETTINGS = { subagentPromptCacheTtl: '1h', statusLine: STATUS_LINE };
 
 export function isOfficeClone(dir: string, liveRoot = REPO_ROOT): boolean {
   try {

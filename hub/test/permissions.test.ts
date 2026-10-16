@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PROFILES_DIR, REPO_ROOT, normalizeConfig } from '../src/config';
 import { FloorError, planFloor } from '../src/floor-cli';
-import { clonePermissions, isOfficeClone, sessionScript, sessionSpecs } from '../src/office-sh';
+import { BASE_SETTINGS, STATUSLINE_SCRIPT, STATUS_LINE, clonePermissions, isOfficeClone, sessionScript, sessionSpecs } from '../src/office-sh';
 import { loadProfiles } from '../src/profiles';
 import { applySettings, settingsView } from '../src/settings';
 import type { HookMeta } from '../src/types';
@@ -109,7 +109,7 @@ describe('permission modes and clone floors in the launchers', () => {
     expect(dirs).toEqual([mobile, docs, p.skillsDir]);
     const script = sessionScript(specs.find((s) => s.name === 'lead-mobile')!, 4747);
     expect(script).toContain("'--permission-mode' 'plan'");
-    expect(script).toContain(`'--settings' '{"subagentPromptCacheTtl":"1h"}'`);
+    expect(script).toContain(`'--settings' '{"subagentPromptCacheTtl":"1h","statusLine":{"type":"command"`);
     cleanup();
   });
 
@@ -156,18 +156,42 @@ describe('permission modes and clone floors in the launchers', () => {
     expect(lead.extraArgs.slice(0, 2)).toEqual(['--add-dir', plans]);
     const deny = [`Edit(//${plans.slice(1)}/**)`, `Write(//${plans.slice(1)}/**)`];
     expect(deny[0]).toStartWith('Edit(//');
-    expect(lead.settings).toEqual({ subagentPromptCacheTtl: '1h', permissions: { deny } });
+    expect(lead.settings).toEqual({ ...BASE_SETTINGS, permissions: { deny } });
     expect(sessionScript(lead, 4747)).toContain(`"permissions":{"deny":["Edit(//${plans.slice(1)}/**)"`);
     const director = specs.find((s) => s.name === 'director')!;
     expect(director.extraArgs.flatMap((arg, i) => (arg === '--add-dir' ? [director.extraArgs[i + 1]] : []))).toEqual([mobile, docs, p.skillsDir]);
-    expect(director.settings).toEqual({ subagentPromptCacheTtl: '1h' });
+    expect(director.settings).toEqual(BASE_SETTINGS);
     expect(specs.find((s) => s.name === 'lead-redaccion')!.extraArgs).not.toContain('--add-dir');
 
     const off = sessionSpecs({ ...config, departments: { redaccion: false, mantenimiento: false } }, p, '/ws').find((s) => s.name === 'lead-mobile')!;
     expect(off.extraArgs).not.toContain('--add-dir');
-    expect(off.settings).toEqual({ subagentPromptCacheTtl: '1h' });
+    expect(off.settings).toEqual(BASE_SETTINGS);
     rmSync(plans, { recursive: true });
     expect(sessionSpecs(config, p, '/ws').find((s) => s.name === 'lead-mobile')!.extraArgs).not.toContain('--add-dir');
+    cleanup();
+  });
+
+  test('every office session carries the status line without losing its permissions', () => {
+    const { dir, cleanup } = tempDir();
+    const p = fakePaths(dir);
+    const mobile = makeRepo(dir, 'mobile', { 'pubspec.yaml': 'name: app' });
+    const docs = join(dir, 'docs');
+    mkdirSync(join(docs, 'redaccion', 'planes'), { recursive: true });
+    mkdirSync(p.skillsDir, { recursive: true });
+    const config = testConfig({ docsRepo: docs, departments: { redaccion: true, mantenimiento: true }, floors: { mobile: floor(mobile) } });
+    const specs = sessionSpecs(config, p, '/ws');
+    expect(specs.map((s) => s.name)).toEqual(['director', 'lead-mobile', 'lead-redaccion', 'lead-mantenimiento']);
+    for (const spec of specs) {
+      expect(spec.settings.statusLine).toEqual({ type: 'command', command: `sh '${STATUSLINE_SCRIPT}'`, refreshInterval: 60 });
+      expect(spec.settings.statusLine).toBe(STATUS_LINE);
+      const script = sessionScript(spec, 4747);
+      expect(script).toContain('"statusLine":{"type":"command"');
+      expect(script).toContain('office-statusline.sh');
+      expect(script).toContain('"refreshInterval":60}');
+    }
+    const lead = specs.find((s) => s.name === 'lead-mobile')!;
+    expect((lead.settings.permissions as { deny: string[] }).deny).toHaveLength(2);
+    expect(STATUSLINE_SCRIPT).toEndWith('/plugin/scripts/office-statusline.sh');
     cleanup();
   });
 
@@ -187,9 +211,9 @@ describe('permission modes and clone floors in the launchers', () => {
     expect(rules).toContain('Edit(~/.claude/agents/**)');
     const specs = sessionSpecs(testConfig({ floors: { 'agent-office-dev': floor(clone), web: floor(other) } }), p, '/ws');
     const cloneSpec = specs.find((s) => s.name === 'lead-agent-office-dev')!;
-    expect(cloneSpec.settings).toEqual({ subagentPromptCacheTtl: '1h', permissions: { ask: rules } });
+    expect(cloneSpec.settings).toEqual({ ...BASE_SETTINGS, permissions: { ask: rules } });
     expect(sessionScript(cloneSpec, 4747)).toContain('"permissions":{"ask":["Bash(bun run setup)"');
-    expect(specs.find((s) => s.name === 'lead-web')!.settings).toEqual({ subagentPromptCacheTtl: '1h' });
+    expect(specs.find((s) => s.name === 'lead-web')!.settings).toEqual(BASE_SETTINGS);
     expect(() => planFloor(p, loadProfiles(PROFILES_DIR), REPO_ROOT)).toThrow(FloorError);
     cleanup();
   });
