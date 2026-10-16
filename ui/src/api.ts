@@ -4,6 +4,8 @@ import type {
   AnswerRequest,
   ChatMessageView,
   ChatUserResult,
+  CheckRunView,
+  CheckpointView,
   DocumentContent,
   FloorAddRequest,
   FloorAddResult,
@@ -12,22 +14,29 @@ import type {
   LessonView,
   MemoryView,
   OrderRequest,
+  OrderStatus,
+  OrderView,
   PlanDecision,
   ReportView,
   RoleId,
   SettingsResult,
   SettingsUpdate,
   SettingsView,
+  SkippedFile,
   UsageRange,
   UsageSummary,
+  WorktreeView,
 } from './types';
 
-export type ApiResult = { ok: true } | { ok: false; status: number; message: string };
+export type NewOrderRequest = { floor: string; title: string; description?: string; base?: string; via: 'lead' | 'director' };
 
-export type ApiData<T> = { ok: true; data: T } | { ok: false; status: number; message: string };
+// key: the dictionary key of the hub error when it sent one, for the callers that act on a particular failure.
+export type ApiResult = { ok: true } | { ok: false; status: number; message: string; key?: string };
 
-async function readError(response: Response): Promise<string> {
-  const fallback = t('api.error', { status: response.status });
+export type ApiData<T> = { ok: true; data: T } | { ok: false; status: number; message: string; key?: string };
+
+async function readError(response: Response): Promise<{ message: string; key?: string }> {
+  const fallback = { message: t('api.error', { status: response.status }) };
   let raw: string;
   try {
     raw = (await response.text()).trim();
@@ -43,13 +52,16 @@ async function readError(response: Response): Promise<string> {
         const value = record[field];
         if (value === undefined || value === '') continue;
         const text = errorText(t, value);
-        if (text) return text;
+        if (text) {
+          const key = typeof value === 'object' && value !== null && typeof (value as { key?: unknown }).key === 'string' ? (value as { key: string }).key : undefined;
+          return key ? { message: text, key } : { message: text };
+        }
       }
     }
   } catch {
-    return raw;
+    return { message: raw };
   }
-  return raw;
+  return { message: raw };
 }
 
 export class OfficeApi {
@@ -127,8 +139,69 @@ export class OfficeApi {
     return this.send('POST', '/api/floors', request);
   }
 
-  deleteFloor(slug: string): Promise<ApiData<Extract<FloorRemoveResult, { ok: true }>>> {
-    return this.send('DELETE', `/api/floors/${encodeURIComponent(slug)}`, undefined);
+  deleteFloor(slug: string, force = false): Promise<ApiData<Extract<FloorRemoveResult, { ok: true }>>> {
+    return this.send('DELETE', `/api/floors/${encodeURIComponent(slug)}${force ? '?force=1' : ''}`, undefined);
+  }
+
+  board(): Promise<ApiData<{ orders: OrderView[] }>> {
+    return this.get('/api/board');
+  }
+
+  createOrder(request: NewOrderRequest): Promise<ApiData<{ order: OrderView }>> {
+    return this.send('POST', '/api/board/orders', request);
+  }
+
+  moveOrder(id: number, to: OrderStatus, force = false): Promise<ApiData<{ order: OrderView }>> {
+    return this.send('POST', `/api/board/orders/${id}/move`, { to, force });
+  }
+
+  discardOrder(id: number): Promise<ApiData<{ order: OrderView }>> {
+    return this.send('POST', `/api/board/orders/${id}/discard`, {});
+  }
+
+  retryOrderFolder(id: number): Promise<ApiData<{ order: OrderView }>> {
+    return this.send('POST', `/api/board/orders/${id}/folder`, {});
+  }
+
+  confirmOrderChecks(id: number): Promise<ApiData<{ order: OrderView }>> {
+    return this.send('POST', `/api/board/orders/${id}/confirm-checks`, {});
+  }
+
+  orderChecks(id: number): Promise<ApiData<{ latest: CheckRunView | null; runs: CheckRunView[] }>> {
+    return this.get(`/api/board/orders/${id}/checks`);
+  }
+
+  runOrderChecks(id: number): Promise<ApiData<{ run: CheckRunView }>> {
+    return this.send('POST', `/api/board/orders/${id}/checks`, {});
+  }
+
+  cancelOrderChecks(id: number): Promise<ApiData<{ ok: true; cancelled: boolean }>> {
+    return this.send('DELETE', `/api/board/orders/${id}/checks`, undefined);
+  }
+
+  orderCheckpoints(id: number): Promise<ApiData<{ checkpoints: CheckpointView[]; skipped: SkippedFile[] }>> {
+    return this.get(`/api/board/orders/${id}/checkpoints`);
+  }
+
+  markFinishedSeen(id: number): Promise<ApiData<{ ok: true }>> {
+    return this.send('POST', `/api/alerts/${id}/seen`, {});
+  }
+
+  worktrees(floor?: string): Promise<ApiData<{ worktrees: WorktreeView[]; totalKb: number; warnKb: number }>> {
+    return this.get(`/api/worktrees${floor ? `?floor=${encodeURIComponent(floor)}` : ''}`);
+  }
+
+  removeWorktree(orderId: number, opts: { branch: boolean; force: boolean }): Promise<ApiData<{ ok: true }>> {
+    const query = [opts.branch ? 'branch=1' : '', opts.force ? 'force=1' : ''].filter(Boolean).join('&');
+    return this.send('DELETE', `/api/worktrees/${orderId}${query ? `?${query}` : ''}`, undefined);
+  }
+
+  keepWorktree(orderId: number): Promise<ApiData<{ ok: true }>> {
+    return this.send('POST', `/api/worktrees/${orderId}/keep`, {});
+  }
+
+  pruneWorktrees(): Promise<ApiData<{ removed: number }>> {
+    return this.send('POST', '/api/worktrees/prune', {});
   }
 
   chatHistory(channel: string, before: number | null): Promise<ApiData<ChatMessageView[]>> {
@@ -156,7 +229,7 @@ export class OfficeApi {
       return { ok: false, status: 0, message: t('api.offline') };
     }
     if (response.status === 401) this.onDenied();
-    if (!response.ok) return { ok: false, status: response.status, message: await readError(response) };
+    if (!response.ok) return { ok: false, status: response.status, ...(await readError(response)) };
     try {
       return { ok: true, data: (await response.json()) as T };
     } catch {
@@ -177,7 +250,7 @@ export class OfficeApi {
     }
     if (response.ok) return { ok: true };
     if (response.status === 401) this.onDenied();
-    const message = fixed[response.status] ?? (await readError(response));
-    return { ok: false, status: response.status, message };
+    const failure = await readError(response);
+    return { ok: false, status: response.status, ...failure, message: fixed[response.status] ?? failure.message };
   }
 }

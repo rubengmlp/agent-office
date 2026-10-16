@@ -2,6 +2,8 @@ import { orderRows, type Row } from '../agents-order';
 import type { OfficeApi } from '../api';
 import { el, setStateColor } from '../dom';
 import { plural, t } from '../i18n';
+import { checksBadgeNode } from '../board/badges';
+import { activeOrder } from '../board/columns';
 import { agentName, doingPhrase, floorLabel, isAway, roleLabel, STATE_COLORS } from '../labels';
 import type { Store } from '../store';
 import { relativeTime } from '../time';
@@ -75,6 +77,7 @@ function floorCard(store: Store, floor: FloorView, agents: readonly AgentView[],
       'summary',
       'floors-summary',
       el('span', 'floors-floor', floorLabel(floor)),
+      orderBadge(store, floor.slug),
       el('span', 'chip floors-count', outside.length > 0 ? t('floors.countAway', { inside: inside.length, outside: outside.length }) : String(inside.length)),
     ),
     el('div', 'floors-body', ...body),
@@ -83,6 +86,14 @@ function floorCard(store: Store, floor: FloorView, agents: readonly AgentView[],
   details.dataset.shown = open ? '1' : '0';
   details.open = open;
   return details;
+}
+
+// The checks of the order the floor is working on, next to its name.
+function orderBadge(store: Store, floor: string): HTMLElement | null {
+  const order = activeOrder(store.orders, floor);
+  const badge = order ? checksBadgeNode(order) : null;
+  if (badge && order) badge.title = `${order.title} · ${badge.title}`;
+  return badge;
 }
 
 function floorsMeta(groups: readonly (readonly AgentView[])[]): string | null {
@@ -194,7 +205,7 @@ export function mountFloors(host: HTMLElement, store: Store, api: OfficeApi | nu
     true,
   );
 
-  store.watch(['agents', 'floors', 'selection', 'questions', 'sessions', 'lang'], schedule);
+  store.watch(['agents', 'floors', 'selection', 'questions', 'sessions', 'lang', 'orders'], schedule);
   store.watch(['tick'], () => {
     const now = store.now();
     for (const { node, text } of times) node.textContent = text(now);

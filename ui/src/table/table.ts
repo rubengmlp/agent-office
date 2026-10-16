@@ -1,6 +1,8 @@
 import type { OfficeApi } from '../api';
 import { orderRows, type Row } from '../agents-order';
 import { stateBadge } from '../badge';
+import { checksBadgeNode } from '../board/badges';
+import { activeOrder } from '../board/columns';
 import { button, el, setStateColor } from '../dom';
 import { plural, t, type MessageKey } from '../i18n';
 import { hubText } from '../i18n/hub';
@@ -197,6 +199,14 @@ function documentList(store: Store, kind: DocumentKind): HTMLElement {
   );
 }
 
+// The checks of the order the floor is working on.
+function orderBadge(store: Store, floor: string): HTMLElement | null {
+  const order = activeOrder(store.orders, floor);
+  const badge = order ? checksBadgeNode(order) : null;
+  if (badge && order) badge.title = `${order.title} · ${badge.title}`;
+  return badge;
+}
+
 function floorSection(store: Store, floor: FloorView, agents: readonly AgentView[], now: number): HTMLElement {
   const documentKind = documentKindFor(floor.kind);
   let stackChip: HTMLElement | null = null;
@@ -210,6 +220,7 @@ function floorSection(store: Store, floor: FloorView, agents: readonly AgentView
     el('h2', 'floor-title', floorLabel(floor)),
     stackChip,
     kindChip(floor.kind),
+    orderBadge(store, floor.slug),
     el('code', 'floor-path', floor.path ?? '—'),
   );
 
@@ -358,5 +369,5 @@ export function mountTable(host: HTMLElement, store: Store, api: OfficeApi | nul
   );
 
   store.watch(['lang'], () => help.replaceChildren(...helpContent()));
-  store.watch(['agents', 'floors', 'questions', 'selection', 'tick', 'alerts', 'documents', 'lang'], schedule);
+  store.watch(['agents', 'floors', 'questions', 'selection', 'tick', 'alerts', 'documents', 'lang', 'orders'], schedule);
 }

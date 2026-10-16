@@ -34,6 +34,12 @@ const SAME_KEYS: MessageKey[] = [
   'tokens.row',
   'tokens.unit.k',
   'tokens.unit.m',
+  'board.card.plan',
+  'board.card.tokens',
+  'board.checks.count',
+  'board.drawer.base',
+  'board.drawer.checks',
+  'board.drawer.plan',
 ];
 
 const SOURCE_DIR = join(import.meta.dir, '../src');

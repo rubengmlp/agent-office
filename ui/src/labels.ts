@@ -263,6 +263,10 @@ export function formatTokens(n: number): string {
   return shorten(n / 1_000_000, 'm');
 }
 
+export function tokensTotal(tokens: TokenTotals): number {
+  return tokens.input + tokens.cacheRead + tokens.cacheCreate + tokens.output;
+}
+
 export function tokenWritten(tokens: TokenTotals): number {
   return tokens.input + tokens.cacheCreate;
 }

@@ -2,7 +2,7 @@ import { button, el } from './dom';
 import { LANG_NAMES, LANGS, plural, t, type Lang, type MessageKey } from './i18n';
 import type { ConnectionStatus, Store } from './store';
 
-export type Tab = 'office' | 'table' | 'plans' | 'chat' | 'settings';
+export type Tab = 'office' | 'table' | 'board' | 'plans' | 'chat' | 'settings';
 
 export type Topbar = {
   root: HTMLElement;
@@ -22,6 +22,7 @@ const STATUS_KEYS: Record<ConnectionStatus, MessageKey> = {
 const TABS: readonly { tab: Tab; labelKey: MessageKey }[] = [
   { tab: 'office', labelKey: 'topbar.tab.office' },
   { tab: 'table', labelKey: 'topbar.tab.table' },
+  { tab: 'board', labelKey: 'topbar.tab.board' },
   { tab: 'plans', labelKey: 'topbar.tab.plans' },
   { tab: 'chat', labelKey: 'topbar.tab.chat' },
   { tab: 'settings', labelKey: 'topbar.tab.settings' },

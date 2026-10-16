@@ -5,11 +5,14 @@ import type {
   AgentState,
   AgentView,
   ChatMessageView,
+  CheckRunView,
   DocumentView,
+  FinishedView,
   FloorKind,
   FloorView,
   GuardAlert,
   MessageView,
+  OrderView,
   QuestionOutcome,
   QuestionView,
   RoleId,
@@ -38,7 +41,11 @@ export type Topic =
   | 'settings'
   | 'usage'
   | 'lang'
-  | 'chat';
+  | 'chat'
+  | 'orders'
+  | 'finished'
+  | 'checks'
+  | 'worktrees';
 
 export type ConnectionStatus = 'nokey' | 'connecting' | 'online' | 'offline' | 'denied' | 'replay';
 export type ToastKind = 'ok' | 'info' | 'error';
@@ -75,6 +82,11 @@ export class Store {
   settings: SettingsView | null = null;
   usage: UsageView | null = null;
   chat: ChatMessageView[] = [];
+  orders: OrderView[] = [];
+  // Alerts of finished orders and plans the user has not closed yet; the popup is rebuilt from them.
+  finished: FinishedView[] = [];
+  readonly checkRuns = new Map<number, CheckRunView>();
+  worktreeVersion = 0;
   // Last id seen with the Chat tab open, per channel; what came in the snapshot counts as seen.
   chatSeen = 0;
   private readonly chatSeenIn = new Map<string, number>();
@@ -222,6 +234,30 @@ export class Store {
         this.mark('agents');
         break;
       }
+      case 'orders':
+        this.orders = message.data;
+        this.mark('orders');
+        break;
+      case 'order': {
+        const at = this.orders.findIndex((order) => order.id === message.data.id);
+        if (at >= 0) this.orders = this.orders.map((order, index) => (index === at ? message.data : order));
+        else this.orders = [...this.orders, message.data];
+        this.mark('orders');
+        break;
+      }
+      case 'checks':
+        this.checkRuns.set(message.orderId, message.data);
+        this.mark('checks');
+        break;
+      case 'worktrees':
+        this.worktreeVersion += 1;
+        this.mark('worktrees');
+        break;
+      case 'finished':
+        if (this.finished.some((item) => item.id === message.data.id)) break;
+        this.finished = [...this.finished, message.data];
+        this.mark('finished');
+        break;
       case 'chat':
         if (this.chat.some((m) => m.id === message.data.id)) break;
         this.chat.push(message.data);
@@ -242,10 +278,19 @@ export class Store {
     this.alerts = [];
     this.usage = null;
     this.chat = [];
+    this.orders = [];
+    this.finished = [];
+    this.checkRuns.clear();
     this.chatSeen = 0;
     this.chatSeenIn.clear();
     this.debouncer.clear();
     this.markAll();
+  }
+
+  dropFinished(id: number): void {
+    if (!this.finished.some((item) => item.id === id)) return;
+    this.finished = this.finished.filter((item) => item.id !== id);
+    this.mark('finished');
   }
 
   select(key: string | null): void {
@@ -369,6 +414,8 @@ export class Store {
     this.alerts = (snapshot.alerts ?? []).slice(-ALERT_LIMIT);
     this.usage = snapshot.usage ?? null;
     this.chat = (snapshot.chat ?? []).slice(-CHAT_LIMIT);
+    this.orders = snapshot.orders ?? [];
+    this.finished = snapshot.finished ?? [];
     this.chatSeen = this.chat.at(-1)?.id ?? 0;
     this.chatSeenIn.clear();
     this.markAll();
@@ -383,7 +430,7 @@ export class Store {
   }
 
   private markAll(): void {
-    const all: Topic[] = ['floors', 'agents', 'sessions', 'questions', 'messages', 'activity', 'selection', 'documents', 'alerts', 'memory', 'usage', 'chat'];
+    const all: Topic[] = ['floors', 'agents', 'sessions', 'questions', 'messages', 'activity', 'selection', 'documents', 'alerts', 'memory', 'usage', 'chat', 'orders', 'finished'];
     for (const topic of all) this.mark(topic);
   }
 

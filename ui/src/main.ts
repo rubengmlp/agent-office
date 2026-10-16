@@ -13,6 +13,7 @@ import { mountPanel } from './panel/panel';
 import { mountPlans } from './plans/plans';
 import { loadRecording, mountReplayControls, ReplayPlayer } from './replay';
 import { Store } from './store';
+import { mountBoard } from './board/board';
 import { mountChat, type ChatHandle } from './chat/chat';
 import { mountTable } from './table/table';
 import { mountToasts } from './toasts';
@@ -38,6 +39,7 @@ async function boot(): Promise<void> {
 
   const officeHost = el('div', 'view office-view active');
   const tableHost = el('div', 'view table-view');
+  const boardHost = el('div', 'view board-view');
   const plansHost = el('div', 'view plans-view');
   const chatHost = el('div', 'view chat-view');
   const settingsHost = el('div', 'view settings-view');
@@ -63,6 +65,7 @@ async function boot(): Promise<void> {
     topbar.setTab(next);
     officeHost.classList.toggle('active', next === 'office');
     tableHost.classList.toggle('active', next === 'table');
+    boardHost.classList.toggle('active', next === 'board');
     plansHost.classList.toggle('active', next === 'plans');
     chatHost.classList.toggle('active', next === 'chat');
     settingsHost.classList.toggle('active', next === 'settings');
@@ -71,7 +74,7 @@ async function boot(): Promise<void> {
   };
 
   const topbar = mountTopbar(store, showTab);
-  root.replaceChildren(topbar.root, el('main', 'main', officeHost, tableHost, plansHost, chatHost, settingsHost, notice), panelHost, toastHost);
+  root.replaceChildren(topbar.root, el('main', 'main', officeHost, tableHost, boardHost, plansHost, chatHost, settingsHost, notice), panelHost, toastHost);
 
   let live: LiveConnection | null = null;
   let expired = false;
@@ -89,6 +92,7 @@ async function boot(): Promise<void> {
 
   mountTable(tableHost, store, api);
   mountPanel(panelHost, store, actions, api);
+  mountBoard(boardHost, store, api);
   mountPlans(plansHost, store, api);
   chat = mountChat(chatHost, store, api);
   const notifier = api ? new Notifier(store) : null;

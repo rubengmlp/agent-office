@@ -1,0 +1,264 @@
+import type { OfficeApi } from '../api';
+import { button, el } from '../dom';
+import { currentLang, t } from '../i18n';
+import { floorLabel } from '../labels';
+import type { Store } from '../store';
+import { clockTime, relativeTime } from '../time';
+import type { CheckRunView, CheckView, CheckpointView, OrderView, SkippedFile } from '../types';
+import { checksBadgeNode, folderBadgeNode } from './badges';
+
+export type OrderDetail = { destroy(): void };
+
+type TabName = 'checks' | 'points';
+
+function seconds(ms: number | null): string {
+  if (ms === null) return '';
+  if (ms < 1000) return `${ms} ms`;
+  return `${new Intl.NumberFormat(currentLang(), { maximumFractionDigits: 1 }).format(ms / 1000)} s`;
+}
+
+function kilobytes(bytes: number): string {
+  return bytes < 1024 ? `${bytes} B` : `${new Intl.NumberFormat(currentLang(), { maximumFractionDigits: 1 }).format(bytes / 1024)} KB`;
+}
+
+function checkRow(check: CheckView): HTMLElement {
+  const icon = check.status === 'passed' ? '✓' : check.status === 'failed' || check.status === 'timeout' ? '✗' : check.status === 'running' ? '' : '·';
+  const head = el(
+    'div',
+    'check-head',
+    el('span', check.status === 'running' ? 'spinner' : `check-mark check-${check.status}`, icon),
+    el('b', 'check-name', check.name),
+    el('span', 'muted', t(`board.check.status.${check.status}`)),
+    check.exitCode !== null && check.exitCode !== 0 ? el('span', 'muted', t('board.check.exit', { code: check.exitCode })) : null,
+    check.durationMs !== null ? el('span', 'muted', seconds(check.durationMs)) : null,
+  );
+  const output = check.outputTail
+    ? el('details', 'check-output', el('summary', '', t('board.check.output')), el('pre', '', check.outputTail))
+    : null;
+  if (output && (check.status === 'failed' || check.status === 'timeout')) output.open = true;
+  return el('li', 'check-row', head, el('code', 'check-command muted', check.command), output);
+}
+
+function runBlock(run: CheckRunView, now: number, first: boolean): HTMLElement {
+  const sha = el('code', '', run.sha.slice(0, 7));
+  const block = el(
+    'section',
+    `run run-${run.status}`,
+    el(
+      'header',
+      'run-head',
+      el('b', '', t(`board.checks.run.${run.status}`)),
+      el('span', 'muted', t(`board.trigger.${run.trigger}`)),
+      sha,
+      el('span', 'muted', relativeTime(run.startedAt, now)),
+    ),
+    el('ul', 'checks-list', ...run.checks.map(checkRow)),
+  );
+  if (!first) block.classList.add('run-old');
+  return block;
+}
+
+function pointRow(point: CheckpointView, now: number): HTMLElement {
+  return el(
+    'li',
+    'point-row',
+    el('code', '', point.sha.slice(0, 7)),
+    el('span', '', point.label),
+    el('span', 'chip', point.reason),
+    el('span', 'muted', `${clockTime(point.createdAt)} · ${relativeTime(point.createdAt, now)}`),
+  );
+}
+
+// The drawer of a card: what the order is, its checks and its checkpoints.
+export function mountOrderDetail(host: HTMLElement, store: Store, api: OfficeApi | null, orderId: number, onClose: () => void): OrderDetail {
+  const panel = el('aside', 'order-drawer');
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-label', t('board.drawer.label'));
+  const backdrop = el('div', 'order-drawer-backdrop');
+  host.replaceChildren(backdrop, panel);
+  backdrop.addEventListener('click', onClose);
+  const onKey = (event: KeyboardEvent): void => {
+    if (event.key === 'Escape' && !document.querySelector('.dialog-backdrop')) onClose();
+  };
+  document.addEventListener('keydown', onKey);
+
+  let tab: TabName = 'checks';
+  let runs: CheckRunView[] = [];
+  let points: CheckpointView[] = [];
+  let skipped: SkippedFile[] = [];
+  let loaded = false;
+  let error = '';
+  let gone = false;
+
+  const order = (): OrderView | undefined => store.orders.find((o) => o.id === orderId);
+
+  const reload = async (): Promise<void> => {
+    if (!api) return;
+    const [checks, checkpoints] = await Promise.all([api.orderChecks(orderId), api.orderCheckpoints(orderId)]);
+    if (gone) return;
+    loaded = true;
+    if (checks.ok) runs = checks.data.runs;
+    else error = checks.message;
+    if (checkpoints.ok) {
+      points = checkpoints.data.checkpoints;
+      skipped = checkpoints.data.skipped;
+    }
+    render();
+  };
+
+  const act = async (action: () => Promise<{ ok: true } | { ok: false; message: string }>, done?: string): Promise<void> => {
+    const result = await action();
+    if (!result.ok) store.toast(result.message, 'error');
+    else if (done) store.toast(done, 'ok');
+  };
+
+  const actions = (current: OrderView): HTMLElement => {
+    const row = el('div', 'order-actions');
+    if (!api) return row;
+    const run = button(t('board.checks.runNow'), 'primary');
+    run.disabled = current.checks === null || current.worktree?.state === 'creando';
+    run.addEventListener('click', () => void act(async () => {
+      const result = await api.runOrderChecks(orderId);
+      await reload();
+      return result.ok ? { ok: true } : result;
+    }));
+    row.append(run);
+    if (current.checks?.status === 'running') {
+      const cancel = button(t('board.checks.cancel'));
+      cancel.addEventListener('click', () => void act(async () => {
+        const result = await api.cancelOrderChecks(orderId);
+        await reload();
+        return result.ok ? { ok: true } : result;
+      }));
+      row.append(cancel);
+    }
+    if (current.checks && current.checks.touched.length > 0 && !current.checks.forced) {
+      const confirm = button(t('board.checks.confirm'));
+      confirm.addEventListener('click', () => {
+        if (!window.confirm(t('board.checks.confirmAsk', { files: current.checks?.touched.join(', ') ?? '' }))) return;
+        void act(async () => {
+          const result = await api.confirmOrderChecks(orderId);
+          return result.ok ? { ok: true } : result;
+        }, t('board.checks.confirmed'));
+      });
+      row.append(confirm);
+    }
+    if (current.worktree?.state === 'error' && !current.worktree.path) {
+      const retry = button(t('board.folder.retry'));
+      retry.addEventListener('click', () => void act(async () => {
+        const result = await api.retryOrderFolder(orderId);
+        return result.ok ? { ok: true } : result;
+      }));
+      row.append(retry);
+    }
+    if (current.status !== 'descartado') {
+      const discard = button(t('board.discard'), 'doc-discard');
+      discard.addEventListener('click', () => {
+        if (!window.confirm(t('board.discardAsk', { title: current.title }))) return;
+        void act(async () => {
+          const result = await api.discardOrder(orderId);
+          return result.ok ? { ok: true } : result;
+        });
+      });
+      row.append(discard);
+    }
+    return row;
+  };
+
+  const metaRow = (label: string, value: Node | string | null): HTMLElement | null =>
+    value === null || value === '' ? null : el('div', 'order-meta-row', el('span', 'muted', label), typeof value === 'string' ? el('span', '', value) : value);
+
+  const checksTab = (current: OrderView, now: number): HTMLElement => {
+    const touched = current.checks && current.checks.touched.length > 0 ? current.checks.touched : [];
+    const warning =
+      touched.length > 0
+        ? el('p', `order-warning${current.checks?.forced ? ' confirmed' : ''}`, t(current.checks?.forced ? 'board.checks.touchedConfirmed' : 'board.checks.touched', { files: touched.join(', ') }))
+        : null;
+    const live = store.checkRuns.get(orderId);
+    const shown = live && !runs.some((r) => r.id === live.id) ? [live, ...runs] : runs.map((r) => (live && r.id === live.id ? live : r));
+    const body =
+      !loaded && api ? el('p', 'muted', t('board.loading')) : shown.length === 0 ? el('p', 'muted', t(current.checks ? 'board.checks.none' : 'board.checks.unconfigured')) : el('div', 'runs', ...shown.map((run, index) => runBlock(run, now, index === 0)));
+    return el('div', 'order-tab', warning, body);
+  };
+
+  const pointsTab = (now: number): HTMLElement => {
+    const list = points.length > 0 ? el('ul', 'points-list', ...points.map((p) => pointRow(p, now))) : el('p', 'muted', t(loaded ? 'board.points.none' : 'board.loading'));
+    const left =
+      skipped.length > 0
+        ? el(
+            'div',
+            'points-skipped',
+            el('h4', '', t('board.points.skipped')),
+            el('ul', '', ...skipped.map((file) => el('li', '', el('code', '', file.path), ' ', el('span', 'muted', `${kilobytes(file.size)} · ${clockTime(file.mtime)}`)))),
+          )
+        : null;
+    return el('div', 'order-tab', list, left);
+  };
+
+  function render(): void {
+    const current = order();
+    if (!current) {
+      panel.replaceChildren(el('p', 'muted', t('board.gone')));
+      return;
+    }
+    const now = store.now();
+    const floor = store.floorBySlug(current.floor);
+    const close = button('×', 'order-close');
+    close.setAttribute('aria-label', t('board.drawer.close'));
+    close.addEventListener('click', onClose);
+    const tabs = el('div', 'order-tabs');
+    for (const name of ['checks', 'points'] as const) {
+      const tabButton = button(t(`board.tab.${name}`), `order-tab-button${tab === name ? ' active' : ''}`);
+      tabButton.setAttribute('aria-selected', String(tab === name));
+      tabButton.addEventListener('click', () => {
+        tab = name;
+        render();
+      });
+      tabs.append(tabButton);
+    }
+    const parts: (Node | null)[] = [
+      el('header', 'order-head', el('h3', 'order-title', current.title), close),
+      el(
+        'div',
+        'order-meta',
+        metaRow(t('board.drawer.status'), t(`board.col.${current.status}`)),
+        metaRow(t('board.drawer.floor'), floor ? floorLabel(floor) : current.floor),
+        metaRow(t('board.drawer.cycle'), current.cycle > 1 ? String(current.cycle) : null),
+        metaRow(t('board.drawer.lead'), current.lead),
+        metaRow(t('board.drawer.branch'), current.branch ? el('code', '', current.branch) : null),
+        metaRow(t('board.drawer.base'), current.base ? el('code', '', `${current.base}${current.baseSha ? `@${current.baseSha.slice(0, 7)}` : ''}`) : null),
+        metaRow(t('board.drawer.folder'), current.worktree?.path ? el('code', 'order-path', current.worktree.path) : null),
+        metaRow(t('board.drawer.state'), folderBadgeNode(current)),
+        metaRow(t('board.drawer.checks'), checksBadgeNode(current)),
+        metaRow(t('board.drawer.plan'), current.planSlug),
+      ),
+      current.worktree?.error ? el('pre', 'order-error', current.worktree.error) : null,
+      current.description ? el('p', 'order-description', current.description) : null,
+      actions(current),
+      tabs,
+      tab === 'checks' ? checksTab(current, now) : pointsTab(now),
+    ];
+    panel.replaceChildren(...parts.filter((part): part is Node => part !== null));
+  }
+
+  const unwatch = store.watch(['orders', 'checks', 'lang'], () => {
+    if (!order()) return;
+    render();
+    if (store.checkRuns.has(orderId) && api && !runs.some((r) => r.id === store.checkRuns.get(orderId)?.id)) void reload();
+  });
+  const unwatchPoints = store.watch(['checks'], () => {
+    const run = store.checkRuns.get(orderId);
+    if (api && run && run.status !== 'running') void reload();
+  });
+  void reload();
+  render();
+
+  return {
+    destroy() {
+      gone = true;
+      unwatch();
+      unwatchPoints();
+      document.removeEventListener('keydown', onKey);
+    },
+  };
+}
