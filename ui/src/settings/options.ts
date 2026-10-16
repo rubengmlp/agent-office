@@ -30,6 +30,15 @@ export const ROLE_ROWS: readonly { id: RoleId; label: string }[] = [
   { id: 'revisor-skills', label: 'Revisores de skills' },
 ];
 
+export function targetRoleLabel(target: string, id: RoleId): string {
+  if (id === 'lead') {
+    if (target === 'redaccion') return 'Jefe de Redacción';
+    if (target === 'mantenimiento') return 'Jefe de Mantenimiento';
+    return 'Jefe de la planta';
+  }
+  return ROLE_ROWS.find((row) => row.id === id)?.label ?? id;
+}
+
 export const MODEL_OPTIONS: readonly { value: string; label: string }[] = [
   { value: 'opus', label: 'Opus' },
   { value: 'sonnet', label: 'Sonnet' },

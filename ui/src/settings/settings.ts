@@ -31,6 +31,7 @@ import {
   ROLE_ROWS,
   PERMISSION_MODE_OPTIONS,
   permissionTargetLabel,
+  targetRoleLabel,
   type NumberField,
   type NumberKey,
 } from './options';
@@ -396,7 +397,7 @@ class SettingsPage {
     const rows = new Map<RoleId, RoleControls>();
     const grid = el('div', 'role-grid', ...roleHead());
     for (const id of target.roles) {
-      const label = ROLE_ROWS.find((row) => row.id === id)?.label ?? id;
+      const label = targetRoleLabel(target.id, id);
       const row = roleInputs(`${label} en ${target.label}`, true);
       const { model, custom, effort } = row;
       const ensure = (draft: SettingsDraft) => {
