@@ -247,8 +247,15 @@ export class ChatDesk {
 
   // Messages of these channels the agent has not been shown yet, without its own; marks them seen.
   unreadFor(agentKey: string, channels: string[], limit = INJECT_LIMIT): ChatUnread {
-    if (channels.length === 0) return { messages: [], hidden: 0 };
+    const unread = this.unread(agentKey, channels, limit);
+    this.markSeen(agentKey, unread.last, channels);
+    return { messages: unread.messages, hidden: unread.hidden };
+  }
+
+  // The same without marking them: last is the id to mark once they reached the agent.
+  unread(agentKey: string, channels: string[], limit = INJECT_LIMIT): ChatUnread & { last: number } {
     const after = this.seen.get(agentKey)?.id ?? 0;
+    if (channels.length === 0) return { messages: [], hidden: 0, last: after };
     const marks = channels.map(() => '?').join(', ');
     const rows = this.deps.db
       .query<ChatRow, (string | number)[]>(`SELECT * FROM chat_messages WHERE channel IN (${marks}) AND id > ? AND author_key != ? ORDER BY id DESC`)
@@ -256,14 +263,13 @@ export class ChatDesk {
     const last = this.deps.db
       .query<{ id: number | null }, string[]>(`SELECT MAX(id) AS id FROM chat_messages WHERE channel IN (${marks})`)
       .get(...channels)?.id ?? 0;
-    this.seen.set(agentKey, { id: Math.max(after, last), channels });
-    return { messages: rows.slice(0, limit).map(toView).reverse(), hidden: Math.max(0, rows.length - limit) };
+    return { messages: rows.slice(0, limit).map(toView).reverse(), hidden: Math.max(0, rows.length - limit), last: Math.max(after, last) };
   }
 
   markSeen(agentKey: string, id: number, channels: string[] = []): void {
     const current = this.seen.get(agentKey);
-    if (current && current.id >= id) return;
-    this.seen.set(agentKey, { id, channels: current?.channels ?? channels });
+    if (current && current.id >= id && (current.channels.length > 0 || channels.length === 0)) return;
+    this.seen.set(agentKey, { id: Math.max(id, current?.id ?? 0), channels: current?.channels.length ? current.channels : channels });
   }
 
   forgetFloor(slug: string): void {
@@ -274,6 +280,13 @@ export class ChatDesk {
   // One line per message for the agents' context; whitespace collapses so a message cannot fake another line.
   format(messages: readonly ChatMessageView[]): string {
     return messages.map((message) => this.line(message)).join('\n');
+  }
+
+  // The same, under a #channel: line per channel when the messages come from more than one.
+  digest(messages: readonly ChatMessageView[]): string {
+    const channels = [...new Set(messages.map((message) => message.channel))];
+    if (channels.length <= 1) return this.format(messages);
+    return channels.map((channel) => `#${channel}:\n${this.format(messages.filter((message) => message.channel === channel))}`).join('\n');
   }
 
   private line(message: ChatMessageView): string {

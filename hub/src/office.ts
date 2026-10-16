@@ -2,8 +2,9 @@ import type { Database } from 'bun:sqlite';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
-import { managedFloors } from './agents';
-import { deliver, encodeInbox, ORDER_LEAD, ORDER_PREFIX, orderText } from './courier';
+import { CHAT_SCRIPT, managedFloors } from './agents';
+import { ChatDesk, GLOBAL_CHANNEL, READ_LIMIT, SNAPSHOT_LIMIT, isChatKind, normalizeChatPath, type ChatAuthor, type ChatError, type ChatUnread } from './chat';
+import { CHAT_PREFIX, chatInboxText, deliver, encodeInbox, ORDER_LEAD, ORDER_PREFIX, orderText } from './courier';
 import { commitDocument } from './docs-repo';
 import { DocumentDesk } from './documents';
 import { FloorInUseError, purgeFloorData } from './floor-data';
@@ -21,7 +22,7 @@ import {
 } from './floors';
 import { decideDocumentGate, decideGate, type GateDecision } from './gate';
 import { GitQueue, runGit, type GitRunner } from './git';
-import { GUARDED_TOOLS, GuardWatch, guardDecision, zonesFor, type GuardContext, type GuardFinding } from './guard';
+import { GUARDED_TOOLS, GuardWatch, guardDecision, tokenize, zonesFor, type GuardContext, type GuardFinding } from './guard';
 import { captureLesson, cleanLesson, deleteLesson, isRoleId, listLessons, memoryContext } from './memory';
 import { isPrivate, publicDetail, publicSummary, publicText, storedPayload } from './privacy';
 import { detectStack, profileFor, type Profiles } from './profiles';
@@ -63,6 +64,10 @@ import type {
   ActivityView,
   AgentState,
   AgentView,
+  ChatMessageView,
+  ChatPostRequest,
+  ChatPostResult,
+  ChatUserResult,
   DocumentContent,
   DocumentStatus,
   DocumentView,
@@ -266,6 +271,9 @@ export class Office {
   private readonly sync: SyncDesk;
   private readonly watch: GuardWatch;
   private readonly usage: UsageDesk;
+  readonly chat: ChatDesk;
+  private readonly chatNudged = new Set<string>();
+  private readonly chatWarned = new Set<string>();
 
   constructor(private readonly opts: OfficeOptions) {
     this.config = opts.config;
@@ -320,6 +328,16 @@ export class Office {
       report: (finding) => this.recordAlert(finding),
     });
     this.usage = new UsageDesk(this.now, (view) => this.emit({ type: 'usage', data: view }));
+    this.chat = new ChatDesk({
+      db: opts.db,
+      now: this.now,
+      channels: () => [GLOBAL_CHANNEL, ...managedFloors(this.config).map(([slug]) => slug)],
+      roleLabel: (role) => {
+        const id = roleIdOf(role);
+        return id ? ROLE_LABELS[id] : null;
+      },
+      onMessage: (message) => this.emit({ type: 'chat', data: message }),
+    });
     this.restoreSessions();
     this.docs.refresh();
   }
@@ -356,7 +374,7 @@ export class Office {
       documents: this.docs.list(),
       alerts: this.alerts(),
       usage: this.usage.view(),
-      chat: [],
+      chat: this.chat.recent(SNAPSHOT_LIMIT),
     };
   }
 
@@ -371,6 +389,7 @@ export class Office {
     const session = this.touchSession(e, meta, now);
     const kind = session.floorKind;
     const c = classify(e, isDepartmentFloor(kind) ? NO_TESTS : profileFor(this.profiles, session.stack));
+    neutralizeChatCommand(c, e);
     const byName = c.event === 'TeammateIdle' && !e.agent_id && c.agentKey !== e.session_id && !this.agents.has(c.agentKey);
     const owner = byName ? this.liveTeammate(c.teammate, c.team ?? session.team ?? teamOfSession(e.session_id), e.session_id) : null;
     if (owner) c.agentKey = owner.key;
@@ -456,7 +475,8 @@ export class Office {
     if (c.event === 'SubagentStop' || c.event === 'Stop' || c.event === 'SessionEnd') this.storeReport(agent, now);
 
     if (c.sessionEnded) this.endSession(session, now);
-    if (c.event === 'SubagentStart' || c.event === 'SessionStart') return this.injection(c.event, agent, session);
+    if (c.event === 'SubagentStart' || c.event === 'SessionStart' || c.event === 'UserPromptSubmit') return this.injection(c.event, agent, session);
+    if (c.event === 'PreToolUse' && c.tool && EDIT_TOOLS.has(c.tool) && c.filePath) return this.chatReminder(agent, session, c.filePath, now);
     return null;
   }
 
@@ -644,6 +664,73 @@ export class Office {
     return 'ok';
   }
 
+  postChat(raw: ChatPostRequest, meta: HookMeta): ChatPostResult {
+    const kind = raw.kind ?? 'texto';
+    if (!isChatKind(kind)) return { ok: false, status: 400, error: { key: 'hub.api.chatKind' } };
+    const found = this.chatAuthor(raw, meta);
+    if ('error' in found) return { ok: false, ...found };
+    const { author, root } = found;
+    const channel = raw.channel?.trim() || author.floor;
+    const files = (raw.files ?? []).map((file) => {
+      const abs = file.startsWith('/') ? realPath(file) : null;
+      return abs && abs !== root && isInside(abs, root) ? relative(root, abs) : normalizeChatPath(file);
+    });
+    const input = { channel, kind, text: raw.text ?? '', files };
+    const error = this.chat.check(input);
+    if (error) return { ok: false, ...error };
+    if (channel !== GLOBAL_CHANNEL && channel !== author.floor) return { ok: false, status: 403, error: { key: 'hub.api.chatChannelForbidden' } };
+    const { message, warnings } = this.chat.post({ ...input, author });
+    this.chatActivity(message);
+    return { ok: true, message, warnings };
+  }
+
+  // The user writes from the panel: the message goes to the channel and, through the inbox, to the leads that
+  // read it, after the lines of their team they had not seen yet.
+  async userChat(channel: string, body: string): Promise<({ ok: true } & ChatUserResult) | Extract<ChatPostResult, { ok: false }>> {
+    const input = { channel, kind: 'texto' as const, text: body, files: [] };
+    const error = this.chat.check(input);
+    if (error) return { ok: false, ...error };
+    const author: ChatAuthor = { key: 'panel', name: 'usuario', role: null, floor: channel === GLOBAL_CHANNEL ? DIRECCION : channel, origin: 'user' };
+    const { message } = this.chat.post({ ...input, author });
+    this.chatActivity(message);
+    let delivered = 0;
+    for (const session of this.chatLeads(channel)) {
+      if (!session.socket || !existsSync(session.socket)) continue;
+      const channels = [session.floor, GLOBAL_CHANNEL];
+      const pending = this.chat.unread(session.sessionId, channels);
+      const lines = this.chatLines({ messages: pending.messages.filter((m) => m.id !== message.id), hidden: pending.hidden }, session.floor) ?? '';
+      try {
+        await this.deliverFn(session.socket, encodeInbox(session.token, chatInboxText(channel, lines, message.text)));
+      } catch {
+        continue;
+      }
+      this.chat.markSeen(session.sessionId, pending.last, channels);
+      delivered += 1;
+    }
+    return { ok: true, message, delivered };
+  }
+
+  async readChat(
+    channel: string,
+    afterId: number | null,
+    waitMs: number,
+    signal?: AbortSignal,
+  ): Promise<{ afterId: number | null; messages: ChatMessageView[] } | 'no-channel'> {
+    if (!this.chat.isChannel(channel)) return 'no-channel';
+    if (waitMs > 0) {
+      // Without desde, waiting means waiting for what comes next, not getting the latest ones at once.
+      const after = afterId ?? this.chat.lastId(channel);
+      return { afterId: after, messages: await this.chat.wait(channel, after, waitMs, signal) };
+    }
+    if (afterId === null) return { afterId: null, messages: this.chat.before(channel, null, READ_LIMIT) };
+    return { afterId, messages: this.chat.since(channel, afterId) };
+  }
+
+  chatHistory(channel: string, beforeId: number | null): ChatMessageView[] | 'no-channel' {
+    if (!this.chat.isChannel(channel)) return 'no-channel';
+    return this.chat.before(channel, beforeId);
+  }
+
   memoryView(floor: string, role: RoleId): MemoryView {
     return { floor, role, lessons: listLessons(this.opts.db, floor, role), reports: savedReports(this.opts.db, floor, role, 10) };
   }
@@ -796,6 +883,7 @@ export class Office {
     const keptActivity = this.activity.filter((entry) => !keys.has(entry.agentKey));
     this.activity.splice(0, this.activity.length, ...keptActivity);
 
+    this.chat.forgetFloor(slug);
     const rows = purgeFloorData(this.opts.db, slug, path);
     const now = this.now();
     this.pushActivity({ ts: now, agentKey: 'panel', event: 'FloorRemoved', tool: null, state: null, summary: { key: 'hub.act.floorRemoved', params: { slug } } });
@@ -943,7 +1031,16 @@ export class Office {
     );
   }
 
+  // Memory on start only, and the chat lines the agent has not seen yet on start and on every turn.
   private injection(event: string, agent: AgentRuntime, session: SessionRuntime): string | null {
+    const blocks = [event === 'UserPromptSubmit' ? null : this.memoryBlock(agent, session), this.chatBlock(agent, session)].filter(
+      (block): block is string => block !== null,
+    );
+    if (blocks.length === 0) return null;
+    return JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: blocks.join('\n\n') } });
+  }
+
+  private memoryBlock(agent: AgentRuntime, session: SessionRuntime): string | null {
     const roleId = roleIdOf(agent.role);
     if (contextFree(roleKind(agent.role))) return null;
     if (!roleId || !remembers(session.floorKind) || !inOfficeScope({ floorKind: session.floorKind, sessionRole: agent.role, leadRole: null })) {
@@ -971,7 +1068,55 @@ export class Office {
       state: null,
       summary: { key: 'hub.act.memoryDelivered', params: { lessons: lessons.length, reports: reports.length } },
     });
-    return JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: context } });
+    return context;
+  }
+
+  private chatBlock(agent: AgentRuntime, session: SessionRuntime): string | null {
+    const channels = this.chatChannelsOf(agent, session);
+    if (!channels) return null;
+    const lines = this.chatLines(this.chat.unreadFor(agent.key, channels), channels[0] ?? GLOBAL_CHANNEL);
+    if (!lines) return null;
+    return `Chat de Agent Office. Mensajes nuevos en ${channels.map((channel) => `#${channel}`).join(' y ')}:\n${lines}`;
+  }
+
+  private chatChannelsOf(agent: AgentRuntime, session: SessionRuntime): string[] | null {
+    const roleId = roleIdOf(agent.role);
+    if (session.floorKind === 'managed' && (roleId === 'lead' || roleId === 'dev' || roleId === 'tester') && this.chat.isChannel(agent.floor)) {
+      return [agent.floor, GLOBAL_CHANNEL];
+    }
+    if (session.floorKind === 'direccion' && roleId === 'director') return [GLOBAL_CHANNEL];
+    return null;
+  }
+
+  private chatLines(unread: ChatUnread, channel: string): string | null {
+    if (unread.messages.length === 0) return null;
+    const lines = [this.chat.digest(unread.messages)];
+    if (unread.hidden > 0) lines.push(`Hay ${unread.hidden} anteriores sin mostrar: ${CHAT_SCRIPT} ${channel} leer`);
+    return lines.join('\n');
+  }
+
+  // A developer about to edit a file: a reminder to claim it, once per file, or a warning per claim of someone else.
+  private chatReminder(agent: AgentRuntime, session: SessionRuntime, filePath: string, now: number): string | null {
+    if (session.floorKind !== 'managed' || roleKind(agent.role) !== 'dev' || !this.chat.isChannel(agent.floor)) return null;
+    const slug = agent.floor;
+    const rel = this.fileLabel(filePath, session);
+    const from = agent.name ? ` --de ${agent.name}` : '';
+    const claims = this.chat.claimsOn(slug, rel);
+    const others = claims.filter((claim) => claim.authorKey !== agent.key);
+    let context: string;
+    if (others.length > 0) {
+      const fresh = others.find((claim) => !this.chatWarned.has(`${agent.key}|${rel}|${claim.id}`));
+      if (!fresh) return null;
+      this.chatWarned.add(`${agent.key}|${rel}|${fresh.id}`);
+      const minutes = Math.max(0, Math.round((now - fresh.ts) / 60_000));
+      context = `Chat de la planta: ${fresh.authorName} anunció ${fresh.file} hace ${minutes} min (#${fresh.id}). Acordadlo en #${slug} antes de editar: ${CHAT_SCRIPT} ${slug} pregunta "…"${from}`;
+    } else {
+      const nudge = `${agent.key}|${rel}`;
+      if (claims.length > 0 || this.chatNudged.has(nudge)) return null;
+      this.chatNudged.add(nudge);
+      context = `Chat de la planta: no has anunciado ${rel} en #${slug}. Anúncialo antes de seguir: ${CHAT_SCRIPT} ${slug} toca ${rel}${from}`;
+    }
+    return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: context } });
   }
 
   private roleForEvent(e: HookEvent, session: SessionRuntime): string | null {
@@ -1125,6 +1270,54 @@ export class Office {
     this.persistAgent(agent);
     this.emitAgent(agent, now);
     this.storeReport(agent, now);
+  }
+
+  // The script is not a hook and brings no agent_id: the floor comes from its folder and the author from --de,
+  // or from the name of the session that runs it, and either must be alive on that floor.
+  private chatAuthor(raw: ChatPostRequest, meta: HookMeta): { author: ChatAuthor; root: string } | ChatError {
+    const cwd = raw.cwd?.trim();
+    const root = cwd ? this.floors.rootOf(realPath(cwd)) : null;
+    const slug = root ? managedFloors(this.config).find(([, floor]) => realPath(floor.path) === root)?.[0] : undefined;
+    if (!root || !slug) return { status: 404, error: { key: 'hub.api.chatFloorUnknown' } };
+    const from = raw.from?.trim() || null;
+    const name = from ?? meta.name;
+    if (name) {
+      const agent = [...this.agents.values()]
+        .filter((a) => a.name === name && a.floor === slug && a.endedAt === null && !this.isRetired(a))
+        .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+      if (agent) return { author: { key: agent.key, name, role: agent.role, floor: slug, origin: 'agent' }, root };
+      const session = [...this.sessions.values()]
+        .filter((s) => s.name === name && s.floor === slug && s.endedAt === null)
+        .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+      if (session) {
+        const role = session.role ?? this.agents.get(session.sessionId)?.role ?? null;
+        return { author: { key: session.sessionId, name, role, floor: slug, origin: 'agent' }, root };
+      }
+    }
+    return { status: 404, error: { key: 'hub.api.chatAuthorUnknown' } };
+  }
+
+  // Live leads of managed floors that read the channel: the floor's own, or all of them for #global.
+  private chatLeads(channel: string): SessionRuntime[] {
+    return [...this.sessions.values()].filter((session) => {
+      if (session.endedAt !== null || session.floorKind !== 'managed') return false;
+      if (!isLeadRole(session.role ?? this.agents.get(session.sessionId)?.role ?? null)) return false;
+      return channel === GLOBAL_CHANNEL || session.floor === channel;
+    });
+  }
+
+  private chatActivity(message: ChatMessageView): void {
+    const base = { who: message.authorName, channel: message.channel };
+    const files = message.files.join(', ');
+    const summary: HubText =
+      message.origin === 'user'
+        ? { key: 'hub.act.chatUser', params: { channel: message.channel, text: short(message.text, 60) } }
+        : message.kind === 'toca'
+          ? { key: 'hub.act.chatClaim', params: { ...base, files } }
+          : message.kind === 'listo'
+            ? { key: 'hub.act.chatRelease', params: { ...base, files } }
+            : { key: 'hub.act.chatPost', params: { ...base, text: short(message.text, 60) } };
+    this.pushActivity({ ts: message.ts, agentKey: message.authorKey, event: 'Chat', tool: null, state: null, summary });
   }
 
   private isRetired(agent: AgentRuntime): boolean {
@@ -1771,11 +1964,35 @@ function assigns(from: AgentRuntime, to: AgentRuntime): boolean {
   return from.parentKey !== to.key && roleKind(to.role) !== 'director';
 }
 
+// A call to the chat script is talking, not testing: whatever its text says, it must not count as a test run.
+export function isChatCommand(command: string): boolean {
+  if (command.includes('$(') || command.includes('`')) return false;
+  const segments = tokenize(command);
+  if (segments.length !== 1) return false;
+  const words = [...(segments[0] ?? [])];
+  while (words.length > 0 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0] ?? '')) words.shift();
+  const first = words[0];
+  return !!first && (first === CHAT_SCRIPT || basename(first) === 'office-chat.sh');
+}
+
+const CHAT_COMMAND_EVENTS: ReadonlySet<string> = new Set(['PreToolUse', 'PostToolUse', 'PostToolUseFailure']);
+
+function neutralizeChatCommand(c: Classified, e: HookEvent): void {
+  if (c.tool !== 'Bash' || !CHAT_COMMAND_EVENTS.has(c.event)) return;
+  const command = text(record(e.tool_input).command);
+  if (!command || !isChatCommand(command)) return;
+  c.test = null;
+  c.command = null;
+  c.state = 'working';
+  c.summary = { key: 'hub.act.chatCommand' };
+  c.detail = { key: 'hub.act.chatCommand' };
+}
+
 export function taskLine(body: string | null): string | null {
   if (!body) return null;
   let rest = body.trim();
   if (rest.startsWith(ORDER_LEAD)) rest = rest.slice(ORDER_LEAD.length).trim();
-  else if (rest.startsWith(ORDER_PREFIX) || rest.startsWith('<') || rest.startsWith('/')) return null;
+  else if (rest.startsWith(ORDER_PREFIX) || rest.startsWith(CHAT_PREFIX) || rest.startsWith('<') || rest.startsWith('/')) return null;
   if (parseProtocol(rest) !== null) return null;
   const line = rest
     .split('\n')

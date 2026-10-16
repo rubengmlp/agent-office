@@ -1,9 +1,12 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { CHAT_SCRIPT } from '../src/agents';
 import { CLAIM_TTL_MS, ChatDesk, WAIT_MAX_MS, clampWait, type ChatAuthor } from '../src/chat';
 import { openDb } from '../src/db';
-import type { ChatKind, ChatMessageView } from '../src/types';
-import { tempDir } from './helpers';
+import { isChatCommand } from '../src/office';
+import type { ChatKind, ChatMessageView, HookMeta } from '../src/types';
+import { ev, floor, harness, tempDir, type Harness } from './helpers';
 
 const START = 1_800_000_000_000;
 
@@ -214,5 +217,242 @@ describe('ChatDesk', () => {
     } finally {
       cleanup();
     }
+  });
+});
+
+describe('chat in the office', () => {
+  const LEAD = '22222222-bbbb-4ccc-8ddd-000000000002';
+  const DIRECTOR = '99999999-dddd-4eee-8fff-000000000009';
+  const REDACCION = '77777777-eeee-4fff-8aaa-000000000007';
+  const leadMeta: HookMeta = { socket: null, token: null, role: 'office-lead-mobile', name: 'lead-mobile' };
+  let h: Harness;
+  let sent: { socket: string; payload: string }[];
+  afterEach(() => h?.cleanup());
+
+  function team(): string {
+    sent = [];
+    h = harness({
+      deliverFn: async (socket, payload) => {
+        sent.push({ socket, payload });
+      },
+    });
+    const repo = join(h.root, 'mobile');
+    mkdirSync(repo, { recursive: true });
+    h.config.floors.mobile = floor(repo);
+    const socket = join(h.root, 'lead.sock');
+    writeFileSync(socket, '');
+    h.office.ingest(ev(LEAD, repo, 'SessionStart', { source: 'startup' }), { ...leadMeta, socket, token: 'tok' });
+    spawn(repo, 'dev-mobile', 'office-dev-mobile', 'adev-1');
+    return repo;
+  }
+
+  function spawn(repo: string, name: string, type: string, id: string): string | null {
+    h.office.ingest(ev(LEAD, repo, 'PreToolUse', { tool_name: 'Agent', tool_use_id: `call-${id}`, tool_input: { name, subagent_type: type } }), leadMeta);
+    h.office.ingest(
+      ev(LEAD, repo, 'PostToolUse', {
+        tool_name: 'Agent',
+        tool_use_id: `call-${id}`,
+        tool_input: { name, subagent_type: type },
+        tool_response: { status: 'teammate_spawned', agentId: id },
+      }),
+      leadMeta,
+    );
+    return h.office.ingest(ev(LEAD, repo, 'SubagentStart', { agent_id: id, agent_type: type }));
+  }
+
+  const context = (out: string | null): string => JSON.parse(out ?? '{}').hookSpecificOutput?.additionalContext ?? '';
+  const agentOf = (key: string) => h.office.snapshot().agents.find((a) => a.key === key);
+  const userTurn = (repo: string, prompt: string) => h.office.ingest(ev(LEAD, repo, 'UserPromptSubmit', { prompt }), leadMeta);
+  const edit = (repo: string, file: string, id = 'adev-1') =>
+    h.office.ingest(ev(LEAD, repo, 'PreToolUse', { agent_id: id, agent_type: 'office-dev-mobile', tool_name: 'Edit', tool_input: { file_path: join(repo, file) } }));
+  const post = (repo: string, kind: ChatKind, text: string, files: string[] = [], from?: string, channel = 'mobile') =>
+    h.office.postChat({ channel, kind, text, files, from, cwd: repo }, leadMeta);
+
+  test('a teammate posts with --de, the lead without it, and both are emitted', () => {
+    const repo = team();
+    const claim = post(repo, 'toca', '', ['lib/a.dart'], 'dev-mobile');
+    expect(claim).toMatchObject({ ok: true, message: { authorKey: 'adev-1', authorName: 'dev-mobile', roleId: 'dev', files: ['lib/a.dart'] } });
+    const reply = post(repo, 'texto', 'ok');
+    expect(reply).toMatchObject({ ok: true, message: { authorKey: LEAD, authorName: 'lead-mobile', roleId: 'lead' } });
+    expect(post(repo, 'toca', '', [join(repo, 'lib', 'b.dart')], 'dev-mobile')).toMatchObject({ ok: true, message: { files: ['lib/b.dart'] } });
+    expect(h.messages.filter((m) => m.type === 'chat')).toHaveLength(3);
+    expect(h.office.snapshot().chat.map((m) => m.id)).toEqual([1, 2, 3]);
+    const activity = h.office.snapshot().activity.filter((a) => a.event === 'Chat');
+    expect(activity.map((a) => a.summary)).toEqual([
+      { key: 'hub.act.chatClaim', params: { who: 'dev-mobile', channel: 'mobile', files: 'lib/a.dart' } },
+      { key: 'hub.act.chatPost', params: { who: 'lead-mobile', channel: 'mobile', text: 'ok' } },
+      { key: 'hub.act.chatClaim', params: { who: 'dev-mobile', channel: 'mobile', files: 'lib/b.dart' } },
+    ]);
+  });
+
+  test('an unknown or retired author, a folder of no managed floor and the channel of another floor are refused', () => {
+    const repo = team();
+    expect(post(repo, 'texto', 'hola', [], 'dev-otro')).toMatchObject({ ok: false, status: 404, error: { key: 'hub.api.chatAuthorUnknown' } });
+    const outside = join(h.root, 'fuera');
+    mkdirSync(outside, { recursive: true });
+    const floorsBefore = h.office.snapshot().floors.length;
+    expect(post(outside, 'texto', 'hola')).toMatchObject({ ok: false, status: 404, error: { key: 'hub.api.chatFloorUnknown' } });
+    expect(h.office.snapshot().floors).toHaveLength(floorsBefore);
+    const backend = join(h.root, 'backend');
+    mkdirSync(backend, { recursive: true });
+    h.config.floors.backend = floor(backend);
+    expect(post(repo, 'texto', 'hola', [], undefined, 'backend')).toMatchObject({ ok: false, status: 403, error: { key: 'hub.api.chatChannelForbidden' } });
+    expect(post(repo, 'texto', 'hola', [], undefined, 'nada')).toMatchObject({ ok: false, status: 404, error: { key: 'hub.api.chatChannelUnknown' } });
+    expect(post(repo, 'texto', 'hola', [], undefined, 'global')).toMatchObject({ ok: true, message: { channel: 'global', floor: 'mobile' } });
+  });
+
+  test('an agent that ended cannot post under its name', () => {
+    const repo = team();
+    h.office.ingest(ev(LEAD, repo, 'PreToolUse', { tool_name: 'Agent', tool_use_id: 'call-x', tool_input: { name: 'explora', subagent_type: 'office-dev-mobile' } }), leadMeta);
+    h.office.ingest(ev(LEAD, repo, 'SubagentStart', { agent_id: 'ax-1', agent_type: 'office-dev-mobile' }));
+    h.office.ingest(
+      ev(LEAD, repo, 'PostToolUse', { tool_name: 'Agent', tool_use_id: 'call-x', tool_input: { name: 'explora', subagent_type: 'office-dev-mobile' }, tool_response: { agentId: 'ax-1' } }),
+      leadMeta,
+    );
+    expect(post(repo, 'texto', 'hola', [], 'explora')).toMatchObject({ ok: true, message: { authorKey: 'ax-1' } });
+    h.office.ingest(ev(LEAD, repo, 'SubagentStop', { agent_id: 'ax-1', agent_type: 'office-dev-mobile' }));
+    expect(post(repo, 'texto', 'hola', [], 'explora')).toMatchObject({ ok: false, status: 404, error: { key: 'hub.api.chatAuthorUnknown' } });
+  });
+
+  test('the user message reaches the lead through the inbox once, and does not change the lead task', async () => {
+    const repo = team();
+    userTurn(repo, 'Implementa el login');
+    expect(agentOf(LEAD)?.task).toBe('Implementa el login');
+    const result = await h.office.userChat('mobile', 'hola');
+    expect(result).toMatchObject({ ok: true, delivered: 1, message: { origin: 'user', authorName: 'usuario', floor: 'mobile' } });
+    expect(sent).toHaveLength(1);
+    const content: string = JSON.parse(sent[0]!.payload.trim().split('\n')[1]!).message.content;
+    expect(content).toStartWith('[Chat de Agent Office] #mobile');
+    expect(content.split('\n').at(-1)).toBe('usuario: hola');
+    expect(userTurn(repo, content)).toBeNull();
+    expect(agentOf(LEAD)?.task).toBe('Implementa el login');
+    expect(h.office.snapshot().activity.find((a) => a.agentKey === 'panel' && a.event === 'Chat')?.summary).toEqual({
+      key: 'hub.act.chatUser',
+      params: { channel: 'mobile', text: 'hola' },
+    });
+  });
+
+  test('without a live socket nothing is delivered', async () => {
+    const repo = team();
+    h.office.ingest(ev(LEAD, repo, 'Stop', {}), { ...leadMeta, socket: join(h.root, 'muerto.sock') });
+    expect(await h.office.userChat('mobile', 'hola')).toMatchObject({ ok: true, delivered: 0 });
+    expect(sent).toEqual([]);
+  });
+
+  test('the inbox carries what the team posted before the user, and the next turn only what came after', async () => {
+    const repo = team();
+    post(repo, 'toca', '', ['lib/c.dart'], 'dev-mobile');
+    await h.office.userChat('mobile', 'seguid');
+    const content: string = JSON.parse(sent[0]!.payload.trim().split('\n')[1]!).message.content;
+    const lines = content.split('\n');
+    expect(lines.findIndex((l) => l.includes('TOCA lib/c.dart'))).toBeGreaterThan(0);
+    expect(lines.findIndex((l) => l.includes('TOCA lib/c.dart'))).toBeLessThan(lines.indexOf('usuario: seguid'));
+    expect(userTurn(repo, content)).toBeNull();
+    post(repo, 'toca', '', ['lib/d.dart'], 'dev-mobile');
+    expect(context(userTurn(repo, 'sigue'))).toContain('TOCA lib/d.dart');
+  });
+
+  test('#global from the panel reaches the leads of managed floors only', async () => {
+    team();
+    const director = join(h.root, 'director.sock');
+    writeFileSync(director, '');
+    h.office.ingest(ev(DIRECTOR, h.workspace, 'SessionStart', {}), { socket: director, token: 't', role: 'office-director', name: 'director' });
+    const docs = join(h.root, 'docs', 'redaccion');
+    mkdirSync(docs, { recursive: true });
+    h.office.ingest(ev(REDACCION, docs, 'SessionStart', {}), { socket: director, token: 't', role: 'office-lead-redaccion', name: 'lead-redaccion' });
+    expect(await h.office.userChat('global', 'reunión')).toMatchObject({ ok: true, delivered: 1, message: { floor: 'direccion' } });
+    expect(sent.map((s) => s.socket)).toEqual([join(h.root, 'lead.sock')]);
+  });
+
+  test('the director reads #global on every turn', () => {
+    const repo = team();
+    h.office.ingest(ev(DIRECTOR, h.workspace, 'SessionStart', {}), { socket: null, token: null, role: 'office-director', name: 'director' });
+    post(repo, 'texto', 'cambia el contrato de /trips', [], undefined, 'global');
+    post(repo, 'texto', 'solo mobile');
+    const out = context(h.office.ingest(ev(DIRECTOR, h.workspace, 'UserPromptSubmit', { prompt: 'HECHO: algo' }), { socket: null, token: null, role: 'office-director', name: 'director' }));
+    expect(out).toContain('Mensajes nuevos en #global');
+    expect(out).toContain('cambia el contrato de /trips');
+    expect(out).not.toContain('solo mobile');
+  });
+
+  test('a new teammate gets the unread lines once, never its own', () => {
+    const repo = team();
+    post(repo, 'texto', 'leed el README', [], undefined, 'mobile');
+    post(repo, 'texto', 'para todos', [], undefined, 'global');
+    const out = context(spawn(repo, 'tester-mobile', 'office-tester-mobile', 'atester-1'));
+    expect(out).toContain('Mensajes nuevos en #mobile y #global');
+    expect(out).toContain('leed el README');
+    expect(out).toContain('#global:');
+    expect(context(h.office.ingest(ev(LEAD, repo, 'SubagentStart', { agent_id: 'atester-1', agent_type: 'office-tester-mobile' })))).toBe('');
+    post(repo, 'texto', 'mio', [], 'tester-mobile');
+    expect(context(h.office.ingest(ev(LEAD, repo, 'SubagentStart', { agent_id: 'atester-1', agent_type: 'office-tester-mobile' })))).toBe('');
+  });
+
+  test('a chat call of the tester is not a test run and does not open the gate', () => {
+    const repo = team();
+    h.office.ingest(ev(LEAD, repo, 'PostToolUse', { agent_id: 'adev-1', agent_type: 'office-dev-mobile', tool_name: 'Write', tool_input: { file_path: join(repo, 'lib', 'a.dart') } }));
+    spawn(repo, 'tester-mobile', 'office-tester-mobile', 'atester-1');
+    const verdicts = () => h.db.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM verdicts').get()?.n;
+    const before = verdicts();
+    const command = `${CHAT_SCRIPT} mobile --de tester-mobile di "flutter test ok"`;
+    for (const hook of ['PreToolUse', 'PostToolUse']) {
+      h.office.ingest(ev(LEAD, repo, hook, { agent_id: 'atester-1', agent_type: 'office-tester-mobile', tool_name: 'Bash', tool_use_id: 'b1', tool_input: { command } }));
+      expect(agentOf('atester-1')?.state).toBe('working');
+    }
+    expect(verdicts()).toBe(before);
+    expect(agentOf('atester-1')?.detail).toEqual({ key: 'hub.act.chatCommand' });
+    const done = h.office.gateMessage(
+      ev(LEAD, repo, 'PreToolUse', {
+        agent_type: 'office-lead-mobile',
+        tool_name: 'SendMessage',
+        tool_input: { to: 'director', message: 'HECHO: login — validado por tester-mobile — pendiente: nada' },
+      }),
+    );
+    expect(done.pass).toBe(false);
+  });
+
+  test('isChatCommand only takes a single call of the script', () => {
+    expect(isChatCommand(`${CHAT_SCRIPT} mobile di "flutter test"`)).toBe(true);
+    expect(isChatCommand('AGENT_OFFICE_NAME=x ./plugin/scripts/office-chat.sh mobile leer')).toBe(true);
+    expect(isChatCommand(`${CHAT_SCRIPT} mobile di "a; b"`)).toBe(true);
+    expect(isChatCommand(`${CHAT_SCRIPT} mobile di ok && flutter test`)).toBe(false);
+    expect(isChatCommand(`${CHAT_SCRIPT} mobile di "$(flutter test)"`)).toBe(false);
+    expect(isChatCommand('flutter test office-chat.sh')).toBe(false);
+    expect(isChatCommand('/tmp/not-office-chat.sh mobile leer')).toBe(false);
+  });
+
+  test('a developer editing an unclaimed file is reminded once per file', () => {
+    const repo = team();
+    const first = context(edit(repo, 'lib/b.dart'));
+    expect(first).toContain('no has anunciado lib/b.dart');
+    expect(first).toContain('--de dev-mobile');
+    expect(first).toContain(`${CHAT_SCRIPT} mobile toca lib/b.dart`);
+    expect(edit(repo, 'lib/b.dart')).toBeNull();
+    post(repo, 'toca', '', ['lib/e.dart'], 'dev-mobile');
+    expect(edit(repo, 'lib/e.dart')).toBeNull();
+  });
+
+  test('a developer editing a file claimed by someone else is warned once per claim', () => {
+    const repo = team();
+    post(repo, 'toca', '', ['lib/a.dart']);
+    h.clock.advance(5 * 60_000);
+    const warned = context(edit(repo, 'lib/a.dart'));
+    expect(warned).toContain('lead-mobile anunció lib/a.dart hace 5 min (#1)');
+    expect(warned).toContain('--de dev-mobile');
+    expect(edit(repo, 'lib/a.dart')).toBeNull();
+    post(repo, 'toca', 'otra vez', ['lib/a.dart']);
+    expect(context(edit(repo, 'lib/a.dart'))).toContain('(#2)');
+  });
+
+  test('reading waits for what comes next without desde, and history pages back', async () => {
+    const repo = team();
+    post(repo, 'texto', 'uno');
+    expect(await h.office.readChat('nada', null, 0)).toBe('no-channel');
+    expect(await h.office.readChat('mobile', null, 0)).toMatchObject({ afterId: null, messages: [{ text: 'uno' }] });
+    const waiting = h.office.readChat('mobile', null, 2000);
+    post(repo, 'texto', 'dos');
+    expect(await waiting).toMatchObject({ afterId: 1, messages: [{ text: 'dos' }] });
+    expect(h.office.chatHistory('mobile', 2)).toMatchObject([{ text: 'uno' }]);
+    expect(h.office.chatHistory('nada', null)).toBe('no-channel');
   });
 });
