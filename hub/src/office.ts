@@ -56,6 +56,7 @@ import {
   type SpawnCall,
 } from './state-machine';
 import { SyncDesk, type SyncResult } from './sync';
+import { UsageDesk } from './usage';
 import type {
   ActivityView,
   AgentState,
@@ -261,6 +262,7 @@ export class Office {
   private readonly docs: DocumentDesk;
   private readonly sync: SyncDesk;
   private readonly watch: GuardWatch;
+  private readonly usage: UsageDesk;
 
   constructor(private readonly opts: OfficeOptions) {
     this.config = opts.config;
@@ -314,6 +316,7 @@ export class Office {
       },
       report: (finding) => this.recordAlert(finding),
     });
+    this.usage = new UsageDesk(this.now, (view) => this.emit({ type: 'usage', data: view }));
     this.restoreSessions();
     this.docs.refresh();
   }
@@ -349,7 +352,12 @@ export class Office {
       activity: this.activity.slice(-MAX_ACTIVITY),
       documents: this.docs.list(),
       alerts: this.alerts(),
+      usage: this.usage.view(),
     };
+  }
+
+  ingestUsage(raw: unknown): string {
+    return this.usage.ingest(raw);
   }
 
   ingest(e: HookEvent, meta: HookMeta = EMPTY_META): string | null {

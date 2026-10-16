@@ -319,6 +319,10 @@ export type LessonCreate = { floor: string; role: RoleId; text: string };
 
 export type DocumentContent = { path: string; kind: DocumentKind; markdown: string };
 
+export type UsageWindow = { usedPct: number; resetsAt: number };
+
+export type UsageView = { fiveHour: UsageWindow | null; sevenDay: UsageWindow | null; at: number | null };
+
 export type Snapshot = {
   now: number;
   floors: FloorView[];
@@ -329,6 +333,7 @@ export type Snapshot = {
   activity: ActivityView[];
   documents: DocumentView[];
   alerts: GuardAlert[];
+  usage: UsageView;
 };
 
 export type ServerMessage =
@@ -344,7 +349,8 @@ export type ServerMessage =
   | { type: 'documents'; data: DocumentView[] }
   | { type: 'alert'; data: GuardAlert }
   | { type: 'memory'; floor: string; role: RoleId }
-  | { type: 'settings'; data: SettingsView };
+  | { type: 'settings'; data: SettingsView }
+  | { type: 'usage'; data: UsageView };
 
 export type ClientMessage =
   | { type: 'auth'; key: string }

@@ -87,6 +87,8 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
     return c.text(decision.pass ? 'pass' : `block:${decision.reason}`);
   });
 
+  app.post('/usage', requireKey, async (c) => c.text(office.ingestUsage(await readJson(c))));
+
   app.get('/api/state', requireKey, (c) => c.json(office.snapshot()));
 
   app.post('/api/answers/:id', requireKey, async (c) => {
