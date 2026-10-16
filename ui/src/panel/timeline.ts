@@ -1,4 +1,5 @@
 import { el, setStateColor } from '../dom';
+import { t } from '../i18n';
 import { agentName, STATE_COLORS } from '../labels';
 import type { Store } from '../store';
 import { clockTime } from '../time';
@@ -47,7 +48,7 @@ function section(title: string, items: readonly HTMLElement[], empty: string): H
 export function mountTimeline(host: HTMLElement, store: Store): void {
   let signature = '';
 
-  store.watch(['selection', 'activity', 'messages', 'agents'], () => {
+  store.watch(['selection', 'activity', 'messages', 'agents', 'lang'], () => {
     const key = store.selectedKey;
     if (key === null) {
       signature = '';
@@ -56,12 +57,12 @@ export function mountTimeline(host: HTMLElement, store: Store): void {
     }
     const activity = newestFirst(store.activity, (entry) => entry.agentKey === key, ACTIVITY_LIMIT);
     const messages = newestFirst(store.messages, (m) => m.fromKey === key || m.toKey === key, MESSAGE_LIMIT);
-    const next = [key, activity.length, activity[0]?.ts ?? 0, messages.length, messages[0]?.id ?? 0].join(':');
+    const next = [store.lang, key, activity.length, activity[0]?.ts ?? 0, messages.length, messages[0]?.id ?? 0].join(':');
     if (next === signature) return;
     signature = next;
     host.replaceChildren(
-      section('Mensajes', messages.map((message) => messageItem(store, key, message)), 'Sin mensajes.'),
-      section('Actividad', activity.map(activityItem), 'Sin actividad.'),
+      section(t('timeline.messages'), messages.map((message) => messageItem(store, key, message)), t('timeline.noMessages')),
+      section(t('timeline.activity'), activity.map(activityItem), t('timeline.noActivity')),
     );
   });
 }

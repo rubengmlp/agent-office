@@ -1,12 +1,12 @@
 import type { OfficeApi } from '../api';
 import { button, el, setStateColor } from '../dom';
+import { currentLang, plural, t, type MessageKey } from '../i18n';
 import { DOCUMENT_STATUS_COLORS, documentKindFor, documentStatusText } from '../labels';
 import type { Store } from '../store';
 import type { DocumentAhead, DocumentBase, DocumentStatus, DocumentView } from '../types';
 import { renderMarkdown } from './markdown';
 
 const SHORT_SHA = 7;
-const DATE_FORMAT = new Intl.DateTimeFormat('es', { day: 'numeric', month: 'short', year: 'numeric' });
 const CLOSED: ReadonlySet<DocumentStatus> = new Set<DocumentStatus>(['cerrado', 'descartado']);
 
 const openAhead = new Set<string>();
@@ -16,19 +16,20 @@ let openViewer: DocumentViewer | null = null;
 
 function shortDate(value: string): string {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : DATE_FORMAT.format(date);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(currentLang(), { day: 'numeric', month: 'short', year: 'numeric' }).format(date);
 }
 
 function baseText(base: DocumentBase): string {
   const label = `${base.floor} ${base.ref} @ ${base.sha.slice(0, SHORT_SHA)}`;
   if (!base.stale) return label;
-  return base.date === null ? `${label} · sin actualizar` : `${label} · a fecha de ${shortDate(base.date)}`;
+  return `${label} · ${base.date === null ? t('deliverables.notUpdated') : t('deliverables.asOf', { date: shortDate(base.date) })}`;
 }
 
 function aheadText(ahead: DocumentAhead, bases: readonly DocumentBase[]): string {
-  const ref = bases.find((base) => base.floor === ahead.floor)?.ref ?? 'la rama base';
+  const ref = bases.find((base) => base.floor === ahead.floor)?.ref ?? t('deliverables.baseBranch');
   const prefix = bases.length > 1 ? `${ahead.floor}: ` : '';
-  return `${prefix}${ref} va ${ahead.commits} ${ahead.commits === 1 ? 'commit' : 'commits'} por delante`;
+  return `${prefix}${plural('deliverables.ahead', ahead.commits, { ref })}`;
 }
 
 function aheadBlock(doc: DocumentView, ahead: DocumentAhead): HTMLElement {
@@ -39,7 +40,7 @@ function aheadBlock(doc: DocumentView, ahead: DocumentAhead): HTMLElement {
   const details = el(
     'details',
     'doc-line doc-ahead',
-    el('summary', '', `${text} · ${files} ${files === 1 ? 'fichero' : 'ficheros'}`),
+    el('summary', '', `${text} · ${plural('table.files', files)}`),
     el('ul', 'doc-files', ...ahead.files.map((file) => el('li', '', el('code', '', file)))),
   );
   details.dataset.ahead = id;
@@ -53,7 +54,7 @@ function metaLines(doc: DocumentView): HTMLElement[] {
     if (ahead.commits > 0) lines.push(aheadBlock(doc, ahead));
   }
   if (doc.installedAt.length > 0) {
-    const installed = el('p', 'doc-line muted', 'Instalada en: ');
+    const installed = el('p', 'doc-line muted', `${t('deliverables.installedAt')} `);
     doc.installedAt.forEach((place, index) => {
       if (index > 0) installed.append(', ');
       installed.append(el('code', '', place));
@@ -90,7 +91,7 @@ export function documentBadge(doc: DocumentView, text: string = documentStatusTe
 
 async function discardDocument(store: Store, doc: DocumentView, control: HTMLButtonElement): Promise<boolean> {
   const api = viewerApi;
-  if (api === null || !window.confirm(`¿Descartar el plan «${doc.title}»?`)) return false;
+  if (api === null || !window.confirm(t('deliverables.confirmDiscard', { title: doc.title }))) return false;
   control.disabled = true;
   const result = await api.discardDocument(doc.path);
   control.disabled = false;
@@ -98,7 +99,7 @@ async function discardDocument(store: Store, doc: DocumentView, control: HTMLBut
     store.toast(result.message, 'error');
     return false;
   }
-  store.toast(`Plan descartado: ${doc.title}`, 'ok');
+  store.toast(t('deliverables.discarded', { title: doc.title }), 'ok');
   return true;
 }
 
@@ -108,10 +109,12 @@ class DocumentViewer {
   private readonly badge = el('span', 'modal-badge');
   private readonly meta = el('div', 'modal-meta');
   private readonly body = el('div', 'modal-body');
-  private readonly discard = button('Descartar', 'doc-discard');
-  private readonly close = button('Cerrar');
+  private readonly discard = button('', 'doc-discard');
+  private readonly close = button('');
   private readonly previousFocus: Element | null = document.activeElement;
   private stopWatching: () => void = () => {};
+  private stopRelabel: () => void = () => {};
+  private notice: MessageKey | null = null;
   private ticket = 0;
 
   constructor(
@@ -146,11 +149,13 @@ class DocumentViewer {
     document.body.append(this.backdrop);
     this.close.focus();
     this.stopWatching = store.watch(['documents'], () => this.sync());
+    this.stopRelabel = store.watch(['lang'], () => this.relabel());
     void this.loadContent();
   }
 
   dispose(): void {
     this.stopWatching();
+    this.stopRelabel();
     document.removeEventListener('keydown', this.onKey, true);
     this.backdrop.remove();
     if (openViewer === this) openViewer = null;
@@ -173,6 +178,18 @@ class DocumentViewer {
     this.renderHead();
   }
 
+  private relabel(): void {
+    this.discard.textContent = t('deliverables.discard');
+    this.close.textContent = t('deliverables.close');
+    if (this.notice !== null) this.showNotice(this.notice);
+    this.renderHead();
+  }
+
+  private showNotice(key: MessageKey): void {
+    this.notice = key;
+    this.body.replaceChildren(el('p', 'muted hint', t(key)));
+  }
+
   private renderHead(): void {
     const { doc } = this;
     this.title.textContent = doc.title;
@@ -185,16 +202,15 @@ class DocumentViewer {
     const api = viewerApi;
     const mine = ++this.ticket;
     if (api === null) {
-      this.body.replaceChildren(
-        el('p', 'muted hint', 'El contenido solo está disponible con la oficina conectada al hub.'),
-      );
+      this.showNotice('deliverables.noHub');
       return;
     }
-    if (this.body.childElementCount === 0) this.body.replaceChildren(el('p', 'muted hint', 'Cargando…'));
+    if (this.body.childElementCount === 0) this.showNotice('deliverables.loading');
     const result = await api.documentContent(this.doc.path);
     if (mine !== this.ticket) return;
     const scroll = this.body.scrollTop;
     const content = result.ok ? renderMarkdown(result.data.markdown) : el('p', 'doc-error hint', result.message);
+    this.notice = null;
     this.body.replaceChildren(content);
     this.body.scrollTop = scroll;
   }
@@ -219,7 +235,7 @@ function card(store: Store, doc: DocumentView): HTMLElement {
   root.dataset.path = doc.path;
   root.title = doc.path;
   if (canDiscard(doc)) {
-    const discard = button('Descartar', 'doc-discard');
+    const discard = button(t('deliverables.discard'), 'doc-discard');
     discard.addEventListener('click', () => void discardDocument(store, doc, discard));
     root.append(el('div', 'doc-actions', discard));
   }
@@ -235,7 +251,7 @@ function watchApprovals(store: Store): void {
       const becameApproved = doc.status === 'aprobado' && before !== undefined && before !== 'aprobado';
       if (!becameApproved || announced.has(doc.path)) continue;
       announced.add(doc.path);
-      store.toast(`${doc.kind === 'plan' ? 'Plan aprobado' : 'Skill aprobada'}: ${doc.title}`, 'ok');
+      store.toast(t(doc.kind === 'plan' ? 'deliverables.planApproved' : 'deliverables.skillApproved', { title: doc.title }), 'ok');
     }
     known.clear();
     for (const doc of store.documents) known.set(doc.path, doc.status);
@@ -262,7 +278,7 @@ export function mountDeliverables(host: HTMLElement, store: Store, api: OfficeAp
     if (doc) openDocument(store, doc);
   });
 
-  store.watch(['selection', 'agents', 'floors', 'documents'], () => {
+  store.watch(['selection', 'agents', 'floors', 'documents', 'lang'], () => {
     const key = store.selectedKey;
     const agent = key === null ? undefined : store.agents.get(key);
     const floor = agent ? store.floorBySlug(agent.floor) : undefined;
@@ -276,11 +292,11 @@ export function mountDeliverables(host: HTMLElement, store: Store, api: OfficeAp
 
     host.hidden = false;
     const documents = store.documents.filter((doc) => doc.kind === kind).sort((a, b) => b.updatedAt - a.updatedAt);
-    const next = JSON.stringify([kind, documents]);
+    const next = JSON.stringify([store.lang, kind, documents]);
     if (next === signature) return;
     signature = next;
 
-    const empty = kind === 'plan' ? 'Sin planes todavía.' : 'Sin skills todavía.';
+    const empty = t(kind === 'plan' ? 'table.docs.noPlans' : 'table.docs.noSkills');
     host.replaceChildren(
       el(
         'section',
@@ -288,7 +304,7 @@ export function mountDeliverables(host: HTMLElement, store: Store, api: OfficeAp
         el(
           'div',
           'panel-summary',
-          el('span', 'section-title', kind === 'plan' ? 'Entregables · Planes' : 'Entregables · Skills'),
+          el('span', 'section-title', t(kind === 'plan' ? 'deliverables.title.plan' : 'deliverables.title.skill')),
           el('span', 'chip', String(documents.length)),
         ),
         el(

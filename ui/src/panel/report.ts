@@ -1,6 +1,7 @@
 import type { OfficeApi } from '../api';
 import { el, type Child } from '../dom';
-import { scoreText, VERDICT_LABELS } from '../labels';
+import { t } from '../i18n';
+import { scoreText, verdictLabel } from '../labels';
 import type { Store } from '../store';
 import { clockTime, relativeTime } from '../time';
 import type { ReportView } from '../types';
@@ -26,7 +27,7 @@ function newest<T extends { ts: number }>(items: readonly T[], limit: number): {
 }
 
 function more(count: number): HTMLElement | null {
-  return count > 0 ? el('li', 'report-more muted', `y ${count} más`) : null;
+  return count > 0 ? el('li', 'report-more muted', t('panel.more', { n: count })) : null;
 }
 
 function renderReport(report: ReportView, now: number, times: TimeNode[]): HTMLElement[] {
@@ -46,22 +47,22 @@ function renderReport(report: ReportView, now: number, times: TimeNode[]): HTMLE
           'li',
           `msg msg-${direction}`,
           el('div', 'msg-head', el('span', 'msg-dir', item.who), time(item.ts)),
-          item.text !== null ? el('p', 'msg-text', item.text) : el('p', 'msg-text muted', 'Sin texto'),
+          item.text !== null ? el('p', 'msg-text', item.text) : el('p', 'msg-text muted', t('report.noText')),
         ),
       ),
     );
 
-  const span = el('p', 'report-span muted', 'Inicio ', time(report.startedAt), ' · ');
-  if (report.endedAt === null) span.append('en curso');
-  else span.append('Fin ', time(report.endedAt));
+  const span = el('p', 'report-span muted', `${t('report.start')} `, time(report.startedAt), ' · ');
+  if (report.endedAt === null) span.append(t('report.running'));
+  else span.append(`${t('report.end')} `, time(report.endedAt));
 
-  const parts: HTMLElement[] = [el('p', 'report-text', report.summary || 'Sin resumen todavía.'), span];
+  const parts: HTMLElement[] = [el('p', 'report-text', report.summary || t('report.noSummary')), span];
 
   if (report.files.length > 0) {
     const shown = report.files.slice(0, FILE_LIMIT);
     parts.push(
       block(
-        `Ficheros cambiados (${report.files.length})`,
+        t('report.files', { n: report.files.length }),
         el(
           'ul',
           'report-list',
@@ -76,7 +77,7 @@ function renderReport(report: ReportView, now: number, times: TimeNode[]): HTMLE
     const { shown, hidden } = newest(report.tests, TEST_LIMIT);
     parts.push(
       block(
-        `Tests (${report.tests.length})`,
+        t('report.tests', { n: report.tests.length }),
         el(
           'ul',
           'report-list',
@@ -99,7 +100,7 @@ function renderReport(report: ReportView, now: number, times: TimeNode[]): HTMLE
     const { shown, hidden } = newest(report.verdicts, VERDICT_LIMIT);
     parts.push(
       block(
-        `Veredictos (${report.verdicts.length})`,
+        t('report.verdicts', { n: report.verdicts.length }),
         el(
           'ul',
           'report-list',
@@ -107,9 +108,9 @@ function renderReport(report: ReportView, now: number, times: TimeNode[]): HTMLE
             el(
               'li',
               'report-verdict',
-              el('span', `verdict verdict-${verdict.kind}`, VERDICT_LABELS[verdict.kind]),
+              el('span', `verdict verdict-${verdict.kind}`, verdictLabel(verdict.kind)),
               verdict.path !== null ? el('code', 'file-path', verdict.path) : null,
-              verdict.round !== null ? el('span', 'muted', `ronda ${verdict.round}`) : null,
+              verdict.round !== null ? el('span', 'muted', t('table.round', { n: verdict.round })) : null,
               verdict.score !== null ? el('span', 'muted', scoreText(verdict.score)) : null,
               time(verdict.ts),
             ),
@@ -124,7 +125,7 @@ function renderReport(report: ReportView, now: number, times: TimeNode[]): HTMLE
     const { shown } = newest(report.sent, MESSAGE_LIMIT);
     parts.push(
       block(
-        `Mensajes enviados (${report.sent.length})`,
+        t('report.sent', { n: report.sent.length }),
         lines(shown.map((message) => ({ ts: message.ts, who: `→ ${message.to}`, text: message.text })), 'out'),
       ),
     );
@@ -134,24 +135,24 @@ function renderReport(report: ReportView, now: number, times: TimeNode[]): HTMLE
     const { shown } = newest(report.received, MESSAGE_LIMIT);
     parts.push(
       block(
-        `Mensajes recibidos (${report.received.length})`,
+        t('report.received', { n: report.received.length }),
         lines(shown.map((message) => ({ ts: message.ts, who: `← ${message.from}`, text: message.text })), 'in'),
       ),
     );
   }
 
-  parts.push(el('p', 'report-counts muted', `Preguntas: ${report.questions} · Bloqueos: ${report.blocked}`));
+  parts.push(el('p', 'report-counts muted', t('report.counts', { questions: report.questions, blocked: report.blocked })));
 
   if (report.lessons.length > 0) {
     parts.push(
       block(
-        `Lecciones enviadas (${report.lessons.length})`,
+        t('report.lessons', { n: report.lessons.length }),
         el('ul', 'report-list', ...report.lessons.map((lesson) => el('li', 'report-lesson', lesson))),
       ),
     );
   }
 
-  if (report.closing) parts.push(block('Mensaje de cierre', el('p', 'report-closing', report.closing)));
+  if (report.closing) parts.push(block(t('report.closing'), el('p', 'report-closing', report.closing)));
 
   return parts;
 }
@@ -165,7 +166,8 @@ export function mountReport(host: HTMLElement, store: Store, api: OfficeApi | nu
   const chip = el('span', 'chip');
   chip.hidden = true;
   const body = el('div', 'panel-card-body');
-  const summary = el('summary', 'panel-summary', el('span', 'section-title', 'Informe'), chip);
+  const title = el('span', 'section-title');
+  const summary = el('summary', 'panel-summary', title, chip);
   const details = el('details', 'panel-card', summary, body);
   details.open = true;
   host.append(details);
@@ -193,15 +195,15 @@ export function mountReport(host: HTMLElement, store: Store, api: OfficeApi | nu
     chip.hidden = report === null;
     if (report === null) {
       const notice = missing
-        ? el('p', 'muted hint', 'Sin informe para este agente.')
+        ? el('p', 'muted hint', t('report.missing'))
         : failure === null
-          ? el('p', 'muted hint', 'Cargando informe…')
+          ? el('p', 'muted hint', t('report.loading'))
           : el('p', 'report-error hint', failure);
       body.replaceChildren(notice);
       return;
     }
-    chip.textContent = report.live ? 'en vivo' : 'cerrado';
-    const stale = failure === null ? [] : [el('p', 'report-error hint', `No se pudo actualizar: ${failure}`)];
+    chip.textContent = report.live ? t('report.live') : t('report.closed');
+    const stale = failure === null ? [] : [el('p', 'report-error hint', t('panel.updateFailed', { error: failure }))];
     body.replaceChildren(...renderReport(report, store.now(), times), ...stale);
   };
 
@@ -258,6 +260,13 @@ export function mountReport(host: HTMLElement, store: Store, api: OfficeApi | nu
       }, REFRESH_MS);
     }
   };
+
+  store.watch(['lang'], () => {
+    title.textContent = t('report.title');
+    if (currentKey === null) return;
+    rendered = '';
+    render();
+  });
 
   store.watch(['selection', 'agents'], sync);
 

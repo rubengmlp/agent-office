@@ -1,6 +1,7 @@
 import type { Actions } from '../actions';
 import { button, el } from '../dom';
-import { agentName } from '../labels';
+import { t } from '../i18n';
+import { agentName, floorLabel } from '../labels';
 import type { Store } from '../store';
 import type { SessionView } from '../types';
 
@@ -8,7 +9,8 @@ const DIRECTOR_ROLES: ReadonlySet<string> = new Set(['office-director', 'office:
 
 function sessionLabel(store: Store, session: SessionView): string {
   const name = session.name || session.role || session.agentKey.slice(0, 8);
-  const floor = store.floorBySlug(session.floor)?.label ?? session.floor;
+  const known = store.floorBySlug(session.floor);
+  const floor = known ? floorLabel(known) : session.floor;
   return `${name} · ${floor}`;
 }
 
@@ -20,13 +22,14 @@ export function mountOrders(host: HTMLElement, store: Store, actions: Actions): 
   const select = el('select', 'orders-select');
   const textarea = el('textarea', 'orders-text');
   textarea.rows = 3;
-  textarea.placeholder = actions.ordersEnabled ? 'Escribe una orden…' : 'Órdenes desactivadas en el replay';
-  const send = button('Enviar orden', 'primary');
+  const send = button('', 'primary');
   const status = el('p', 'orders-status');
+  const title = el('h3', 'section-title');
+  const targetLabel = el('span', 'field-label muted');
 
   host.replaceChildren(
-    el('h3', 'section-title', 'Órdenes'),
-    el('label', 'field', el('span', 'field-label muted', 'Destino'), select),
+    title,
+    el('label', 'field', targetLabel, select),
     textarea,
     el('div', 'orders-actions', send, status),
   );
@@ -37,6 +40,7 @@ export function mountOrders(host: HTMLElement, store: Store, actions: Actions): 
   let assistKey: string | null = null;
   let prefillText: string | null = null;
   let signature: string | null = null;
+  let sent = false;
 
   const eligible = (): SessionView[] =>
     [...store.sessions.values()].filter((session) => session.canReceive && session.endedAt === null);
@@ -46,7 +50,7 @@ export function mountOrders(host: HTMLElement, store: Store, actions: Actions): 
     textarea.disabled = !enabled || busy;
     select.disabled = !enabled || busy || select.options.length === 0;
     send.disabled = !enabled || busy || textarea.value.trim() === '' || select.value === '';
-    send.textContent = busy ? 'Enviando…' : 'Enviar orden';
+    send.textContent = busy ? t('panel.sending') : t('orders.send');
   };
 
   const syncSessions = (): void => {
@@ -93,7 +97,7 @@ export function mountOrders(host: HTMLElement, store: Store, actions: Actions): 
     const session = store.sessions.get(agent.sessionId);
     manualChoice = false;
     preselect = session && session.canReceive && session.endedAt === null ? session.sessionId : null;
-    prefillText = `Respuesta al bloqueo de ${agentName(agent)}: `;
+    prefillText = t('orders.blockReply', { name: agentName(agent) });
     textarea.value = prefillText;
   };
 
@@ -108,6 +112,7 @@ export function mountOrders(host: HTMLElement, store: Store, actions: Actions): 
     const sessionId = select.value;
     if (busy || !actions.ordersEnabled || text === '' || sessionId === '') return;
     busy = true;
+    sent = false;
     status.textContent = '';
     status.classList.remove('error');
     refresh();
@@ -116,7 +121,8 @@ export function mountOrders(host: HTMLElement, store: Store, actions: Actions): 
     if (result.ok) {
       textarea.value = '';
       prefillText = null;
-      status.textContent = 'Orden enviada';
+      sent = true;
+      status.textContent = t('toast.orderSent');
     } else {
       status.textContent = result.message;
       status.classList.add('error');
@@ -137,5 +143,13 @@ export function mountOrders(host: HTMLElement, store: Store, actions: Actions): 
   });
   send.addEventListener('click', () => void submit());
 
-  store.watch(['selection', 'agents', 'sessions', 'floors', 'mode'], sync);
+  const relabel = (): void => {
+    title.textContent = t('orders.title');
+    targetLabel.textContent = t('orders.target');
+    textarea.placeholder = actions.ordersEnabled ? t('orders.placeholder') : t('orders.disabled');
+    if (sent) status.textContent = t('toast.orderSent');
+  };
+  store.watch(['lang'], relabel);
+
+  store.watch(['selection', 'agents', 'sessions', 'floors', 'mode', 'lang'], sync);
 }

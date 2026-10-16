@@ -1,11 +1,13 @@
 import type { Actions } from '../actions';
 import type { ApiResult } from '../api';
 import { button, el } from '../dom';
+import { t } from '../i18n';
 import type { Store } from '../store';
 import { countdown } from '../time';
 import type { AskQuestion, QuestionView } from '../types';
 
 const OTHER = '__other__';
+// Protocol values the hub expects, whatever the panel language: only the button text is translated.
 const PERMISSION_ALLOW = 'Permitir';
 const PERMISSION_DENY = 'Denegar';
 
@@ -30,14 +32,18 @@ function answerFor(ask: AskQuestion, draft: Draft): string | null {
 class QuestionForm {
   readonly root: HTMLElement;
   private readonly drafts: Draft[];
-  private readonly respond = button('Responder', 'primary');
-  private readonly release = button('Devolver al terminal');
+  private readonly respond = button('', 'primary');
+  private readonly release = button('');
   private readonly status = el('p', 'question-status');
   private readonly countdownLabel = el('span', 'countdown');
+  private readonly title = el('h3', 'section-title');
+  private readonly permissionHint = el('p', 'muted permission-hint');
+  private readonly otherTexts: HTMLInputElement[] = [];
+  private lastNow: number | null = null;
   private busy = false;
 
-  private readonly allow = button(PERMISSION_ALLOW, 'primary');
-  private readonly deny = button(PERMISSION_DENY);
+  private readonly allow = button('', 'primary');
+  private readonly deny = button('');
 
   constructor(
     readonly question: QuestionView,
@@ -54,22 +60,33 @@ class QuestionForm {
       ? el(
           'section',
           'question-card permission-card',
-          el('div', 'question-title', el('h3', 'section-title', 'Permiso pendiente'), this.countdownLabel),
+          el('div', 'question-title', this.title, this.countdownLabel),
           ask ? el('p', 'ask-text', ask.question) : null,
           question.detail ? el('pre', 'permission-detail', question.detail) : null,
           el('div', 'question-actions', this.allow, this.deny, this.release),
-          el('p', 'muted permission-hint', 'También puedes contestar en la terminal de la sesión: vale la primera respuesta.'),
+          this.permissionHint,
           this.status,
         )
       : el(
           'section',
           'question-card',
-          el('div', 'question-title', el('h3', 'section-title', 'Pregunta pendiente'), this.countdownLabel),
+          el('div', 'question-title', this.title, this.countdownLabel),
           ...question.questions.map((item, index) => this.block(item, index)),
           el('div', 'question-actions', this.respond, this.release),
           this.status,
         );
+    this.relabel();
+  }
+
+  relabel(): void {
+    this.title.textContent = this.question.kind === 'permission' ? t('question.permissionTitle') : t('question.title');
+    this.permissionHint.textContent = t('question.permissionHint');
+    this.release.textContent = t('question.release');
+    this.allow.textContent = t('question.allow');
+    this.deny.textContent = t('question.deny');
+    for (const input of this.otherTexts) input.placeholder = t('question.other');
     this.refresh();
+    if (this.lastNow !== null) this.updateCountdown(this.lastNow);
   }
 
   private async decide(choice: string): Promise<void> {
@@ -79,8 +96,10 @@ class QuestionForm {
   }
 
   updateCountdown(now: number): void {
+    this.lastNow = now;
     const remaining = this.question.expiresAt - now;
-    this.countdownLabel.textContent = remaining > 0 ? `Caduca en ${countdown(remaining)}` : 'Caducada';
+    this.countdownLabel.textContent =
+      remaining > 0 ? t('question.expiresIn', { time: countdown(remaining) }) : t('question.expired');
   }
 
   private block(ask: AskQuestion, index: number): HTMLElement {
@@ -124,7 +143,7 @@ class QuestionForm {
     otherInput.value = OTHER;
     const otherText = el('input', 'other-text');
     otherText.type = 'text';
-    otherText.placeholder = 'Otra…';
+    this.otherTexts.push(otherText);
 
     const chooseOther = (): void => {
       if (ask.multiSelect) draft.otherOn = otherInput.checked;
@@ -163,7 +182,7 @@ class QuestionForm {
     this.release.disabled = this.busy;
     this.allow.disabled = this.busy;
     this.deny.disabled = this.busy;
-    this.respond.textContent = this.busy ? 'Enviando…' : 'Responder';
+    this.respond.textContent = this.busy ? t('panel.sending') : t('question.respond');
   }
 
   private async submit(): Promise<void> {
@@ -194,6 +213,7 @@ class QuestionForm {
 
 export function mountQuestion(host: HTMLElement, store: Store, actions: Actions): void {
   let form: QuestionForm | null = null;
+  store.watch(['lang'], () => form?.relabel());
   store.watch(['selection', 'questions', 'tick'], () => {
     const key = store.selectedKey;
     const question = key === null ? undefined : store.questionFor(key);
