@@ -254,7 +254,7 @@ function preTool(base: Classified, e: HookEvent, input: Record<string, unknown>,
       ...working,
       state: 'working',
       spawnCall,
-      detail: `delega: ${short(spawnCall.description ?? who, 60)}`,
+      detail: spawnCall.description ? `delega en ${who}: ${short(spawnCall.description, 60)}` : `delega en ${who}`,
       summary: `delega en ${who}`,
     };
   }

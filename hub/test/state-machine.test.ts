@@ -59,6 +59,7 @@ describe('real captured payloads', () => {
     const pre = classify(find('PreToolUse', 'Agent'), flutter);
     const post = classify(find('PostToolUse', 'Agent'), flutter);
     expect(pre.spawnCall?.subagentType).toBe('echoer');
+    expect(pre.detail).toStartWith('delega en echoer');
     expect(post.spawned).toEqual({ toolUseId: pre.spawnCall!.toolUseId, agentId: 'a0f92699da9c839ef', teammate: false });
   });
 
