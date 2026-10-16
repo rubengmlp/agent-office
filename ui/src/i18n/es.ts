@@ -1,9 +1,9 @@
 export const es = {
-  'topbar.status.nokey': 'Sin key',
+  'topbar.status.nokey': 'Bloqueado',
   'topbar.status.connecting': 'Conectando…',
   'topbar.status.online': 'Conectado',
   'topbar.status.offline': 'Sin conexión',
-  'topbar.status.denied': 'Key rechazada',
+  'topbar.status.denied': 'Acceso caducado',
   'topbar.status.replay': 'Replay',
   'topbar.tab.office': 'Oficina',
   'topbar.tab.table': 'Tabla',
@@ -272,8 +272,8 @@ export const es = {
   'replay.play': 'Reproducir',
   'replay.ordersDisabled': 'Las órdenes están desactivadas en el replay',
 
-  'main.noKey': 'Sin key: ejecuta bun run setup y abre la oficina desde el hub',
-  'main.denied': 'Key rechazada por el hub: abre la oficina desde el hub (bun run setup).',
+  'auth.locked': 'Panel bloqueado: ábrelo con bun run panel desde el repositorio de la oficina.',
+  'auth.expired': 'El acceso del panel caducó o la key cambió: vuelve a abrirlo con bun run panel.',
   'main.officeFailed': 'No se pudo iniciar la oficina: {error}',
   'main.replayFailed': 'No se pudo cargar el replay: {error}',
 
@@ -794,6 +794,7 @@ export const es = {
   'hub.api.relaunchNoTmux': 'No hay una sesión de tmux llamada agent-office: abre las sesiones con tmux para poder relanzarlas',
   'hub.api.relaunchNoScript': 'Esta sesión no tiene lanzador en la oficina',
   'hub.api.relaunchFailed': 'tmux no pudo relanzar la ventana',
+  'hub.api.panelLinkInvalid': 'El enlace del panel no vale: ya se usó, caducó o no es de este hub. Pide otro con bun run panel.',
   'hub.doc.tooLarge': 'El documento es demasiado grande para mostrarlo en el panel.',
   'hub.floors.pathRequired': 'Indica la ruta del repositorio.',
   'hub.floors.notFound': 'No hay ninguna planta "{slug}".',

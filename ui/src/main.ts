@@ -1,6 +1,7 @@
 import './styles.css';
 import { liveActions, replayActions, type Actions } from './actions';
 import { OfficeApi } from './api';
+import { browserPanelEnv, forgetPanelToken, panelCredential } from './auth';
 import { el } from './dom';
 import { Heartbeat } from './heartbeat';
 import { applyLang, readStoredLang, t, type MessageKey, type Params } from './i18n';
@@ -21,14 +22,15 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function boot(): void {
+async function boot(): Promise<void> {
   applyLang(readStoredLang());
   const root = document.getElementById('app');
   if (!root) return;
 
   const store = new Store();
   const replayUrl = new URLSearchParams(location.search).get('replay');
-  const key = window.__OFFICE_KEY__ ?? '';
+  const panelEnv = replayUrl ? null : browserPanelEnv();
+  const token = panelEnv ? await panelCredential(panelEnv) : null;
 
   let tab: Tab = 'office';
   let office: OfficeHandle | null = null;
@@ -71,7 +73,18 @@ function boot(): void {
   const topbar = mountTopbar(store, showTab);
   root.replaceChildren(topbar.root, el('main', 'main', officeHost, tableHost, plansHost, chatHost, settingsHost, notice), panelHost, toastHost);
 
-  const api = replayUrl || !key ? null : new OfficeApi(key);
+  let live: LiveConnection | null = null;
+  let expired = false;
+  const expire = (): void => {
+    if (expired) return;
+    expired = true;
+    forgetPanelToken(panelEnv?.storage ?? null);
+    live?.stop();
+    store.setConnection('denied');
+    setNotice('auth.expired');
+  };
+
+  const api = replayUrl || !token ? null : new OfficeApi(token, expire);
   const actions: Actions = api ? liveActions(store, api) : replayActions(store);
 
   mountTable(tableHost, store, api);
@@ -113,17 +126,18 @@ function boot(): void {
     return;
   }
 
-  if (!key) {
+  if (!token) {
     store.setConnection('nokey');
-    setNotice('main.noKey');
+    setNotice('auth.locked');
     return;
   }
 
-  const heartbeat = new Heartbeat((message) => live.send(message));
-  const live = new LiveConnection(key, {
+  const heartbeat = new Heartbeat((message) => live?.send(message) ?? false);
+  live = new LiveConnection(token, {
     onStatus: (status) => {
+      if (status === 'denied') return expire();
       store.setConnection(status);
-      setNotice(status === 'denied' ? 'main.denied' : null);
+      setNotice(null);
     },
     onMessage: (message) => {
       store.apply(message);
@@ -135,4 +149,4 @@ function boot(): void {
   live.start();
 }
 
-boot();
+void boot();

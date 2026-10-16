@@ -18,8 +18,3 @@ export function originAllowed(origin: string | null | undefined, port: number, d
   if (origin === `http://127.0.0.1:${port}` || origin === `http://localhost:${port}`) return true;
   return dev && DEV_ORIGINS.includes(origin);
 }
-
-export function injectKey(html: string, key: string): string {
-  const tag = `<script>window.__OFFICE_KEY__=${JSON.stringify(key)}</script>`;
-  return html.includes('</head>') ? html.replace('</head>', `${tag}</head>`) : `${tag}${html}`;
-}

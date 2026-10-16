@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { startServer } from '../src/server';
+import { mintLaunchToken, mintPanelToken, newNonce } from '../src/panel-auth';
+import { createApp, startServer } from '../src/server';
 import { floor, harness } from './helpers';
 
 const KEY = 'k'.repeat(64);
@@ -75,10 +76,86 @@ describe('hub server', () => {
     expect(state.agents.find((a) => a.key === 'srv-1')?.name).toBe('lead-mobile');
   });
 
-  test('the page is served with the key injected', async () => {
-    const html = await (await fetch(`${base}/`)).text();
-    expect(html).toContain(`window.__OFFICE_KEY__=${JSON.stringify(KEY)}`);
+  test('the page is served without the key and sends no referrer', async () => {
+    const link = mintLaunchToken(KEY, Date.now(), newNonce());
+    for (const path of ['/', `/?t=${link}`, '/index.html']) {
+      const res = await fetch(`${base}${path}`);
+      expect(res.headers.get('referrer-policy')).toBe('no-referrer');
+      const html = await res.text();
+      expect(html).not.toContain(KEY);
+      expect(html).not.toContain('__OFFICE_KEY__');
+    }
     expect((await fetch(`${base}/app.js`)).status).toBe(200);
+  });
+
+  test('a launch link is claimed once for a panel token', async () => {
+    const link = mintLaunchToken(KEY, Date.now(), newNonce());
+    const first = await post('/api/panel/claim', { t: link });
+    expect(first.status).toBe(200);
+    const { token } = (await first.json()) as { token: string };
+    expect(token).toStartWith('p1.');
+    const again = await post('/api/panel/claim', { t: link });
+    expect(again.status).toBe(401);
+    expect(await again.json()).toEqual({ error: { key: 'hub.api.panelLinkInvalid' } });
+  });
+
+  test('a forged, expired or foreign-host launch link gets no token', async () => {
+    const forged = mintLaunchToken('f'.repeat(64), Date.now(), newNonce());
+    const expired = mintLaunchToken(KEY, Date.now() - 11 * 60_000, newNonce());
+    for (const t of [forged, expired, mintPanelToken(KEY, Date.now()), KEY, '']) {
+      expect((await post('/api/panel/claim', { t })).status).toBe(401);
+    }
+    expect((await post('/api/panel/claim', 'nada')).status).toBe(401);
+    const live = mintLaunchToken(KEY, Date.now(), newNonce());
+    const foreign = await fetch(`${base}/api/panel/claim`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Host: `evil.test:${port}` },
+      body: JSON.stringify({ t: live }),
+    });
+    expect(foreign.status).toBe(403);
+    expect((await post('/api/panel/claim', { t: live })).status).toBe(200);
+  });
+
+  test('a panel token opens the API and the socket but not the hook routes', async () => {
+    const token = mintPanelToken(KEY, Date.now());
+    const asPanel = { 'X-Office-Panel': token };
+    expect((await fetch(`${base}/api/state`, { headers: asPanel })).status).toBe(200);
+    expect((await post('/api/orders', { sessionId: 'nadie', text: 'hola' }, asPanel)).status).toBe(404);
+    for (const path of ['/events', '/guard', '/gate', '/gate-message', '/usage', '/chat']) {
+      expect((await post(path, { session_id: 'x', hook_event_name: 'Stop' }, asPanel)).status, path).toBe(401);
+      expect((await post(path, { session_id: 'x', hook_event_name: 'Stop' }, { 'X-Office-Key': token })).status, path).toBe(401);
+    }
+    expect((await fetch(`${base}/chat/mobile`, { headers: asPanel })).status).toBe(401);
+    const ws = openSocket(base);
+    const first = await new Promise<{ type: string }>((resolve) => {
+      ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', token }));
+      ws.onmessage = (e) => resolve(JSON.parse(String(e.data)));
+    });
+    expect(first.type).toBe('snapshot');
+    ws.close();
+  });
+
+  test('a panel token signed with the previous key or expired is refused by the API and the socket', async () => {
+    for (const token of [mintPanelToken('f'.repeat(64), Date.now()), mintPanelToken(KEY, Date.now() - 31 * 86_400_000)]) {
+      expect((await fetch(`${base}/api/state`, { headers: { 'X-Office-Panel': token } })).status).toBe(401);
+      const ws = openSocket(base);
+      const code = await new Promise<number>((resolve) => {
+        ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', token }));
+        ws.onclose = (e) => resolve(e.code);
+      });
+      expect(code).toBe(4401);
+    }
+  });
+
+  test('every /api route answers 401 without the key or a panel token', async () => {
+    const app = createApp({ office: h.office, port, key: () => KEY, publicDir: join(h.root, 'public') }, () => {});
+    const routes = app.routes.filter((r) => r.path.startsWith('/api/') && r.method !== 'ALL');
+    expect(routes.length).toBeGreaterThan(20);
+    for (const route of routes) {
+      const path = route.path.replace(/:[a-zA-Z]+/g, 'x');
+      const res = await app.request(path, { method: route.method, headers: { host: `127.0.0.1:${port}` } });
+      expect(res.status, `${route.method} ${route.path}`).toBe(401);
+    }
   });
 
   test('the custom character index lists only the GLB files of the custom folder', async () => {
@@ -117,7 +194,7 @@ describe('hub server', () => {
   test('an authenticated websocket gets the snapshot and its heartbeats count', async () => {
     const ws = openSocket(base);
     const first = await new Promise<{ type: string }>((resolve) => {
-      ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', key: KEY }));
+      ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', token: KEY }));
       ws.onmessage = (e) => resolve(JSON.parse(String(e.data)));
     });
     expect(first.type).toBe('snapshot');
@@ -135,7 +212,7 @@ describe('hub server', () => {
     await until(nobodyWatching);
     const ws = openSocket(base);
     await new Promise<void>((resolve) => {
-      ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', key: KEY }));
+      ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', token: KEY }));
       ws.onmessage = () => resolve();
     });
     ws.send(JSON.stringify({ type: 'heartbeat', visible: false }));

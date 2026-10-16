@@ -1,11 +1,11 @@
 import type { Messages } from './es';
 
 export const en: Messages = {
-  'topbar.status.nokey': 'No key',
+  'topbar.status.nokey': 'Locked',
   'topbar.status.connecting': 'Connecting…',
   'topbar.status.online': 'Connected',
   'topbar.status.offline': 'Offline',
-  'topbar.status.denied': 'Key rejected',
+  'topbar.status.denied': 'Access expired',
   'topbar.status.replay': 'Replay',
   'topbar.tab.office': 'Office',
   'topbar.tab.table': 'Table',
@@ -274,8 +274,8 @@ export const en: Messages = {
   'replay.play': 'Play',
   'replay.ordersDisabled': 'Orders are disabled in the replay',
 
-  'main.noKey': 'No key: run bun run setup and open the office from the hub',
-  'main.denied': 'Key rejected by the hub: open the office from the hub (bun run setup).',
+  'auth.locked': 'Panel locked: open it with bun run panel from the office repository.',
+  'auth.expired': 'Panel access expired or the key changed: open it again with bun run panel.',
   'main.officeFailed': 'The office could not start: {error}',
   'main.replayFailed': 'The replay could not be loaded: {error}',
 
@@ -795,6 +795,7 @@ export const en: Messages = {
   'hub.api.relaunchNoTmux': 'There is no tmux session called agent-office: open the sessions with tmux to be able to relaunch them',
   'hub.api.relaunchNoScript': 'This session has no launcher in the office',
   'hub.api.relaunchFailed': 'tmux could not relaunch the window',
+  'hub.api.panelLinkInvalid': 'The panel link is not valid: it was used, it expired or it belongs to another hub. Get a new one with bun run panel.',
   'hub.doc.tooLarge': 'This document is too large to show here.',
   'hub.floors.pathRequired': 'Enter the repository path.',
   'hub.floors.notFound': 'There is no floor "{slug}".',

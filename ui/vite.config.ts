@@ -3,12 +3,13 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, type Plugin } from 'vite';
+import { mintPanelToken } from '../hub/src/panel-auth';
 
 const root = dirname(fileURLToPath(import.meta.url));
 
-function officeKey(): Plugin {
+function officePanel(): Plugin {
   return {
-    name: 'office-key',
+    name: 'office-panel',
     apply: 'serve',
     transformIndexHtml(html) {
       const home = process.env.AGENT_OFFICE_HOME ?? join(homedir(), '.config/agent-office');
@@ -19,8 +20,8 @@ function officeKey(): Plugin {
         return html;
       }
       if (!key) return html;
-      const literal = JSON.stringify(key).replace(/</g, '\\u003c');
-      return html.replace('</head>', `<script>window.__OFFICE_KEY__=${literal}</script></head>`);
+      const literal = JSON.stringify(mintPanelToken(key, Date.now())).replace(/</g, '\\u003c');
+      return html.replace('</head>', `<script>window.__OFFICE_PANEL__=${literal}</script></head>`);
     },
   };
 }
@@ -47,7 +48,7 @@ function customModels(): Plugin {
 
 export default defineConfig({
   root,
-  plugins: [officeKey(), customModels()],
+  plugins: [officePanel(), customModels()],
   build: {
     outDir: '../hub/public',
     emptyOutDir: true,

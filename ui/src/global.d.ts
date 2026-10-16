@@ -2,6 +2,6 @@ export {};
 
 declare global {
   interface Window {
-    __OFFICE_KEY__?: string;
+    __OFFICE_PANEL__?: string;
   }
 }

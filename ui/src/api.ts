@@ -53,7 +53,10 @@ async function readError(response: Response): Promise<string> {
 }
 
 export class OfficeApi {
-  constructor(private readonly key: string) {}
+  constructor(
+    private readonly token: string,
+    private readonly onDenied: () => void = () => {},
+  ) {}
 
   answer(id: string, request: AnswerRequest): Promise<ApiResult> {
     return this.post(`/api/answers/${encodeURIComponent(id)}`, request, {
@@ -142,12 +145,13 @@ export class OfficeApi {
     try {
       response = await fetch(path, {
         method,
-        headers: { 'Content-Type': 'application/json', 'X-Office-Key': this.key },
+        headers: { 'Content-Type': 'application/json', 'X-Office-Panel': this.token },
         body: body === undefined ? undefined : JSON.stringify(body),
       });
     } catch {
       return { ok: false, status: 0, message: t('api.offline') };
     }
+    if (response.status === 401) this.onDenied();
     if (!response.ok) return { ok: false, status: response.status, message: await readError(response) };
     try {
       return { ok: true, data: (await response.json()) as T };
@@ -161,13 +165,14 @@ export class OfficeApi {
     try {
       response = await fetch(path, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Office-Key': this.key },
+        headers: { 'Content-Type': 'application/json', 'X-Office-Panel': this.token },
         body: JSON.stringify(body),
       });
     } catch {
       return { ok: false, status: 0, message: t('api.offline') };
     }
     if (response.ok) return { ok: true };
+    if (response.status === 401) this.onDenied();
     const message = fixed[response.status] ?? (await readError(response));
     return { ok: false, status: response.status, message };
   }

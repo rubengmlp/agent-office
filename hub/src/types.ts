@@ -210,6 +210,7 @@ export type HubTextParams = {
   'hub.api.relaunchNoTmux': undefined;
   'hub.api.relaunchNoScript': undefined;
   'hub.api.relaunchFailed': undefined;
+  'hub.api.panelLinkInvalid': undefined;
 
   'hub.doc.tooLarge': undefined;
 
@@ -669,7 +670,7 @@ export type ServerMessage =
   | { type: 'chat'; data: ChatMessageView };
 
 export type ClientMessage =
-  | { type: 'auth'; key: string }
+  | { type: 'auth'; token: string }
   | { type: 'heartbeat'; visible: boolean };
 
 export type Recording = {

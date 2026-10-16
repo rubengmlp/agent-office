@@ -6,7 +6,8 @@ import { clampWait, errorTextFor } from './chat';
 import type { FloorAdmin } from './floor-admin';
 import { isRoleId } from './memory';
 import { isHookEvent, type Office, type RelaunchResult } from './office';
-import { hostAllowed, injectKey, keyMatches, originAllowed } from './security';
+import { claimLaunchToken, mintPanelToken, verifyPanelToken } from './panel-auth';
+import { hostAllowed, keyMatches, originAllowed } from './security';
 import type { SettingsService } from './settings';
 import { record, text } from './state-machine';
 import type { ChatKind, ChatPostRequest, ClientMessage, HookMeta, HubText, HubTextKey, PlanDecision, ServerMessage } from './types';
@@ -55,6 +56,16 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
     if (!keyMatches(c.req.header('x-office-key'), opts.key())) return c.text('unauthorized', 401);
     await next();
   };
+
+  const requirePanel = async (c: Context, next: Next) => {
+    const key = opts.key();
+    if (!keyMatches(c.req.header('x-office-key'), key) && !verifyPanelToken(key, c.req.header('x-office-panel'), Date.now())) {
+      return c.text('unauthorized', 401);
+    }
+    await next();
+  };
+
+  const spentLinks = new Map<string, number>();
 
   app.get('/health', (c) => c.text('ok'));
 
@@ -122,9 +133,15 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
     return asText ? c.text(`${office.chat.readText(channel, result.afterId, result.messages)}\n`) : c.json(result.messages);
   });
 
-  app.get('/api/state', requireKey, (c) => c.json(office.snapshot()));
+  app.post('/api/panel/claim', async (c) => {
+    const now = Date.now();
+    if (!claimLaunchToken(opts.key(), record(await readJson(c)).t, now, spentLinks)) return c.json({ error: { key: 'hub.api.panelLinkInvalid' } }, 401);
+    return c.json({ token: mintPanelToken(opts.key(), now) });
+  });
 
-  app.post('/api/answers/:id', requireKey, async (c) => {
+  app.get('/api/state', requirePanel, (c) => c.json(office.snapshot()));
+
+  app.post('/api/answers/:id', requirePanel, async (c) => {
     const body = record(await readJson(c));
     const id = c.req.param('id') ?? '';
     if (body.release === true) {
@@ -136,7 +153,7 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
     return c.json({ error: { key: 'hub.api.answerMissing' } }, 400);
   });
 
-  app.post('/api/orders', requireKey, async (c) => {
+  app.post('/api/orders', requirePanel, async (c) => {
     const body = record(await readJson(c));
     const sessionId = text(body.sessionId);
     const order = text(body.text);
@@ -148,14 +165,14 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
     return c.json({ error: { key: 'hub.api.orderFailed' } }, 502);
   });
 
-  app.post('/api/sessions/:id/status', requireKey, async (c) => {
+  app.post('/api/sessions/:id/status', requirePanel, async (c) => {
     const result = await office.requestStatus(c.req.param('id') ?? '');
     if (result === 'ok') return c.json({ ok: true });
     if (result === 'not-found') return c.json({ error: { key: 'hub.api.sessionNotFound' } }, 404);
     return c.json({ error: { key: 'hub.api.orderFailed' } }, 502);
   });
 
-  app.post('/api/sessions/:id/relaunch', requireKey, async (c) => {
+  app.post('/api/sessions/:id/relaunch', requirePanel, async (c) => {
     const body = record(await readJson(c));
     const result = await office.relaunch(c.req.param('id') ?? '', typeof body.resume === 'boolean' ? body.resume : undefined);
     if (result === 'ok') return c.json({ ok: true });
@@ -163,68 +180,68 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
     return c.json({ error: { key: failure.key } }, failure.status);
   });
 
-  app.get('/api/settings', requireKey, (c) => {
+  app.get('/api/settings', requirePanel, (c) => {
     if (!opts.settings) return c.json({ error: { key: 'hub.api.settingsUnavailable' } }, 503);
     return c.json(opts.settings.view());
   });
 
-  app.post('/api/settings', requireKey, async (c) => {
+  app.post('/api/settings', requirePanel, async (c) => {
     if (!opts.settings) return c.json({ ok: false, error: [{ key: 'hub.api.settingsUnavailable' }] }, 503);
     const result = opts.settings.update(await readJson(c));
     return c.json(result, result.ok ? 200 : 400);
   });
 
-  app.post('/api/floors', requireKey, async (c) => {
+  app.post('/api/floors', requirePanel, async (c) => {
     if (!opts.floors) return c.json({ ok: false, error: { key: 'hub.api.floorsUnavailable' } }, 503);
     const result = opts.floors.add(await readJson(c));
     return c.json(result, result.ok ? 200 : result.status);
   });
 
-  app.delete('/api/floors/:slug', requireKey, async (c) => {
+  app.delete('/api/floors/:slug', requirePanel, async (c) => {
     if (!opts.floors) return c.json({ ok: false, error: { key: 'hub.api.floorsUnavailable' } }, 503);
     holdRequest(c.req.raw);
     const result = await opts.floors.remove(c.req.param('slug') ?? '');
     return c.json(result, result.ok ? 200 : result.status);
   });
 
-  app.get('/api/memory/:floor/:role', requireKey, (c) => {
+  app.get('/api/memory/:floor/:role', requirePanel, (c) => {
     const floor = c.req.param('floor') ?? '';
     const role = c.req.param('role');
     if (!floor || floor.length > 80 || !isRoleId(role)) return c.json({ error: { key: 'hub.api.badMemoryTarget' } }, 400);
     return c.json(office.memoryView(floor, role));
   });
 
-  app.post('/api/memory', requireKey, async (c) => {
+  app.post('/api/memory', requirePanel, async (c) => {
     const result = office.addLesson(await readJson(c));
     if (result.ok) return c.json({ lesson: result.lesson });
     return c.json({ error: result.error }, result.status === 409 ? 409 : 400);
   });
 
-  app.delete('/api/memory/:id', requireKey, (c) => {
+  app.delete('/api/memory/:id', requirePanel, (c) => {
     const id = Number(c.req.param('id'));
     if (!Number.isInteger(id) || id <= 0) return c.json({ error: { key: 'hub.api.badId' } }, 400);
     return office.removeLesson(id) ? c.json({ ok: true }) : c.json({ error: { key: 'hub.api.lessonNotFound' } }, 404);
   });
 
-  app.get('/api/usage/summary', requireKey, (c) => {
+  app.get('/api/usage/summary', requirePanel, (c) => {
     const range = c.req.query('range') ?? 'today';
     if (range !== 'today' && range !== 'week') return c.json({ error: { key: 'hub.api.usageRange' } }, 400);
     return c.json(office.tokenSummary(range));
   });
 
-  app.get('/api/reports/:agentKey', requireKey, (c) => {
+  app.get('/api/reports/:agentKey', requirePanel, (c) => {
     const report = office.report(c.req.param('agentKey') ?? '');
     return report ? c.json(report) : c.json({ error: { key: 'hub.api.noReport' } }, 404);
   });
 
-  app.get('/api/documents', requireKey, (c) => c.json(office.documents()));
+  app.get('/api/documents', requirePanel, (c) => c.json(office.documents()));
 
-  app.get('/api/documents/content', requireKey, (c) => {
+  app.get('/api/documents/content', requirePanel, (c) => {
     const content = office.documentContent(c.req.query('path') ?? '');
     return content ? c.json(content) : c.json({ error: { key: 'hub.api.documentNotFound' } }, 404);
   });
 
-  app.post('/api/documents/discard', requireKey, async (c) => {
+  app.post('/api/documents/discard', requirePanel, async (c) => {
     const path = text(record(await readJson(c)).path);
     if (!path) return c.json({ error: { key: 'hub.api.pathRequired' } }, 400);
     const result = await office.discardDocument(path);
@@ -233,7 +250,7 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
     return c.json({ error: { key: 'hub.api.planNotFound' } }, 404);
   });
 
-  app.post('/api/documents/decide', requireKey, async (c) => {
+  app.post('/api/documents/decide', requirePanel, async (c) => {
     const body = record(await readJson(c));
     const path = text(body.path);
     const decision = body.decision;
@@ -246,7 +263,7 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
     return c.json({ error: { key: 'hub.api.directorUnreachable' } }, 502);
   });
 
-  app.post('/api/redaccion/sync', requireKey, async (c) => {
+  app.post('/api/redaccion/sync', requirePanel, async (c) => {
     holdRequest(c.req.raw);
     const result = await office.syncSources(await readJson(c));
     const asText = c.req.query('format') === 'text';
@@ -254,12 +271,12 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
     return asText ? c.text(`${result.text}\n`) : c.json(result);
   });
 
-  app.get('/api/chat/:channel', requireKey, (c) => {
+  app.get('/api/chat/:channel', requirePanel, (c) => {
     const result = office.chatHistory(c.req.param('channel') ?? '', idOf(c.req.query('before')));
     return result === 'no-channel' ? c.json({ error: { key: 'hub.api.chatChannelUnknown' } }, 404) : c.json(result);
   });
 
-  app.post('/api/chat/:channel', requireKey, async (c) => {
+  app.post('/api/chat/:channel', requirePanel, async (c) => {
     const body = text(record(await readJson(c)).text);
     if (!body) return c.json({ error: { key: 'hub.api.chatFields' } }, 400);
     const result = await office.userChat(c.req.param('channel') ?? '', body);
@@ -301,7 +318,7 @@ export function startServer(opts: ServerOptions): RunningServer {
       message(ws, raw) {
         const msg = parseClientMessage(raw);
         if (!ws.data.authed) {
-          if (msg?.type === 'auth' && keyMatches(msg.key, opts.key())) {
+          if (msg?.type === 'auth' && panelAllowed(msg.token, opts.key())) {
             ws.data.authed = true;
             opts.office.panelConnected();
             if (ws.data.timer) clearTimeout(ws.data.timer);
@@ -378,8 +395,8 @@ function indexResponse(opts: ServerOptions): Response {
   try {
     html = readFileSync(join(opts.publicDir, 'index.html'), 'utf8');
   } catch {}
-  return new Response(injectKey(html, opts.key()), {
-    headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
+  return new Response(html, {
+    headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' },
   });
 }
 
@@ -423,10 +440,14 @@ function metaOf(c: Context): HookMeta {
   };
 }
 
+function panelAllowed(given: string, key: string): boolean {
+  return keyMatches(given, key) || verifyPanelToken(key, given, Date.now());
+}
+
 function parseClientMessage(raw: string | Buffer): ClientMessage | null {
   try {
     const value = record(JSON.parse(typeof raw === 'string' ? raw : raw.toString('utf8')));
-    if (value.type === 'auth' && typeof value.key === 'string') return { type: 'auth', key: value.key };
+    if (value.type === 'auth' && typeof value.token === 'string') return { type: 'auth', token: value.token };
     if (value.type === 'heartbeat') return { type: 'heartbeat', visible: value.visible === true };
     return null;
   } catch {

@@ -19,7 +19,7 @@ export class LiveConnection {
   private stopped = true;
 
   constructor(
-    private readonly key: string,
+    private readonly token: string,
     private readonly handlers: LiveHandlers,
   ) {}
 
@@ -49,7 +49,7 @@ export class LiveConnection {
     this.socket = socket;
     socket.addEventListener('open', () => {
       if (this.socket !== socket) return;
-      this.send({ type: 'auth', key: this.key });
+      this.send({ type: 'auth', token: this.token });
       this.handlers.onOpen?.();
     });
     socket.addEventListener('message', (event) => {

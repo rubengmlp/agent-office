@@ -9,7 +9,7 @@ import { directorFloorsText, modelArgs, officeScript, sessionScript, sessionSpec
 import { loadProfiles } from '../src/profiles';
 import { prune } from '../src/prune';
 import { departmentOf, inOfficeScope, roleFromName, roleIdOf, roleKind } from '../src/scope';
-import { hostAllowed, injectKey, keyMatches, originAllowed } from '../src/security';
+import { hostAllowed, keyMatches, originAllowed } from '../src/security';
 import { fakePaths, floor, tempDir, testConfig } from './helpers';
 
 describe('config', () => {
@@ -239,10 +239,6 @@ describe('security', () => {
     expect(originAllowed('http://localhost:5173', 4747, true)).toBe(true);
     expect(originAllowed('https://evil.test', 4747, true)).toBe(false);
     expect(originAllowed(null, 4747, true)).toBe(false);
-  });
-
-  test('the key goes into the head of the page', () => {
-    expect(injectKey('<html><head></head></html>', 'k')).toBe('<html><head><script>window.__OFFICE_KEY__="k"</script></head></html>');
   });
 });
 
