@@ -963,6 +963,38 @@ textarea {
   line-height: 1.4;
 }
 
+.table-help {
+  margin: 0 0 16px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.table-help summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.table-help h4 {
+  margin: 12px 0 4px;
+}
+
+.table-help p {
+  margin: 4px 0;
+}
+
+.table-help ul {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+
+.table-help li {
+  margin: 3px 0;
+}
+
+.table-help .badge {
+  font-size: 11px;
+}
+
 .role-grid {
   display: grid;
   grid-template-columns: minmax(150px, 1fr) minmax(190px, 1.4fr) minmax(110px, 0.6fr);
