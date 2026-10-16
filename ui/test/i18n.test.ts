@@ -107,6 +107,12 @@ describe('hub texts', () => {
     expect(errorText(english, [{ key: 'hub.api.noReport' }, { key: 'hub.api.fromNewerHub' }])).toBe('There is no report for that agent hub.api.fromNewerHub');
   });
 
+  test('an analysis sent to the director has its own activity text', () => {
+    const sent = { key: 'hub.act.planAnalysisSent', params: { path: 'redaccion/planes/x.md' } } as const;
+    expect(renderHubText(spanish, sent)).toBe('análisis enviado al director para encargar planes: redaccion/planes/x.md');
+    expect(renderHubText(english, sent)).toBe('analysis sent to the director to commission plans: redaccion/planes/x.md');
+  });
+
   test('parameters are interpolated in a single pass', () => {
     expect(renderHubText(spanish, { key: 'hub.act.message', params: { to: '{text}', text: 'hola' } })).toBe('escribe a {text}: hola');
   });

@@ -1469,6 +1469,13 @@ details[open] > summary.panel-summary::before {
   opacity: 0.55;
 }
 
+.doc-marks {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .doc-head {
   display: flex;
   align-items: flex-start;

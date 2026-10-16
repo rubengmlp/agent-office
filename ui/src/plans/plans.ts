@@ -2,7 +2,7 @@ import type { OfficeApi } from '../api';
 import { button, el } from '../dom';
 import { currentLang, plural, t, type MessageKey } from '../i18n';
 import { scoreText } from '../labels';
-import { canDiscard, discardDocument, documentBadge, downloadDocument, openDocument } from '../panel/deliverables';
+import { canDiscard, discardDocument, documentMarks, downloadDocument, openDocument } from '../panel/deliverables';
 import type { Store } from '../store';
 import type { DocumentStatus, DocumentView, PlanDecision } from '../types';
 
@@ -42,7 +42,7 @@ function roundText(doc: DocumentView): string | null {
 }
 
 function confirmText(doc: DocumentView, decision: PlanDecision): string | null {
-  if (decision === 'ejecutar') return t('plans.confirm.ejecutar', { title: doc.title });
+  if (decision === 'ejecutar') return t(doc.docType === 'analisis' ? 'plans.confirm.analisis' : 'plans.confirm.ejecutar', { title: doc.title });
   if (decision === 'cerrar') return t('plans.confirm.cerrar', { title: doc.title });
   return null;
 }
@@ -57,7 +57,7 @@ async function decide(api: OfficeApi, store: Store, doc: DocumentView, decision:
     store.toast(result.message, 'error');
     return;
   }
-  store.toast(t(DONE_KEYS[decision], { title: doc.title }), 'ok');
+  store.toast(t(decision === 'ejecutar' && doc.docType === 'analisis' ? 'plans.done.analisis' : DONE_KEYS[decision], { title: doc.title }), 'ok');
 }
 
 function actions(api: OfficeApi | null, store: Store, doc: DocumentView): HTMLElement {
@@ -70,7 +70,7 @@ function actions(api: OfficeApi | null, store: Store, doc: DocumentView): HTMLEl
     control.addEventListener('click', () => void decide(api, store, doc, value, control));
     row.append(control);
   };
-  if (doc.status === 'entregado' || doc.status === 'aparcado') decision(t('plans.execute'), 'ejecutar', 'plans-action primary');
+  if (doc.status === 'entregado' || doc.status === 'aparcado') decision(t(doc.docType === 'analisis' ? 'plans.executeAnalysis' : 'plans.execute'), 'ejecutar', 'plans-action primary');
   if (doc.status === 'entregado' || doc.status === 'ejecutando') decision(t('plans.park'), 'aparcar');
   if (doc.status === 'ejecutando') decision(t('plans.close'), 'cerrar');
   if (canDiscard(doc)) {
@@ -89,7 +89,7 @@ function planRow(api: OfficeApi | null, store: Store, doc: DocumentView): HTMLEl
   return el(
     'article',
     `plans-row plans-${doc.status}`,
-    el('div', 'plans-row-head', el('h3', 'plans-title', doc.title), documentBadge(doc)),
+    el('div', 'plans-row-head', el('h3', 'plans-title', doc.title), documentMarks(doc)),
     el('code', 'plans-path muted', doc.path),
     el('p', 'plans-meta muted', meta.join(' · ')),
     actions(api, store, doc),

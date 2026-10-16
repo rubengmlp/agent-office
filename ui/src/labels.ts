@@ -134,12 +134,14 @@ export function scoreText(score: number): string {
   return t('docStatus.score', { score });
 }
 
-export function documentStatusText(doc: Pick<DocumentView, 'status' | 'round' | 'score'>): string {
+export function documentStatusText(doc: Pick<DocumentView, 'status' | 'round' | 'score' | 'docType'>): string {
   switch (doc.status) {
     case 'revision':
       return doc.round > 0 ? t('docStatus.reviewRound', { n: doc.round }) : documentStatusLabel('revision');
     case 'aprobado':
       return doc.score === null ? documentStatusLabel('aprobado') : t('docStatus.approvedScore', { score: doc.score });
+    case 'ejecutando':
+      return doc.docType === 'analisis' ? t('docStatus.ejecutandoAnalisis') : documentStatusLabel('ejecutando');
     default:
       return documentStatusLabel(doc.status);
   }

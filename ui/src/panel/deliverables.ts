@@ -90,6 +90,13 @@ export function documentBadge(doc: DocumentView, text: string = documentStatusTe
   return badge;
 }
 
+export function documentMarks(doc: DocumentView): HTMLSpanElement {
+  const marks = el('span', 'doc-marks');
+  if (doc.docType === 'analisis') marks.append(el('span', 'chip doc-type', t('plans.type.analisis')));
+  marks.append(documentBadge(doc));
+  return marks;
+}
+
 export async function discardDocument(
   api: OfficeApi | null,
   store: Store,
@@ -224,7 +231,7 @@ class DocumentViewer {
   private renderHead(): void {
     const { doc } = this;
     this.title.textContent = doc.title;
-    this.badge.replaceChildren(documentBadge(doc));
+    this.badge.replaceChildren(documentMarks(doc));
     this.meta.replaceChildren(el('code', 'doc-path muted', doc.path), ...metaLines(doc));
     this.discard.hidden = viewerApi === null || !canDiscard(doc);
   }
@@ -264,7 +271,7 @@ function card(store: Store, doc: DocumentView): HTMLElement {
   const root = el(
     'article',
     `doc doc-${doc.status}`,
-    el('div', 'doc-head', button(doc.title, 'doc-title'), documentBadge(doc)),
+    el('div', 'doc-head', button(doc.title, 'doc-title'), documentMarks(doc)),
     ...metaLines(doc),
   );
   root.dataset.path = doc.path;
