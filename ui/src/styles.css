@@ -1011,6 +1011,21 @@ textarea {
   font-weight: 600;
 }
 
+.role-name-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 7px;
+}
+
+.role-name-cell .role-name {
+  padding-top: 0;
+}
+
+.role-name-cell .setting-hint {
+  font-weight: normal;
+}
+
 .role-model-cell {
   display: flex;
   flex-direction: column;

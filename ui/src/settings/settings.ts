@@ -1,6 +1,7 @@
 import type { OfficeApi } from '../api';
 import { button, el, type Child } from '../dom';
-import { STACK_LABELS } from '../labels';
+import { plural, t } from '../i18n';
+import { roleHint, stackLabel } from '../labels';
 import type { Store } from '../store';
 import type { DepartmentsConfig, Effort, PermissionMode, RoleId, SettingsView } from '../types';
 import {
@@ -26,6 +27,7 @@ import {
   REVIEW_FIELDS,
   ROLE_ROWS,
   PERMISSION_MODE_OPTIONS,
+  permissionTargetHint,
   permissionTargetLabel,
   type NumberField,
   type NumberKey,
@@ -102,20 +104,25 @@ function numberRow(field: NumberField): { root: HTMLElement; input: HTMLInputEle
   const root = el(
     'label',
     'setting-row',
-    el('span', 'setting-text', el('span', 'setting-label', field.label), el('span', 'setting-hint muted', field.hint)),
+    el('span', 'setting-text', el('span', 'setting-label', t(field.labelKey)), el('span', 'setting-hint muted', t(field.hintKey))),
     input,
   );
   return { root, input };
 }
 
-function readonlyRow(label: string, value: string): HTMLElement {
-  return el('div', 'setting-row', el('span', 'setting-label', label), el('code', 'setting-value', value));
+function readonlyRow(label: string, hint: string, value: string): HTMLElement {
+  return el(
+    'div',
+    'setting-row',
+    el('span', 'setting-text', el('span', 'setting-label', label), el('span', 'setting-hint muted', hint)),
+    el('code', 'setting-value', value),
+  );
 }
 
 function outcomeText(note: string, regenerated: number): string {
-  const text = note.trim() || 'Ajustes guardados';
+  const text = note.trim() || t('settings.saved');
   if (regenerated <= 0) return text;
-  return `${text} (${regenerated} ${regenerated === 1 ? 'agente regenerado' : 'agentes regenerados'})`;
+  return `${text} (${plural('settings.regenerated', regenerated)})`;
 }
 
 class SettingsPage {
@@ -130,7 +137,7 @@ class SettingsPage {
 
   private readonly notice = el('p', 'settings-notice');
   private readonly content = el('div', 'settings-content');
-  private readonly saveButton = button('Guardar', 'primary');
+  private readonly saveButton = button('', 'primary');
   private readonly status = el('span', 'settings-status');
   private readonly actions = el('div', 'settings-actions', this.saveButton, this.status);
 
@@ -147,6 +154,11 @@ class SettingsPage {
       if (this.store.settings) this.accept(this.store.settings);
     });
     this.store.watch(['mode'], () => this.render());
+    this.store.watch(['lang'], () => {
+      this.signature = '';
+      this.outcome = null;
+      this.render();
+    });
     this.store.watch(['connection'], () => {
       if (this.store.connection === 'online') void this.load();
     });
@@ -186,9 +198,7 @@ class SettingsPage {
   private render(): void {
     const view = this.baseline;
     if (this.api === null) {
-      this.notice.textContent = this.store.replay
-        ? 'Los ajustes están desactivados en el replay.'
-        : 'Sin conexión con el hub: abre la oficina desde el hub para editar los ajustes.';
+      this.notice.textContent = this.store.replay ? t('settings.replay') : t('settings.offline');
     }
     this.notice.hidden = this.api !== null;
 
@@ -214,11 +224,11 @@ class SettingsPage {
 
   private placeholder(): HTMLElement[] {
     if (this.api === null) return [];
-    if (!this.loadError) return [el('p', 'placeholder', 'Cargando ajustes…')];
-    const retry = button('Reintentar');
+    if (!this.loadError) return [el('p', 'placeholder', t('settings.loading'))];
+    const retry = button(t('settings.retry'));
     retry.addEventListener('click', () => void this.load());
     return [
-      el('p', 'placeholder', `No se pudieron cargar los ajustes: ${this.loadError}`),
+      el('p', 'placeholder', t('settings.loadFailed', { error: this.loadError })),
       el('div', 'settings-retry', retry),
     ];
   }
@@ -230,20 +240,20 @@ class SettingsPage {
     const branches = new Map<string, HTMLInputElement>();
     const modes = new Map<string, HTMLSelectElement>();
 
-    const roleGrid = el(
-      'div',
-      'role-grid',
-      el('span', 'role-head muted', 'Rol'),
-      el('span', 'role-head muted', 'Modelo'),
-      el('span', 'role-head muted', 'Esfuerzo'),
-    );
-    for (const { id, label } of ROLE_ROWS) {
+    const rolesHelp = t('settings.roles.help');
+    const modelHead = el('span', 'role-head muted', t('settings.col.model'));
+    modelHead.title = rolesHelp;
+    const effortHead = el('span', 'role-head muted', t('settings.col.effort'));
+    effortHead.title = rolesHelp;
+    const roleGrid = el('div', 'role-grid', el('span', 'role-head muted', t('settings.col.role')), modelHead, effortHead);
+    for (const { id, kind, labelKey } of ROLE_ROWS) {
+      const label = t(labelKey);
       const model = el('select', 'role-model');
-      model.setAttribute('aria-label', `Modelo de ${label}`);
-      model.append(...MODEL_OPTIONS.map((entry) => option(entry.value, entry.label)));
-      const custom = textInput('role-custom', `Id del modelo de ${label}`, 'p. ej. claude-opus-5-5');
+      model.setAttribute('aria-label', t('settings.aria.model', { role: label }));
+      model.append(...MODEL_OPTIONS.map((entry) => option(entry.value, 'labelKey' in entry ? t(entry.labelKey) : entry.label)));
+      const custom = textInput('role-custom', t('settings.aria.customModel', { role: label }), t('settings.customPlaceholder'));
       const effort = el('select', 'role-effort');
-      effort.setAttribute('aria-label', `Esfuerzo de ${label}`);
+      effort.setAttribute('aria-label', t('settings.aria.effort', { role: label }));
       effort.append(...EFFORTS.map((value) => option(value, value)));
 
       model.addEventListener('change', () => {
@@ -263,12 +273,16 @@ class SettingsPage {
         });
       });
 
-      roleGrid.append(el('span', 'role-name', label), el('div', 'role-model-cell', model, custom), effort);
+      roleGrid.append(
+        el('div', 'role-name-cell', el('span', 'role-name', label), el('span', 'setting-hint muted', roleHint(kind))),
+        el('div', 'role-model-cell', model, custom),
+        effort,
+      );
       roles.set(id, { model, custom, effort });
     }
 
-    const departmentRows = DEPARTMENT_ROWS.map(({ key, label, hint }) => {
-      const row = toggleRow(label, hint);
+    const departmentRows = DEPARTMENT_ROWS.map(({ key, labelKey, hintKey }) => {
+      const row = toggleRow(t(labelKey), t(hintKey));
       row.input.addEventListener('change', () => {
         this.edit((draft) => {
           draft.departments[key] = row.input.checked;
@@ -291,7 +305,7 @@ class SettingsPage {
       });
 
     const floorRows = managedFloors(view).map((floor) => {
-      const input = textInput('setting-branch', `Rama base de ${floor.slug}`, 'develop');
+      const input = textInput('setting-branch', t('settings.aria.branch', { slug: floor.slug }), 'develop');
       input.addEventListener('input', () => {
         this.edit((draft) => {
           draft.branches[floor.slug] = input.value;
@@ -304,8 +318,9 @@ class SettingsPage {
         el(
           'span',
           'setting-text',
-          el('span', 'setting-label', floor.slug, el('span', 'chip', STACK_LABELS[floor.stack])),
+          el('span', 'setting-label', floor.slug, el('span', 'chip', stackLabel(floor.stack))),
           el('code', 'setting-path muted', floor.path),
+          el('span', 'setting-hint muted', t('settings.floor.hint')),
         ),
         input,
       );
@@ -314,52 +329,46 @@ class SettingsPage {
     const modeRows = Object.keys(view.permissionModes).map((slug) => {
       const label = permissionTargetLabel(slug);
       const select = el('select', 'setting-mode');
-      select.setAttribute('aria-label', `Modo de permisos de ${label}`);
-      select.append(...PERMISSION_MODE_OPTIONS.map((entry) => option(entry.value, entry.label)));
+      select.setAttribute('aria-label', t('settings.aria.mode', { target: label }));
+      select.append(...PERMISSION_MODE_OPTIONS.map((entry) => option(entry.value, t(entry.labelKey))));
       select.addEventListener('change', () => {
         this.edit((draft) => {
           draft.modes[slug] = select.value as PermissionMode;
         });
       });
       modes.set(slug, select);
-      return el('label', 'setting-row', el('span', 'setting-text', el('span', 'setting-label', label)), select);
+      return el(
+        'label',
+        'setting-row',
+        el('span', 'setting-text', el('span', 'setting-label', label), el('span', 'setting-hint muted', permissionTargetHint(slug))),
+        select,
+      );
     });
 
     const fieldset = el(
       'fieldset',
       'settings-fieldset',
       section(
-        'Roles',
-        'Modelo y esfuerzo por defecto de cada rol. Se aplican a las sesiones y equipos nuevos.',
+        t('settings.section.roles'),
+        t('settings.section.hint.roles'),
         roleGrid,
+        el('p', 'settings-hint muted', rolesHelp),
       ),
-      section('Departamentos', 'Activa o desactiva las plantas de Redacción y Mantenimiento.', ...departmentRows),
+      section(t('settings.section.departments'), t('settings.section.hint.departments'), ...departmentRows),
+      section(t('settings.section.permissions'), t('settings.section.hint.permissions'), ...modeRows),
+      section(t('settings.section.review'), t('settings.section.hint.review'), ...numberRows(REVIEW_FIELDS)),
+      section(t('settings.section.memory'), t('settings.section.hint.memory'), ...numberRows(MEMORY_FIELDS)),
       section(
-        'Permisos',
-        'Modo de permisos con el que se abre cada sesión; su equipo lo hereda. Se aplica cuando la sesión se reinicia. En modo plan el equipo no puede escribir.',
-        ...modeRows,
-      ),
-      section(
-        'Revisión',
-        'Rondas de revisión de planes y skills antes de declarar sin acuerdo.',
-        ...numberRows(REVIEW_FIELDS),
-      ),
-      section(
-        'Memoria',
-        'Lecciones que guarda la oficina y se inyectan a cada agente al empezar.',
-        ...numberRows(MEMORY_FIELDS),
-      ),
-      section(
-        'Plantas',
-        'Rama base sobre la que Redacción toma las fuentes de cada planta gestionada.',
-        ...(floorRows.length > 0 ? floorRows : [el('p', 'muted', 'No hay plantas gestionadas.')]),
+        t('settings.section.floors'),
+        t('settings.section.hint.floors'),
+        ...(floorRows.length > 0 ? floorRows : [el('p', 'muted', t('settings.noFloors'))]),
       ),
     );
     const hub = section(
-      'Hub',
-      'Solo lectura: se cambian en config.json.',
-      readonlyRow('Repositorio de documentos', view.docsRepo),
-      readonlyRow('Puerto', String(view.port)),
+      t('settings.section.hub'),
+      t('settings.section.hint.hub'),
+      readonlyRow(t('settings.hub.docsRepo'), t('settings.hub.hint.docsRepo'), view.docsRepo),
+      readonlyRow(t('settings.hub.port'), t('settings.hub.hint.port'), String(view.port)),
     );
 
     return { root: el('div', 'settings-form', fieldset, hub), fieldset, roles, departments, numbers, branches, modes };
@@ -403,7 +412,7 @@ class SettingsPage {
     for (const [slug, input] of controls.branches) markInvalid(input, problems.has(branchProblemKey(slug)));
 
     this.saveButton.disabled = !editable || this.saving || !changes || problems.size > 0;
-    this.saveButton.textContent = this.saving ? 'Guardando…' : 'Guardar';
+    this.saveButton.textContent = this.saving ? t('settings.saving') : t('settings.save');
     this.showStatus(problems, changes);
   }
 
@@ -411,14 +420,14 @@ class SettingsPage {
     let text = '';
     let kind = '';
     if (this.saving) {
-      text = 'Guardando…';
+      text = t('settings.saving');
     } else if (this.outcome) {
       ({ text, kind } = this.outcome);
     } else if (problems.size > 0) {
       text = problems.values().next().value ?? '';
       kind = 'error';
     } else if (changes) {
-      text = 'Cambios sin guardar';
+      text = t('settings.unsaved');
     }
     this.status.textContent = text;
     this.status.className = kind ? `settings-status ${kind}` : 'settings-status';
