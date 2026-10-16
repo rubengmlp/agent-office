@@ -6,7 +6,6 @@ import { CharacterView, type Target } from './character-view';
 import {
   DESK_FEET_Y,
   DESK_SEAT_X,
-  FADE_HOLD_S,
   FLOOR_GAP,
   LEAD_SEAT_X,
   MEETING_REFRESH_S,
@@ -203,7 +202,7 @@ class OfficeView {
       const scene = this.scenes.get(agent.floor);
       if (!scene) continue;
       let entry = this.entries.get(agent.key);
-      if (!entry && agent.away) continue;
+      if (agent.away && (!entry || entry.view.faded)) continue;
       present.add(agent.key);
       const saturation = scene.view.kind === 'observed' ? 0.4 : 1;
       const look = `${agent.roleKind}|${saturation}`;
@@ -322,7 +321,7 @@ class OfficeView {
     if (agent.away) {
       const ground = this.sceneOrder[this.sceneOrder.length - 1];
       if (!ground) return null;
-      if (state === 'done' && !entry.view.leaving && this.store.now() - agent.stateSince < FADE_HOLD_S * 1000) return null;
+      if (entry.view.waving(state)) return null;
       const exit = streetExit(ground.layout, ground.top);
       return { scene: ground, target: { id: 'exit', kind: 'exit', x: exit.x, y: exit.y, z: exit.y, desk: null } };
     }
@@ -398,6 +397,7 @@ class OfficeView {
         selected: key === this.store.selectedKey,
         asking: asking.has(key),
         ended: agent.endedAt !== null && !agent.away,
+        away: agent.away,
         lastTest: agent.lastTest,
       });
     }

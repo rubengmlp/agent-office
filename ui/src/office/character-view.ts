@@ -34,6 +34,7 @@ export type FrameInput = {
   selected: boolean;
   asking: boolean;
   ended: boolean;
+  away: boolean;
   lastTest: TestResult | null;
 };
 
@@ -60,6 +61,7 @@ export class CharacterView {
   private placed = false;
   private exitAt: number | null = null;
   private left = false;
+  private shown = 1;
 
   constructor(
     readonly key: string,
@@ -90,6 +92,15 @@ export class CharacterView {
 
   get gone(): boolean {
     return this.left;
+  }
+
+  get faded(): boolean {
+    return !this.leaving && this.shown <= 0;
+  }
+
+  waving(state: AgentState): boolean {
+    if (state !== 'done' || this.leaving) return false;
+    return this.lastState !== 'done' || this.seconds - this.stateStart < FADE_HOLD_S;
   }
 
   placeAt(point: Point): void {
@@ -361,13 +372,14 @@ export class CharacterView {
       alpha = this.exitAlpha();
     } else {
       this.exitAt = null;
-      if (this.fadeStart !== null) {
+      if (this.fadeStart !== null && !input.away) {
         alpha = Math.max(0, 1 - (this.seconds - this.fadeStart - FADE_HOLD_S) / FADE_S);
         alpha = Math.min(1, alpha);
       }
       if (input.ended) alpha = Math.min(alpha, 0.45);
     }
 
+    this.shown = alpha;
     const visible = alpha > 0.01;
     this.root.visible = visible;
     this.root.alpha = alpha;
