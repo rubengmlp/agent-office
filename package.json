@@ -12,7 +12,7 @@
     "dev:hub": "AGENT_OFFICE_DEV=1 bun hub/src/main.ts",
     "dev:ui": "cd ui && bun run dev",
     "build": "cd ui && bun run build",
-    "test": "cd hub && bun test",
+    "test": "cd hub && bun test && cd ../ui && bun test",
     "typecheck": "cd hub && bun run typecheck && cd ../ui && bun run typecheck"
   }
 }
