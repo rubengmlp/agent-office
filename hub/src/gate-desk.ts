@@ -29,6 +29,8 @@ export type GateDeskOpts = {
   context: () => GuardContext;
   busy: (floor: string) => boolean;
   userAnswered: (sessionId: string) => void;
+  // A brief of the director to a lead that the budget let through.
+  briefAccepted: (to: string, body: string) => void;
 };
 
 export class GateDesk {
@@ -192,6 +194,7 @@ export class GateDesk {
       return { pass: false, reason };
     }
     this.opts.sql.insertGate.run(now, scope, null, 'pass', 'encargo dentro del presupuesto');
+    this.opts.briefAccepted(to, text(record(e.tool_input).message) ?? '');
     return { pass: true, reason: 'encargo dentro del presupuesto' };
   }
 

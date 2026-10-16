@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { managedFloors } from './agents';
 import { AskDesk } from './ask-desk';
+import { BoardDesk, type CreateOrderRequest, type CreateOrderResult, type MoveResult } from './board-desk';
 import { ChatDesk, GLOBAL_CHANNEL, SNAPSHOT_LIMIT } from './chat';
 import { withoutChatCalls } from './chat-commands';
 import { ChatRoom, type ReadChatResult, type UserChatResult } from './chat-room';
@@ -73,6 +74,7 @@ import type {
   MemoryView,
   MessageView,
   OfficeConfig,
+  OrderStatus,
   PlanDecision,
   ReportView,
   RoleId,
@@ -173,6 +175,7 @@ export class Office {
   private readonly meter: MeterDesk;
   private readonly store: OrderStore;
   private readonly worktrees: WorktreeDesk;
+  private readonly board: BoardDesk;
   readonly chat: ChatDesk;
 
   constructor(private readonly opts: OfficeOptions) {
@@ -283,6 +286,7 @@ export class Office {
       context: () => this.guards.context(),
       busy: (floor) => this.guards.busy(floor),
       userAnswered: (sessionId) => this.stall.userAnswered(sessionId),
+      briefAccepted: (to, body) => this.board.briefAccepted(to, body, planSlugIn(body)),
     });
     this.protocol = new ProtocolDesk({
       ...base,
@@ -305,6 +309,7 @@ export class Office {
       allowBriefs: (sessionId, floors) => this.gates.allowBriefs(sessionId, floors),
       setPlan: (agent, slug) => this.meter.setPlan(agent, slug),
       openTask: (agent, now) => this.stall.openTask(agent, now),
+      planExecuting: (plan) => this.board.planExecuting(plan),
     });
     this.store = new OrderStore(opts.db);
     this.worktrees = new WorktreeDesk({
@@ -316,6 +321,19 @@ export class Office {
       hubId: opts.hubId,
       inside: (path) => this.sessionInside(path),
       changed: (order) => this.bus.emit({ type: 'worktrees', floor: order.floor }),
+    });
+    this.board = new BoardDesk({
+      db: opts.db,
+      store: this.store,
+      now: this.now,
+      bus: this.bus,
+      book: this.book,
+      config: () => this.config,
+      worktrees: this.worktrees,
+      byPath: (cwd) => this.worktrees.byPath(cwd),
+      deliver: this.deliverFn,
+      order: (sessionId, text) => this.orders.order(sessionId, text),
+      planTotals: () => this.meter.planTotals(),
     });
     this.book.restoreSessions();
     this.docs.refresh();
@@ -357,8 +375,8 @@ export class Office {
       alerts: this.guards.alerts(),
       usage: this.usage.view(),
       chat: this.chat.recent(SNAPSHOT_LIMIT),
-      orders: [],
-      finished: [],
+      orders: this.board.list(),
+      finished: this.board.finishedAlerts(),
     };
   }
 
@@ -377,6 +395,7 @@ export class Office {
     const now = this.now();
     this.dumpRaw(e, now);
     const session = this.book.touchSession(e, meta, now);
+    this.board.touch(e.cwd, now);
     if (e.hook_event_name === 'SessionStart' && (e.source === 'startup' || e.source === 'resume')) this.rules.setBaseline(session);
     const kind = visibleKind(session.floorKind, this.book.sessionInOffice(session, text(e.team_name)));
     const matchers = isDepartmentFloor(session.floorKind) ? NO_TESTS : profileFor(this.profiles, session.stack);
@@ -458,7 +477,10 @@ export class Office {
     if (closingProtocol?.kind === 'waiting') this.stall.declareWaiting(agent, closingProtocol.rest, now);
     agent.updatedAt = now;
 
-    if (c.edit !== null) this.sql.insertEdit.run(now, agent.key, session.floor, publicText(c.edit, kind) ?? '');
+    if (c.edit !== null) {
+      this.sql.insertEdit.run(now, agent.key, session.floor, publicText(c.edit, kind) ?? '');
+      this.board.editOutside(agent, c.filePath);
+    }
     this.guards.bashWrites(e, c, agent, session, kind, matchers, now);
     if (c.test === 'pass' || c.test === 'fail') {
       const ok = c.test === 'pass';
@@ -635,6 +657,30 @@ export class Office {
 
   floorInUse(slug: string): string[] {
     return this.book.floorInUse(slug);
+  }
+
+  boardOrders(): ReturnType<BoardDesk['list']> {
+    return this.board.list();
+  }
+
+  createOrder(request: CreateOrderRequest): Promise<CreateOrderResult> {
+    return this.board.createFromPanel(request);
+  }
+
+  moveOrder(id: number, to: OrderStatus, force = false): MoveResult {
+    return this.board.move(id, to, force);
+  }
+
+  discardOrder(id: number): MoveResult {
+    return this.board.discard(id);
+  }
+
+  retryOrderFolder(id: number): Promise<MoveResult> {
+    return this.board.retryFolder(id);
+  }
+
+  markFinishedSeen(id: number): boolean {
+    return this.board.markSeen(id);
   }
 
   listWorktrees(floor?: string): Promise<WorktreeSummary> {

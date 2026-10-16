@@ -42,6 +42,8 @@ export type OrderDeskOpts = {
   allowBriefs: (sessionId: string, floors: number) => void;
   setPlan: (agent: AgentRuntime, slug: string) => void;
   openTask: (agent: AgentRuntime, now: number) => void;
+  // A plan of implementation was sent to the director: one card per floor of the plan.
+  planExecuting: (plan: { slug: string; title: string; floors: string[] }) => void;
 };
 
 export class OrderDesk {
@@ -156,6 +158,7 @@ export class OrderDesk {
       if (sent === 'not-found' || sent === 'not-office') return 'no-director';
       if (sent !== 'ok') return sent;
       this.opts.allowBriefs(director.sessionId, new Set(doc.base.map((b) => b.floor)).size);
+      if (doc.docType !== 'analisis') this.opts.planExecuting({ slug: doc.slug, title: doc.title, floors: doc.base.map((b) => b.floor) });
     }
     const now = this.opts.now();
     this.opts.docs.markDecision({ path: doc.path, kind: doc.kind, slug: doc.slug }, decision, now);

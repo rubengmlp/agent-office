@@ -117,3 +117,11 @@ export function permissionDetail(tool: string, input: Record<string, unknown>): 
     (text(input.pattern) ? `${input.pattern as string}${text(input.path) ? ` (${input.path as string})` : ''}` : null);
   return short(value ?? `${tool} ${JSON.stringify(input)}`, 600);
 }
+
+export function folderText(folder: { branch: string; path: string; base: string; sha: string }, dependencies: string): string {
+  return `${ORDER_PREFIX} CARPETA: ${folder.branch} → ${folder.path} (base ${folder.base}@${folder.sha.slice(0, 7)}; dependencias: ${dependencies})`;
+}
+
+export function folderFailedText(slug: string, reason: string): string {
+  return `${ORDER_PREFIX} CARPETA: encargo/${slug} sin carpeta (${reason}). No empieces: avisa al director con BLOQUEADO: y espera.`;
+}

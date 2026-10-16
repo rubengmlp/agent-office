@@ -13,7 +13,7 @@ import { claimLaunchToken, mintPanelToken, verifyPanelToken } from './panel-auth
 import { hostAllowed, keyMatches, originAllowed } from './security';
 import type { SettingsService } from './settings';
 import { record, text } from './state-machine';
-import type { ChatKind, ChatPostRequest, ClientMessage, HookMeta, HubText, HubTextKey, PlanDecision, ServerMessage } from './types';
+import type { ChatKind, ChatPostRequest, ClientMessage, HookMeta, HubText, HubTextKey, OrderStatus, PlanDecision, ServerMessage } from './types';
 import type { RemoveResult } from './worktrees';
 
 type WsData = { authed: boolean; timer: ReturnType<typeof setTimeout> | null };
@@ -37,6 +37,7 @@ export const MAX_API_BODY_BYTES = 1024 * 1024;
 export const MAX_WS_PAYLOAD = 16 * 1024;
 const HOOK_ROUTE = /^\/(events|hook|ask|permission|gate[a-z-]*|guard|usage|chat)(\/|$)/;
 const PLAN_DECISIONS: readonly PlanDecision[] = ['ejecutar', 'aparcar', 'cerrar'];
+const ORDER_STATUSES: readonly OrderStatus[] = ['pendiente', 'en-curso', 'revision', 'hecho'];
 const MAX_ORDER_LENGTH = 4000;
 const RELAUNCH_FAILURES: Record<Exclude<RelaunchResult, 'ok'>, { key: HubTextKey; status: 403 | 404 | 409 | 501 | 502 }> = {
   'not-found': { key: 'hub.api.sessionNotFound', status: 404 },
@@ -243,6 +244,55 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
     holdRequest(c.req.raw);
     const result = await opts.floors.remove(c.req.param('slug') ?? '', c.req.query('force') === '1');
     return c.json(result, result.ok ? 200 : result.status);
+  });
+
+  app.get('/api/board', requirePanel, (c) => c.json({ orders: office.boardOrders() }));
+
+  app.post('/api/board/orders', requirePanel, async (c) => {
+    const body = record(await readJson(c));
+    const via = body.via;
+    const floor = text(body.floor);
+    const title = text(body.title);
+    if (!floor || !title || (via !== 'lead' && via !== 'director')) return c.json({ error: { key: 'hub.api.boardFields' } }, 400);
+    holdRequest(c.req.raw);
+    const result = await office.createOrder({
+      floor,
+      title,
+      description: text(body.description) ?? undefined,
+      base: text(body.base) ?? undefined,
+      via,
+    });
+    return result.ok ? c.json({ order: result.order }) : c.json({ error: result.error }, result.status);
+  });
+
+  app.post('/api/board/orders/:id/move', requirePanel, async (c) => {
+    const id = idOf(c.req.param('id'));
+    const body = record(await readJson(c));
+    const to = body.to;
+    if (id === null || !isOrderStatus(to)) return c.json({ error: { key: 'hub.api.boardFields' } }, 400);
+    const result = office.moveOrder(id, to, body.force === true);
+    return result.ok ? c.json({ order: result.order }) : c.json({ error: result.error }, result.status);
+  });
+
+  app.post('/api/board/orders/:id/discard', requirePanel, (c) => {
+    const id = idOf(c.req.param('id'));
+    if (id === null) return c.json({ error: { key: 'hub.api.badId' } }, 400);
+    const result = office.discardOrder(id);
+    return result.ok ? c.json({ order: result.order }) : c.json({ error: result.error }, result.status);
+  });
+
+  app.post('/api/board/orders/:id/folder', requirePanel, async (c) => {
+    const id = idOf(c.req.param('id'));
+    if (id === null) return c.json({ error: { key: 'hub.api.badId' } }, 400);
+    holdRequest(c.req.raw);
+    const result = await office.retryOrderFolder(id);
+    return result.ok ? c.json({ order: result.order }) : c.json({ error: result.error }, result.status);
+  });
+
+  app.post('/api/alerts/:id/seen', requirePanel, (c) => {
+    const id = idOf(c.req.param('id'));
+    if (id === null) return c.json({ error: { key: 'hub.api.badId' } }, 400);
+    return office.markFinishedSeen(id) ? c.json({ ok: true }) : c.json({ error: { key: 'hub.api.alertNotFound' } }, 404);
   });
 
   app.get('/api/worktrees', requirePanel, async (c) => c.json(await office.listWorktrees(c.req.query('floor') || undefined)));
@@ -546,6 +596,10 @@ function parseClientMessage(raw: string | Buffer): ClientMessage | null {
   } catch {
     return null;
   }
+}
+
+function isOrderStatus(value: unknown): value is OrderStatus {
+  return typeof value === 'string' && (ORDER_STATUSES as readonly string[]).includes(value);
 }
 
 function isPlanDecision(value: unknown): value is PlanDecision {

@@ -32,6 +32,7 @@ export const SWEEP_BUDGET = 16 * 1024 * 1024;
 const SWEEP_MISS_MS = 60_000;
 const LF = 0x0a;
 const PLAN_PATH = /redaccion\/planes\/([a-z0-9][a-z0-9_-]{0,79})\.md/;
+const ORDER_REF = /(?<![\w/])encargo\/([a-z0-9][a-z0-9-]{0,60})(?![\w-])/;
 const WRITER_NAME = /^redactor-([a-z0-9][a-z0-9_-]{0,79})$/;
 const REVIEWER_NAME = /^revisor-planes-([a-z0-9][a-z0-9_-]{0,79}?)-r\d+$/;
 const AGENT_ID = /^[A-Za-z0-9_-]+$/;
@@ -75,8 +76,14 @@ export function localDay(ts: number): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
+// A plan path gives the slug of the plan; encargo/<slug> gives the order, labelled with its branch name so it
+// never collides with the slug of a plan.
 export function planSlugIn(body: string | null | undefined): string | null {
-  return body ? (PLAN_PATH.exec(body)?.[1] ?? null) : null;
+  if (!body) return null;
+  const plan = PLAN_PATH.exec(body)?.[1];
+  if (plan) return plan;
+  const order = ORDER_REF.exec(body)?.[1];
+  return order ? `encargo/${order}` : null;
 }
 
 export function planSlugOf(agent: PlanSubject, lead: PlanSubject | null): string | null {

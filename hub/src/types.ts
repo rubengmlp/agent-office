@@ -121,6 +121,15 @@ export type HubTextParams = {
   'hub.act.chatRelease': { who: string; channel: string; files: string };
   'hub.act.chatUser': { channel: string; text: string };
   'hub.act.chatCommand': undefined;
+  'hub.act.orderCreated': { floor: string; title: string };
+  'hub.act.orderMoved': { floor: string; title: string; status: HubText };
+  'hub.act.orderDiscarded': { floor: string; title: string };
+  'hub.act.orderFinished': { floor: string; title: string; cycle: number };
+  'hub.act.orderFinishedManual': { floor: string; title: string };
+  'hub.act.planFinished': { title: string; floors: string; cycle: number };
+  'hub.act.worktreeFailed': { slug: string; reason: string };
+  'hub.act.folderUnsent': { slug: string };
+  'hub.act.editOutsideWorktree': { who: string; slug: string };
   'hub.act.worktreesOrphan': { n: number; paths: string };
   'hub.act.worktreesPending': { n: number; sizeKb: number };
   'hub.act.worktreesHeavy': { gb: number; max: number };
@@ -142,6 +151,11 @@ export type HubTextParams = {
   'hub.floor.redaccion': undefined;
   'hub.floor.mantenimiento': undefined;
   'hub.floor.other': { slug: string };
+  'hub.orderStatus.pendiente': undefined;
+  'hub.orderStatus.en-curso': undefined;
+  'hub.orderStatus.revision': undefined;
+  'hub.orderStatus.hecho': undefined;
+  'hub.orderStatus.descartado': undefined;
   'hub.alertLevel.alerta': undefined;
   'hub.alertLevel.posible': undefined;
 
@@ -221,6 +235,13 @@ export type HubTextParams = {
   'hub.api.relaunchNoScript': undefined;
   'hub.api.relaunchFailed': undefined;
   'hub.api.panelLinkInvalid': undefined;
+  'hub.api.boardFields': undefined;
+  'hub.api.floorNotManaged': undefined;
+  'hub.api.leadClosed': undefined;
+  'hub.api.orderNotFound': undefined;
+  'hub.api.alertNotFound': undefined;
+  'hub.api.orderBadState': undefined;
+  'hub.api.moveNeedsForce': { reason: HubText };
   'hub.api.worktreeNotFound': undefined;
   'hub.api.worktreeBusy': undefined;
   'hub.api.worktreeDirty': undefined;

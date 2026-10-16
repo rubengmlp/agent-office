@@ -93,7 +93,7 @@ export function prepare(db: Database) {
     closeQuestion: db.query('UPDATE questions SET status = ?, resolved_at = ? WHERE id = ?'),
     releaseStalePending: db.query("UPDATE questions SET status = 'released', resolved_at = ? WHERE status = 'pending'"),
     insertAlert: db.query('INSERT INTO alerts (ts, level, floor, agent_key, files) VALUES (?, ?, ?, ?, ?)'),
-    recentAlerts: db.query<AlertRow, [number]>('SELECT id, ts, level, floor, agent_key, files FROM alerts ORDER BY ts DESC, id DESC LIMIT ?'),
+    recentAlerts: db.query<AlertRow, [number]>("SELECT id, ts, level, floor, agent_key, files FROM alerts WHERE level IN ('alerta', 'posible') ORDER BY ts DESC, id DESC LIMIT ?"),
   };
 }
 

@@ -40,6 +40,10 @@ export class MeterDesk {
     return this.meter.totals(agentKey);
   }
 
+  planTotals(): ReturnType<TokenMeter['planTotals']> {
+    return this.meter.planTotals();
+  }
+
   summary(range: UsageRange): UsageSummary {
     return this.meter.summary(range);
   }
