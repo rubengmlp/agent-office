@@ -68,6 +68,14 @@ export class OfficeApi {
     });
   }
 
+  requestStatus(sessionId: string): Promise<ApiData<{ ok: true }>> {
+    return this.send('POST', `/api/sessions/${encodeURIComponent(sessionId)}/status`, {});
+  }
+
+  relaunch(sessionId: string): Promise<ApiData<{ ok: true }>> {
+    return this.send('POST', `/api/sessions/${encodeURIComponent(sessionId)}/relaunch`, {});
+  }
+
   settings(): Promise<ApiData<SettingsView>> {
     return this.get('/api/settings');
   }

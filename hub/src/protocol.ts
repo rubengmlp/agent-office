@@ -3,7 +3,7 @@ import { isAbsolute, posix, relative, resolve, sep } from 'node:path';
 import { isInside, realPath } from './floors';
 import type { DocumentKind } from './types';
 
-export type ProtocolKind = 'review' | 'improve' | 'approved' | 'no-agreement' | 'done' | 'lesson' | 'blocked' | 'plan' | 'question' | 'split';
+export type ProtocolKind = 'review' | 'improve' | 'approved' | 'no-agreement' | 'done' | 'lesson' | 'blocked' | 'plan' | 'question' | 'split' | 'waiting';
 
 export type ProtocolMessage = {
   kind: ProtocolKind;
@@ -26,7 +26,10 @@ const PREFIXES: readonly [ProtocolKind, RegExp][] = [
   ['plan', /^\s*PLAN\s*:\s*/],
   ['question', /^\s*PREGUNTA\s*:\s*/],
   ['split', /^\s*PARTIR\s*:\s*/i],
+  ['waiting', /^\s*ESPERO\s*:\s*/i],
 ];
+
+export const BRIEF_PREFIX = /^\s*ENCARGO\s*:/i;
 
 const WITH_TARGET: ReadonlySet<ProtocolKind> = new Set(['review', 'improve', 'approved', 'no-agreement', 'done', 'plan', 'split']);
 
@@ -53,6 +56,13 @@ export function parseProtocol(body: string): ProtocolMessage | null {
     };
   }
   return null;
+}
+
+export function parseWaiting(rest: string): { who: string; what: string } {
+  const line = (rest.split('\n')[0] ?? '').trim();
+  const separator = /\s+[—–-]{1,2}\s+/.exec(line);
+  if (!separator) return { who: line, what: '' };
+  return { who: line.slice(0, separator.index).trim(), what: line.slice(separator.index + separator[0].length).trim() };
 }
 
 export function docRef(raw: string | null, docsRoot: string | null, cwd: string | null): DocRef | null {

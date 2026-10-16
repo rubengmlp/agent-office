@@ -26,8 +26,8 @@ export function mountPanel(host: HTMLElement, store: Store, actions: Actions, ap
   host.replaceChildren(header, el('div', 'panel-scroll', floors, now, question, deliverables, report, memory, timeline), orders);
 
   mountHeader(header, store);
-  mountFloors(floors, store);
-  mountNow(now, store);
+  mountFloors(floors, store, api);
+  mountNow(now, store, api);
   mountQuestion(question, store, actions);
   mountDeliverables(deliverables, store, api);
   mountReport(report, store, api);

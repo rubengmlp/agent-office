@@ -104,6 +104,15 @@ describe('hub texts', () => {
     expect(renderHubText(english, lesson)).toBe('lesson saved for writer in Drafting');
   });
 
+  test('the waiting detail and the stall activity carry who, what and minutes', () => {
+    const waiting = { key: 'hub.detail.waitingFor', params: { who: 'tester-mobile', what: 'tests del login' } } as const;
+    expect(renderHubText(spanish, waiting)).toBe('Esperando a tester-mobile: tests del login');
+    expect(renderHubText(english, waiting)).toBe('Waiting for tester-mobile: tests del login');
+    const stalled = { key: 'hub.act.stalled', params: { who: 'lead-mobile', minutes: 12 } } as const;
+    expect(renderHubText(spanish, stalled)).toContain('12 min');
+    expect(renderHubText(english, stalled)).toContain('12 min');
+  });
+
   test('an unknown key comes out as the key and malformed values never throw', () => {
     const unknown = { key: 'hub.act.fromNewerHub', params: { who: { key: 'hub.who.alsoUnknown' }, n: 2 } } as unknown as HubText;
     expect(renderHubText(spanish, unknown)).toBe('hub.act.fromNewerHub');

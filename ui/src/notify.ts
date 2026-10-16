@@ -2,11 +2,11 @@ import { plural, t } from './i18n';
 import { agentName, floorLabel } from './labels';
 import { openDocument } from './panel/deliverables';
 import type { Store } from './store';
-import type { DocumentView, GuardAlert, MessageView, QuestionView, ServerMessage } from './types';
+import type { AgentView, DocumentView, GuardAlert, MessageView, QuestionView, ServerMessage } from './types';
 
-export type NotifyEvent = 'permission' | 'question' | 'blocked' | 'done' | 'document' | 'alert';
+export type NotifyEvent = 'permission' | 'question' | 'blocked' | 'done' | 'document' | 'alert' | 'stalled';
 
-export const NOTIFY_EVENTS: readonly NotifyEvent[] = ['permission', 'question', 'blocked', 'done', 'document', 'alert'];
+export const NOTIFY_EVENTS: readonly NotifyEvent[] = ['permission', 'question', 'blocked', 'done', 'document', 'alert', 'stalled'];
 
 export type NotifyPrefs = { enabled: boolean; events: Record<NotifyEvent, boolean> };
 
@@ -25,7 +25,7 @@ function permissionState(): NotificationPermission | 'unsupported' {
 }
 
 function defaultPrefs(): NotifyPrefs {
-  return { enabled: false, events: { permission: true, question: true, blocked: true, done: true, document: true, alert: true } };
+  return { enabled: false, events: { permission: true, question: true, blocked: true, done: true, document: true, alert: true, stalled: true } };
 }
 
 function readPrefs(): NotifyPrefs {
@@ -50,6 +50,7 @@ export class Notifier {
   private readonly seen = new Set<string>();
   private readonly shown = new Map<string, Notification>();
   private documents: Map<string, DocumentView['status']> | null = null;
+  private readonly stalled = new Map<string, number | null>();
 
   constructor(private readonly store: Store) {}
 
@@ -77,6 +78,14 @@ export class Notifier {
         // History does not notify: only pending questions, which may have arrived while the hub restarted.
         for (const question of message.data.questions) this.question(question);
         this.seedDocuments(message.data.documents ?? []);
+        this.stalled.clear();
+        for (const agent of message.data.agents) this.stalled.set(agent.key, agent.stalledSince ?? null);
+        break;
+      case 'agent':
+        this.agent(message.data);
+        break;
+      case 'agent-gone':
+        this.stalled.delete(message.key);
         break;
       case 'question':
         this.question(message.data);
@@ -131,6 +140,14 @@ export class Notifier {
     } else if (DONE_PREFIX.test(message.text) && this.store.agents.get(message.fromKey)?.roleKind === 'lead') {
       this.show('done', `message:${message.id}`, t('notify.done.title', { agent }), t('notify.openPanel'), this.select(message.fromKey));
     }
+  }
+
+  private agent(agent: AgentView): void {
+    const before = this.stalled.get(agent.key) ?? null;
+    const since = agent.stalledSince ?? null;
+    this.stalled.set(agent.key, since);
+    if (before !== null || since === null) return;
+    this.show('stalled', `stalled:${agent.key}:${since}`, t('notify.stalled.title', { agent: agentName(agent) }), t('notify.openPanel'), this.select(agent.key));
   }
 
   private seedDocuments(documents: readonly DocumentView[]): void {

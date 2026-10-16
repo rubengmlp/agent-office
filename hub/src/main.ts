@@ -50,6 +50,7 @@ export function main(argv: string[]): void {
     profiles: loadProfiles(PROFILES_DIR),
     workspaceDir: WORKSPACE_DIR,
     claudeHome: p.claudeHome,
+    launch: { agentsDir: p.agentsDir, sessionsDir: p.sessionsDir, directorFloors: p.directorFloors },
     registry: dbRegistry(db),
     rawDir: process.env.AGENT_OFFICE_RAW === '1' ? RAW_FIXTURES_DIR : null,
   });

@@ -17,6 +17,10 @@ export type SessionSpec = {
   settings: Record<string, unknown>;
 };
 
+export const TMUX_SESSION = 'agent-office';
+
+export const RELAUNCH_RESUMES = true;
+
 export const CLONE_PERMISSIONS_FILE = join(PLUGIN_DIR, 'settings', 'clone-permissions.json');
 
 export const STATUSLINE_SCRIPT = join(SCRIPTS_DIR, 'office-statusline.sh');
@@ -208,13 +212,13 @@ SESSIONS=${sq(p.sessionsDir)}
 NAMES=${sq(names)}
 if command -v tmux >/dev/null 2>&1; then
   for name in $NAMES; do
-    if tmux has-session -t agent-office 2>/dev/null; then
-      tmux new-window -t agent-office -n "$name" "'$SESSIONS/$name.sh'"
+    if tmux has-session -t ${TMUX_SESSION} 2>/dev/null; then
+      tmux new-window -t ${TMUX_SESSION} -n "$name" "'$SESSIONS/$name.sh'"
     else
-      tmux new-session -d -s agent-office -n "$name" "'$SESSIONS/$name.sh'"
+      tmux new-session -d -s ${TMUX_SESSION} -n "$name" "'$SESSIONS/$name.sh'"
     fi
   done
-  echo "Sesiones abiertas en tmux: tmux attach -t agent-office"
+  echo "Sesiones abiertas en tmux: tmux attach -t ${TMUX_SESSION}"
 elif command -v osascript >/dev/null 2>&1; then
   for name in $NAMES; do
     osascript -e "tell application \\"Terminal\\" to do script \\"'$SESSIONS/$name.sh'\\"" >/dev/null

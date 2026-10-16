@@ -1,10 +1,11 @@
 import type { Database } from 'bun:sqlite';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { basename, join, relative, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { CHAT_SCRIPT, managedFloors } from './agents';
 import { ChatDesk, GLOBAL_CHANNEL, READ_LIMIT, SNAPSHOT_LIMIT, USER_NAME, isChatKind, normalizeChatPath, type ChatAuthor, type ChatError, type ChatUnread } from './chat';
 import { CHAT_PREFIX, chatInboxText, deliver, encodeInbox, ORDER_LEAD, ORDER_PREFIX, orderText } from './courier';
+import { writeAtomic } from './config';
 import { commitDocument } from './docs-repo';
 import { DocumentDesk, docTypeOf, headBytes } from './documents';
 import { FloorInUseError, purgeFloorData } from './floor-data';
@@ -26,7 +27,7 @@ import { GUARDED_TOOLS, GuardWatch, guardDecision, tokenize, zonesFor, type Guar
 import { captureLesson, cleanLesson, deleteLesson, isRoleId, listLessons, memoryContext } from './memory';
 import { isPrivate, publicDetail, publicSummary, publicText, storedPayload } from './privacy';
 import { detectStack, profileFor, type Profiles } from './profiles';
-import { docRef, parseProtocol, type DocRef } from './protocol';
+import { BRIEF_PREFIX, docRef, parseProtocol, parseWaiting, type DocRef } from './protocol';
 import { PERMISSION_ALLOW, PERMISSION_DENY, QuestionDesk, parseQuestions } from './questions';
 import { buildReport, saveReport, savedReport, savedReports } from './reports';
 import {
@@ -45,8 +46,10 @@ import {
   roleIdOf,
   roleKind,
 } from './scope';
+import { RELAUNCH_RESUMES, TMUX_SESSION, sq } from './office-sh';
 import { settingsView } from './settings';
 import {
+  BLOCK_PREFIX,
   DONE_PREFIX,
   EDIT_TOOLS,
   classify,
@@ -127,6 +130,9 @@ type AgentRuntime = {
   task: string | null;
   away: boolean;
   planSlug: string | null;
+  waiting: { who: string; what: string; since: number } | null;
+  taskOpenSince: number | null;
+  stalledSince: number | null;
 };
 
 type SessionRuntime = {
@@ -143,6 +149,9 @@ type SessionRuntime = {
   startedAt: number;
   updatedAt: number;
   endedAt: number | null;
+  rulesHash: string | null;
+  launchHash: string | null;
+  needsRelaunch: boolean;
 };
 
 type SessionRow = {
@@ -155,6 +164,9 @@ type SessionRow = {
   team: string | null;
   started_at: number;
   updated_at: number;
+  rules_hash: string | null;
+  launch_hash: string | null;
+  task_open_since: number | null;
 };
 
 type TaskRow = { owner: string | null; status: string | null };
@@ -164,6 +176,8 @@ type AlertRow = { id: number; ts: number; level: string; floor: string; agent_ke
 export type OrderResult = 'ok' | 'not-found' | 'unreachable' | 'failed';
 
 export type LessonResult = { ok: true; lesson: LessonView } | { ok: false; status: number; error: HubText };
+
+export type RelaunchResult = 'ok' | 'not-found' | 'busy' | 'no-script' | 'no-tmux' | 'no-window' | 'failed';
 
 export type DiscardResult = 'ok' | 'not-found' | 'closed';
 
@@ -176,6 +190,10 @@ const DECISION_FROM: Record<PlanDecision, readonly DocumentStatus[]> = {
 };
 
 const NOT_DISCARDABLE: ReadonlySet<DocumentStatus> = new Set<DocumentStatus>(['ejecutando', 'cerrado', 'descartado']);
+
+export type LaunchPaths = { agentsDir: string; sessionsDir: string; directorFloors: string };
+
+export type TmuxFn = (args: string[]) => Promise<{ code: number; stdout: string }>;
 
 export type OfficeOptions = {
   db: Database;
@@ -191,6 +209,8 @@ export type OfficeOptions = {
   holdMs?: number;
   now?: () => number;
   deliverFn?: typeof deliver;
+  launch?: LaunchPaths;
+  tmux?: TmuxFn;
   // Id of this hub, written in the marker of its snapshots in redaccion/.fuentes.
   hubId: string;
 };
@@ -215,6 +235,13 @@ const READ_CAP_TOOLS: ReadonlySet<string> = new Set(['Read', 'Grep', 'Glob', 'Ba
 const LEAD_BUSY: ReadonlySet<AgentState> = new Set<AgentState>(['working', 'reading', 'testing', 'checking', 'talking']);
 const TASK_MAX = 120;
 const METER_SWEEP_MS = 60_000;
+const RULES_MAX_CHARS = 12_000;
+const LAUNCH_CHECK_MS = 30_000;
+const SAFE_NAME = /^[a-z0-9][a-z0-9-]*$/;
+const SAFE_ID = /^[A-Za-z0-9_-]+$/;
+const RULES_NOTE = 'Las reglas de tu puesto cambiaron. Estas son las nuevas y mandan sobre las que recibiste al arrancar:';
+export const STATUS_REQUEST = '¿En qué estado está el encargo? Si esperas algo, escribe ESPERO: <a quién> — <qué>.';
+const STATUS_QUESTION = '¿En qué estado está el encargo?';
 const VERDICT_DETAILS: Record<Exclude<VerdictKind, 'tests'>, HubText> = {
   approved: { key: 'hub.detail.verdictApproved' },
   improve: { key: 'hub.detail.verdictImprove' },
@@ -287,12 +314,19 @@ export class Office {
   private readonly chatWarned = new Set<string>();
   private readonly readCounts = new Map<string, number>();
   private readonly readCapNoted = new Set<string>();
+  private readonly lastUserInput = new Map<string, number>();
+  private readonly briefAllowance = new Map<string, number>();
+  private readonly sessionFlags = new Map<string, string>();
+  private readonly tmux: TmuxFn;
+  private readonly hashes = new Map<string, { mtime: number; size: number; hash: string | null }>();
+  private lastLaunchCheck = 0;
 
   constructor(private readonly opts: OfficeOptions) {
     this.config = opts.config;
     this.profiles = opts.profiles;
     this.now = opts.now ?? Date.now;
     this.deliverFn = opts.deliverFn ?? deliver;
+    this.tmux = opts.tmux ?? runTmux;
     this.git = opts.git ?? runGit;
     this.floors = new FloorResolver(
       () => this.config,
@@ -423,6 +457,7 @@ export class Office {
     const now = this.now();
     this.dumpRaw(e, now);
     const session = this.touchSession(e, meta, now);
+    if (e.hook_event_name === 'SessionStart' && (e.source === 'startup' || e.source === 'resume')) this.setBaseline(session);
     const kind = session.floorKind;
     const matchers = isDepartmentFloor(kind) ? NO_TESTS : profileFor(this.profiles, session.stack);
     const c = withoutChatCalls(classify(e, matchers), e, matchers);
@@ -460,6 +495,8 @@ export class Office {
     }
     if (ended) {
       agent.endedAt = now;
+      agent.waiting = null;
+      agent.stalledSince = null;
       this.forgetChatNotes(new Set([agent.key]));
     }
     else if (agent.endedAt !== null) agent.endedAt = null;
@@ -467,6 +504,7 @@ export class Office {
       agent.state = nextState;
       agent.stateSince = now;
     }
+    if (agent.stalledSince !== null && agent.state !== 'idle') agent.stalledSince = null;
     if (!holding) {
       if (c.event === 'SubagentStop' && agent.teammate) agent.detail = { key: 'hub.detail.waiting' };
       else if (c.detail) agent.detail = publicDetail(c, kind);
@@ -478,14 +516,27 @@ export class Office {
     agent.away = false;
     if (NEW_TURN.has(c.event)) agent.file = null;
     if (c.event === 'PreToolUse' && c.filePath && FILE_TOOLS.has(c.tool ?? '')) agent.file = this.fileLabel(c.filePath, session);
-    if (c.event === 'UserPromptSubmit' && agent.key === session.sessionId) {
+    const isMain = agent.key === session.sessionId;
+    if (c.event === 'UserPromptSubmit' && isMain) {
       const task = taskLine(publicText(text(e.prompt), kind));
-      if (task) agent.task = task;
+      if (task) {
+        agent.task = task;
+        this.openTask(agent, now);
+      }
       const plan = planSlugIn(text(e.prompt));
       if (plan) this.setPlan(agent, plan);
+      if (isUserPrompt(text(e.prompt))) this.userInstructed(session.sessionId, now);
+    }
+    if (c.event === 'PostToolUse' && isMain && c.tool === 'AskUserQuestion') this.userInstructed(session.sessionId, now);
+    if (c.event === 'PostToolUse' && c.tool === 'SendMessage' && agent.taskOpenSince !== null && DONE_PREFIX.test(text(record(e.tool_input).message) ?? '')) {
+      agent.taskOpenSince = null;
+      agent.stalledSince = null;
+      this.persistTaskOpen(agent);
     }
     const closing = text(e.last_assistant_message);
     if (closing && remembers(kind) && (c.event === 'SubagentStop' || c.event === 'Stop')) agent.closing = closing;
+    const closingProtocol = closing && c.event === 'Stop' && remembers(kind) ? parseProtocol(closing) : null;
+    if (closingProtocol?.kind === 'waiting') this.declareWaiting(agent, closingProtocol.rest, now);
     agent.updatedAt = now;
 
     if (c.edit !== null) this.sql.insertEdit.run(now, agent.key, session.floor, publicText(c.edit, kind) ?? '');
@@ -649,6 +700,7 @@ export class Office {
   gateMessage(e: HookEvent): GateDecision {
     if (!isHookEvent(e) || e.tool_name !== 'SendMessage') return { pass: true, reason: 'no es un mensaje' };
     const body = text(record(e.tool_input).message) ?? '';
+    if (BRIEF_PREFIX.test(body)) return this.gateBrief(e);
     const parsed = parseProtocol(body);
     const review = parsed?.kind === 'review' ? parsed : null;
     if (!review && !DONE_PREFIX.test(body)) return { pass: true, reason: 'no es un aviso de fin' };
@@ -709,6 +761,16 @@ export class Office {
   }
 
   async order(sessionId: string, body: string): Promise<OrderResult> {
+    const result = await this.deliverOrder(sessionId, body, { asTask: true });
+    if (result === 'ok') this.userInstructed(sessionId, this.now());
+    return result;
+  }
+
+  requestStatus(sessionId: string): Promise<OrderResult> {
+    return this.deliverOrder(sessionId, STATUS_REQUEST, { asTask: false });
+  }
+
+  private async deliverOrder(sessionId: string, body: string, opts: { asTask: boolean }): Promise<OrderResult> {
     const session = this.sessions.get(sessionId);
     if (!session || session.endedAt !== null) return 'not-found';
     if (!session.socket || !existsSync(session.socket)) return 'unreachable';
@@ -720,18 +782,21 @@ export class Office {
     this.pushActivity({
       ts: this.now(),
       agentKey: session.sessionId,
-      event: 'Order',
+      event: opts.asTask ? 'Order' : 'Status',
       tool: null,
       state: null,
-      summary: { key: 'hub.act.order', params: { text: short(body, 60) } },
+      summary: opts.asTask
+        ? { key: 'hub.act.order', params: { text: short(body, 60) } }
+        : { key: 'hub.act.statusRequested', params: { who: session.name ?? session.sessionId.slice(0, 8) } },
     });
     const main = this.agents.get(sessionId);
-    const plan = planSlugIn(body);
+    const plan = opts.asTask ? planSlugIn(body) : null;
     if (main && main.retiredAt === null && plan) this.setPlan(main, plan);
-    const task = taskLine(publicText(body, session.floorKind));
+    const task = opts.asTask ? taskLine(publicText(body, session.floorKind)) : null;
     if (main && main.retiredAt === null && task) {
       main.task = task;
       main.away = false;
+      this.openTask(main, this.now());
       this.emitAgent(main, this.now());
     }
     return 'ok';
@@ -884,6 +949,7 @@ export class Office {
       const sent = await this.order(director.sessionId, text);
       if (sent === 'not-found') return 'no-director';
       if (sent !== 'ok') return sent;
+      this.briefAllowance.set(director.sessionId, new Set(doc.base.map((b) => b.floor)).size);
     }
     const now = this.now();
     this.docs.markDecision({ path: doc.path, kind: doc.kind, slug: doc.slug }, decision, now);
@@ -942,6 +1008,8 @@ export class Office {
       if (session.endedAt === null && session.socket && !existsSync(session.socket)) this.endSession(session, now);
       if (session.endedAt !== null && now - session.endedAt > FORGET_ENDED_MS) this.sessions.delete(session.sessionId);
     }
+    this.detectStalls(now);
+    this.refreshSessionFlags(now);
   }
 
   floorInUse(slug: string): string[] {
@@ -985,7 +1053,7 @@ export class Office {
       const floor = this.floors.resolve(session.cwd);
       if (floor.slug === session.floor && floor.kind === session.floorKind && floor.stack === session.stack) continue;
       this.applyFloor(session, floor);
-      this.emit({ type: 'session', data: this.sessionView(session) });
+      this.emitSession(session);
       for (const agent of this.agents.values()) {
         if (agent.sessionId !== session.sessionId) continue;
         agent.floor = session.floor;
@@ -993,10 +1061,305 @@ export class Office {
         this.emitAgent(agent, now);
       }
     }
+    this.refreshSessionFlags(now, true);
     this.emit({ type: 'floors', data: this.floors.views() });
     this.emit({ type: 'settings', data: settingsView(config) });
     this.docs.watch();
     this.refreshDocuments();
+  }
+
+  async relaunch(sessionId: string, resume: boolean = RELAUNCH_RESUMES): Promise<RelaunchResult> {
+    const session = this.sessions.get(sessionId);
+    if (!session || session.endedAt !== null) return 'not-found';
+    const script = this.launchFile(session);
+    if (!script || !existsSync(script)) return 'no-script';
+    if (!this.sessionFree(session)) return 'busy';
+    if (resume && !SAFE_ID.test(sessionId)) return 'failed';
+    const name = session.name ?? '';
+    let windows: { code: number; stdout: string };
+    try {
+      windows = await this.tmux(['list-windows', '-t', TMUX_SESSION, '-F', '#{window_name}']);
+    } catch {
+      return 'no-tmux';
+    }
+    if (windows.code !== 0) return 'no-tmux';
+    if (!windows.stdout.split('\n').some((line) => line.trim() === name)) return 'no-window';
+    const command = resume ? `${sq(script)} --resume ${sessionId}` : sq(script);
+    try {
+      const respawned = await this.tmux(['respawn-window', '-k', '-t', `${TMUX_SESSION}:=${name}`, command]);
+      if (respawned.code !== 0) return 'failed';
+    } catch {
+      return 'failed';
+    }
+    this.pushActivity({ ts: this.now(), agentKey: sessionId, event: 'Relaunch', tool: null, state: null, summary: { key: 'hub.act.relaunched', params: { who: name } } });
+    return 'ok';
+  }
+
+  private gateBrief(e: HookEvent): GateDecision {
+    const to = (text(record(e.tool_input).to) ?? '').split('@')[0] ?? '';
+    if (!to.startsWith('lead-')) return { pass: true, reason: 'solo cuenta el encargo a un jefe' };
+    const now = this.now();
+    const session = this.touchSession(e, EMPTY_META, now);
+    if (this.roleForEvent(e, session) !== 'office-director') return { pass: true, reason: 'solo cuenta el encargo del director' };
+    const max = this.config.limits.maxBriefsPerOrder;
+    const scope = `encargo:${session.sessionId}`;
+    const sent = this.sql.countBriefs.get(scope, this.lastUserInputAt(session.sessionId))?.n ?? 0;
+    const allowance = Math.max(max, this.briefAllowance.get(session.sessionId) ?? 0);
+    if (max > 0 && sent >= allowance) {
+      const reason = `Tope de encargos: ya has enviado ${sent} encargos desde la última instrucción del usuario (limits.maxBriefsPerOrder = ${max}). Pregunta al usuario con AskUserQuestion antes de encargar más: cuáles quiere y en qué orden.`;
+      this.sql.insertGate.run(now, scope, null, 'block', reason);
+      this.pushActivity({
+        ts: now,
+        agentKey: e.agent_id ?? session.sessionId,
+        event: 'GateMessage',
+        tool: 'SendMessage',
+        state: null,
+        summary: { key: 'hub.act.briefsCapped', params: { n: sent, max } },
+      });
+      return { pass: false, reason };
+    }
+    this.sql.insertGate.run(now, scope, null, 'pass', 'encargo dentro del presupuesto');
+    return { pass: true, reason: 'encargo dentro del presupuesto' };
+  }
+
+  private lastUserInputAt(sessionId: string): number {
+    const cached = this.lastUserInput.get(sessionId);
+    if (cached !== undefined) return cached;
+    const prompt = this.sql.recentPrompts.all(sessionId).find((row) => isUserPrompt(row.prompt));
+    const at = Math.max(prompt?.ts ?? 0, this.sql.lastAsk.get(sessionId)?.ts ?? 0);
+    this.lastUserInput.set(sessionId, at);
+    return at;
+  }
+
+  private userInstructed(sessionId: string, now: number): void {
+    this.lastUserInput.set(sessionId, now);
+    this.briefAllowance.delete(sessionId);
+    const agent = this.agents.get(sessionId);
+    if (agent?.waiting && waitsForUser(agent.waiting.who)) agent.waiting = null;
+  }
+
+  private openTask(agent: AgentRuntime, now: number): void {
+    agent.taskOpenSince = now;
+    agent.waiting = null;
+    agent.stalledSince = null;
+    this.persistTaskOpen(agent);
+  }
+
+  private declareWaiting(agent: AgentRuntime, rest: string, now: number): boolean {
+    if (agent.retiredAt !== null) return false;
+    const { who, what } = parseWaiting(rest);
+    if (!who || (agent.waiting?.who === who && agent.waiting.what === what)) return false;
+    agent.waiting = { who, what, since: now };
+    agent.stalledSince = null;
+    this.pushActivity({
+      ts: now,
+      agentKey: agent.key,
+      event: 'Waiting',
+      tool: 'SendMessage',
+      state: null,
+      summary: { key: 'hub.act.waitingDeclared', params: { who: agent.name ?? agent.key, to: who, what } },
+    });
+    return true;
+  }
+
+  private settleWaiting(from: AgentRuntime, recipient: AgentRuntime | undefined, body: string | null, now: number): void {
+    if (from.waiting && body && (DONE_PREFIX.test(body) || BLOCK_PREFIX.test(body))) {
+      from.waiting = null;
+      this.emitAgent(from, now);
+    }
+    if (recipient && recipient !== from && recipient.waiting && waitsFor(recipient.waiting.who, from)) {
+      recipient.waiting = null;
+      this.emitAgent(recipient, now);
+    }
+  }
+
+  private detectStalls(now: number): void {
+    const minutes = this.config.limits.stalledAfterMinutes;
+    for (const agent of this.agents.values()) {
+      if (agent.key !== agent.sessionId || !isLeadRole(agent.role)) continue;
+      const stalled = minutes > 0 && this.isStalled(agent, now, minutes);
+      if (stalled && agent.stalledSince === null) {
+        agent.stalledSince = idleSince(agent);
+        this.pushActivity({
+          ts: now,
+          agentKey: agent.key,
+          event: 'Stalled',
+          tool: null,
+          state: null,
+          summary: { key: 'hub.act.stalled', params: { who: agent.name ?? agent.key, minutes: Math.floor((now - idleSince(agent)) / 60_000) } },
+        });
+        this.emitAgent(agent, now);
+      } else if (!stalled && agent.stalledSince !== null) {
+        agent.stalledSince = null;
+        this.emitAgent(agent, now);
+      }
+    }
+  }
+
+  private isStalled(agent: AgentRuntime, now: number, minutes: number): boolean {
+    if (agent.taskOpenSince === null || agent.endedAt !== null || agent.retiredAt !== null) return false;
+    if (agent.state !== 'idle' || now - idleSince(agent) <= minutes * 60_000) return false;
+    if (agent.blockedReason !== null || agent.awaitingAnswer || agent.waiting !== null) return false;
+    return this.sessionFree(this.sessions.get(agent.sessionId), true);
+  }
+
+  // The lead is idle and nobody of its team is working or asking, and no question of the session waits in the panel.
+  private sessionFree(session: SessionRuntime | undefined, ignoreMain = false): boolean {
+    if (!session) return false;
+    const main = this.agents.get(session.sessionId);
+    if (!ignoreMain && main && (main.state !== 'idle' || main.awaitingAnswer)) return false;
+    if (this.desk.list().some((question) => question.sessionId === session.sessionId)) return false;
+    for (const agent of this.agents.values()) {
+      if (agent.sessionId !== session.sessionId || agent.key === session.sessionId) continue;
+      if (agent.endedAt !== null || agent.retiredAt !== null || agent.away) continue;
+      if (LEAD_BUSY.has(agent.state) || agent.state === 'asking') return false;
+    }
+    return true;
+  }
+
+  private fileHash(path: string): string | null {
+    let stat;
+    try {
+      stat = statSync(path);
+    } catch {
+      this.hashes.delete(path);
+      return null;
+    }
+    const cached = this.hashes.get(path);
+    if (cached && cached.mtime === stat.mtimeMs && cached.size === stat.size) return cached.hash;
+    let hash: string | null = null;
+    try {
+      hash = createHash('sha256').update(readFileSync(path)).digest('hex').slice(0, 16);
+    } catch {
+      hash = null;
+    }
+    this.hashes.set(path, { mtime: stat.mtimeMs, size: stat.size, hash });
+    return hash;
+  }
+
+  private roleOf(session: SessionRuntime): string | null {
+    const role = canonicalRole(session.role ?? this.agents.get(session.sessionId)?.role ?? null);
+    return role && isOfficeRole(role) && SAFE_NAME.test(role) ? role : null;
+  }
+
+  private rulesFiles(session: SessionRuntime): string[] {
+    const launch = this.opts.launch;
+    const role = this.roleOf(session);
+    if (!launch || !role) return [];
+    return role === 'office-director' ? [join(launch.agentsDir, `${role}.md`), launch.directorFloors] : [join(launch.agentsDir, `${role}.md`)];
+  }
+
+  private launchFile(session: SessionRuntime): string | null {
+    const launch = this.opts.launch;
+    if (!launch || !session.name || !SAFE_NAME.test(session.name) || !this.roleOf(session)) return null;
+    return join(launch.sessionsDir, `${session.name}.sh`);
+  }
+
+  private rulesHash(session: SessionRuntime): string | null {
+    const files = this.rulesFiles(session);
+    const hashes = files.map((file) => this.fileHash(file));
+    if (hashes.length === 0 || hashes[0] === null) return null;
+    return createHash('sha256').update(hashes.map((hash) => hash ?? '-').join(':')).digest('hex').slice(0, 16);
+  }
+
+  private rulesText(session: SessionRuntime): string | null {
+    const files = this.rulesFiles(session);
+    if (files.length === 0) return null;
+    const parts: string[] = [];
+    for (const [index, file] of files.entries()) {
+      try {
+        const content = readFileSync(file, 'utf8');
+        parts.push((index === 0 ? withoutFrontmatter(content) : content).trim());
+      } catch {
+        if (index === 0) return null;
+      }
+    }
+    return parts.join('\n\n');
+  }
+
+  private rulesCopy(session: SessionRuntime): string | null {
+    const launch = this.opts.launch;
+    if (!launch || !session.name || !SAFE_NAME.test(session.name)) return null;
+    return join(dirname(launch.sessionsDir), 'rules', `${session.name}.md`);
+  }
+
+  private readRulesCopy(session: SessionRuntime): string | null {
+    const file = this.rulesCopy(session);
+    if (!file) return null;
+    try {
+      return readFileSync(file, 'utf8');
+    } catch {
+      return null;
+    }
+  }
+
+  private saveRulesCopy(session: SessionRuntime): void {
+    const file = this.rulesCopy(session);
+    const rules = this.rulesText(session);
+    if (!file || rules === null) return;
+    try {
+      mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+      writeAtomic(file, rules, 0o600);
+    } catch {
+      return;
+    }
+  }
+
+  private setBaseline(session: SessionRuntime): void {
+    if (!this.opts.launch) return;
+    const script = this.launchFile(session);
+    session.rulesHash = this.rulesHash(session);
+    session.launchHash = script ? this.fileHash(script) : null;
+    session.needsRelaunch = false;
+    this.saveRulesCopy(session);
+    this.sql.updateHashes.run(session.rulesHash, session.launchHash, session.sessionId);
+    this.emitSession(session);
+  }
+
+  private rulesBlock(agent: AgentRuntime, session: SessionRuntime): string | null {
+    if (session.rulesHash === null || !this.rulesPending(session)) return null;
+    const rules = this.rulesText(session);
+    const current = this.rulesHash(session);
+    if (rules === null || current === null) return null;
+    const base = this.readRulesCopy(session);
+    session.rulesHash = current;
+    this.sql.updateHashes.run(session.rulesHash, session.launchHash, session.sessionId);
+    this.saveRulesCopy(session);
+    this.emitSession(session);
+    if (base === rules) return null;
+    const body = base !== null && rules.length > RULES_MAX_CHARS ? changedSections(rules, base) : rules;
+    this.pushActivity({
+      ts: this.now(),
+      agentKey: agent.key,
+      event: 'Rules',
+      tool: null,
+      state: null,
+      summary: { key: 'hub.act.rulesReloaded', params: { who: agent.name ?? agent.key } },
+    });
+    return `${RULES_NOTE}\n\n${body}`;
+  }
+
+  private rulesPending(session: SessionRuntime): boolean {
+    if (session.rulesHash === null) return false;
+    const current = this.rulesHash(session);
+    return current !== null && current !== session.rulesHash;
+  }
+
+  private relaunchNeeded(session: SessionRuntime): boolean {
+    if (!this.opts.launch || session.launchHash === null) return false;
+    const script = this.launchFile(session);
+    return !script || this.fileHash(script) !== session.launchHash;
+  }
+
+  private refreshSessionFlags(now: number, force = false): void {
+    if (!this.opts.launch) return;
+    const due = force || now - this.lastLaunchCheck >= LAUNCH_CHECK_MS;
+    if (due) this.lastLaunchCheck = now;
+    for (const session of this.sessions.values()) {
+      if (session.endedAt !== null) continue;
+      if (due) session.needsRelaunch = this.relaunchNeeded(session);
+      if (this.sessionFlags.get(session.sessionId) !== flagsOf(this.sessionView(session))) this.emitSession(session);
+    }
   }
 
   private background(task: Promise<unknown>): void {
@@ -1117,11 +1480,13 @@ export class Office {
     );
   }
 
-  // Memory on start only, and the chat lines the agent has not seen yet on start and on every turn.
+  // The rules when they changed, first; memory on start only, and the chat lines the agent has not seen yet on start and on every turn.
   private injection(event: string, agent: AgentRuntime, session: SessionRuntime): string | null {
-    const blocks = [event === 'UserPromptSubmit' ? null : this.memoryBlock(agent, session), this.chatBlock(agent, session)].filter(
-      (block): block is string => block !== null,
-    );
+    const blocks = [
+      event === 'UserPromptSubmit' && agent.key === session.sessionId ? this.rulesBlock(agent, session) : null,
+      event === 'UserPromptSubmit' ? null : this.memoryBlock(agent, session),
+      this.chatBlock(agent, session),
+    ].filter((block): block is string => block !== null);
     if (blocks.length === 0) return null;
     return JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: blocks.join('\n\n') } });
   }
@@ -1310,6 +1675,10 @@ export class Office {
     if (parsed.kind === 'lesson') {
       if (noLessons(roleKind(from.role))) return;
       this.captureAgentLesson(from, parsed.rest, now);
+      return;
+    }
+    if (parsed.kind === 'waiting') {
+      if (this.declareWaiting(from, parsed.rest, now)) this.emitAgent(from, now);
       return;
     }
     if (!isDepartmentFloor(session.floorKind)) return;
@@ -1602,6 +1971,9 @@ export class Office {
         startedAt: now,
         updatedAt: now,
         endedAt: null,
+        rulesHash: null,
+        launchHash: null,
+        needsRelaunch: false,
       };
       this.sessions.set(e.session_id, session);
       changed = true;
@@ -1634,7 +2006,7 @@ export class Office {
     session.updatedAt = now;
     if (changed) {
       this.persistSession(session);
-      this.emit({ type: 'session', data: this.sessionView(session) });
+      this.emitSession(session);
     }
     return session;
   }
@@ -1678,6 +2050,9 @@ export class Office {
         task: null,
         away: false,
         planSlug: null,
+        waiting: null,
+        taskOpenSince: null,
+        stalledSince: null,
       };
       this.agents.set(agent.key, agent);
     }
@@ -1770,6 +2145,7 @@ export class Office {
     if (this.messages.length > MAX_MESSAGES) this.messages.splice(0, this.messages.length - MAX_MESSAGES);
     this.emit({ type: 'message', data: view });
     const recipient = toKey ? this.agents.get(toKey) : undefined;
+    this.settleWaiting(from, recipient, body, now);
     if (recipient && recipient !== from) this.messageReceived(recipient, assigns(from, recipient) ? body : null, now);
     if (recipient && recipient !== from && recipient.awaitingAnswer) this.answerReceived(recipient, now);
     if (body) this.handleProtocol({ to: message.to, toKey, text: body }, from, session, now);
@@ -1781,7 +2157,10 @@ export class Office {
     if (plan) this.setPlan(agent, plan);
     const task = taskLine(body);
     if (!task && !agent.away) return;
-    if (task) agent.task = task;
+    if (task) {
+      agent.task = task;
+      this.openTask(agent, now);
+    }
     if (agent.away) {
       agent.away = false;
       agent.updatedAt = now;
@@ -1927,10 +2306,12 @@ export class Office {
   private endSession(session: SessionRuntime, now: number): void {
     session.endedAt = now;
     this.persistSession(session);
-    this.emit({ type: 'session', data: this.sessionView(session) });
+    this.emitSession(session);
     for (const agent of this.agents.values()) {
       if (agent.sessionId !== session.sessionId || agent.endedAt !== null) continue;
       agent.endedAt = now;
+      agent.waiting = null;
+      agent.stalledSince = null;
       this.forgetChatNotes(new Set([agent.key]));
       if (agent.state !== 'done') {
         agent.state = 'done';
@@ -1978,6 +2359,8 @@ export class Office {
     ) {
       state = 'blocked';
       detail = { key: 'hub.detail.noAnswer', params: { detail: agent.detail } };
+    } else if (agent.endedAt === null && agent.state === 'idle' && agent.waiting) {
+      detail = { key: 'hub.detail.waitingFor', params: { who: agent.waiting.who, what: agent.waiting.what || '…' } };
     }
     return {
       key: agent.key,
@@ -2000,10 +2383,13 @@ export class Office {
       task: agent.task,
       away: agent.away || agent.endedAt !== null || agent.retiredAt !== null,
       tokens: this.meter.totals(agent.key),
+      waiting: agent.waiting,
+      stalledSince: agent.stalledSince,
     };
   }
 
   private sessionView(session: SessionRuntime): SessionView {
+    const script = this.launchFile(session);
     return {
       sessionId: session.sessionId,
       agentKey: session.sessionId,
@@ -2012,7 +2398,17 @@ export class Office {
       floor: session.floor,
       canReceive: session.endedAt === null && !!session.socket && existsSync(session.socket),
       endedAt: session.endedAt,
+      needsRelaunch: session.needsRelaunch,
+      rulesPending: this.rulesPending(session),
+      canRelaunch: session.endedAt === null && script !== null && existsSync(script) && this.sessionFree(session),
+      relaunchResumes: RELAUNCH_RESUMES,
     };
+  }
+
+  private emitSession(session: SessionRuntime): void {
+    const view = this.sessionView(session);
+    this.sessionFlags.set(session.sessionId, flagsOf(view));
+    this.emit({ type: 'session', data: view });
   }
 
   private emitAgent(agent: AgentRuntime, now: number): void {
@@ -2039,6 +2435,10 @@ export class Office {
 
   private persistSession(s: SessionRuntime): void {
     this.sql.upsertSession.run(s.sessionId, s.cwd, s.floor, s.role, s.name, s.socket, s.token, s.team, s.startedAt, s.updatedAt, s.endedAt);
+  }
+
+  private persistTaskOpen(a: AgentRuntime): void {
+    if (a.key === a.sessionId) this.sql.updateTaskOpen.run(a.taskOpenSince, a.sessionId);
   }
 
   private persistAgent(a: AgentRuntime): void {
@@ -2083,8 +2483,11 @@ export class Office {
         task: null,
         away: false,
         planSlug: null,
+        waiting: null,
+        taskOpenSince: row.task_open_since,
+        stalledSince: null,
       });
-      this.sessions.set(row.session_id, {
+      const session: SessionRuntime = {
         sessionId: row.session_id,
         cwd: row.cwd,
         floor: floor.slug,
@@ -2098,7 +2501,18 @@ export class Office {
         startedAt: row.started_at,
         updatedAt: row.updated_at,
         endedAt: null,
-      });
+        rulesHash: row.rules_hash,
+        launchHash: row.launch_hash,
+        needsRelaunch: false,
+      };
+      this.sessions.set(row.session_id, session);
+      if (this.opts.launch && (row.rules_hash === null || row.launch_hash === null)) {
+        session.rulesHash ??= this.rulesHash(session);
+        const script = this.launchFile(session);
+        session.launchHash ??= script ? this.fileHash(script) : null;
+        this.sql.updateHashes.run(session.rulesHash, session.launchHash, session.sessionId);
+      }
+      session.needsRelaunch = this.relaunchNeeded(session);
     }
   }
 
@@ -2275,12 +2689,61 @@ export function taskLine(body: string | null): string | null {
   let rest = body.trim();
   if (rest.startsWith(ORDER_LEAD)) rest = rest.slice(ORDER_LEAD.length).trim();
   else if (rest.startsWith(ORDER_PREFIX) || rest.startsWith(CHAT_PREFIX) || rest.startsWith('<') || rest.startsWith('/')) return null;
-  if (parseProtocol(rest) !== null) return null;
+  rest = rest.replace(BRIEF_PREFIX, '').trim();
+  if (rest.startsWith(STATUS_QUESTION) || parseProtocol(rest) !== null) return null;
   const line = rest
     .split('\n')
     .map((part) => part.trim())
     .find((part) => part.length > 0);
   return line ? short(line, TASK_MAX) : null;
+}
+
+export function isUserPrompt(prompt: string | null): boolean {
+  const body = (prompt ?? '').trim();
+  return body !== '' && !body.startsWith('<') && !body.startsWith(CHAT_PREFIX) && !body.includes(STATUS_QUESTION);
+}
+
+function idleSince(agent: AgentRuntime): number {
+  return Math.max(agent.stateSince, agent.taskOpenSince ?? 0);
+}
+
+function waitsForUser(who: string): boolean {
+  return /^@?(usuario|user)$/i.test(who.trim());
+}
+
+function waitsFor(who: string, from: AgentRuntime): boolean {
+  const name = from.name?.split('@')[0]?.toLowerCase();
+  if (!name) return false;
+  return who
+    .toLowerCase()
+    .split(/\s*(?:,|\/|\by\b|\band\b)\s*/)
+    .some((part) => part.trim().replace(/^@/, '') === name);
+}
+
+function flagsOf(view: SessionView): string {
+  return `${view.needsRelaunch}|${view.rulesPending}|${view.canRelaunch}|${view.canReceive}`;
+}
+
+function withoutFrontmatter(content: string): string {
+  return content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
+}
+
+function sectionsOf(content: string): Map<string, string> {
+  const sections = new Map<string, string>();
+  for (const chunk of content.split(/^(?=## )/m)) sections.set(chunk.split('\n')[0] ?? '', chunk.trim());
+  return sections;
+}
+
+function changedSections(current: string, base: string): string {
+  const before = sectionsOf(base);
+  const changed = [...sectionsOf(current)].filter(([heading, body]) => before.get(heading) !== body).map(([, body]) => body);
+  return changed.length > 0 ? changed.join('\n\n') : current.slice(0, RULES_MAX_CHARS);
+}
+
+async function runTmux(args: string[]): Promise<{ code: number; stdout: string }> {
+  const proc = Bun.spawn(['tmux', ...args], { stdout: 'pipe', stderr: 'ignore' });
+  const [stdout, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+  return { code, stdout };
 }
 
 export function historyPath(slug: string): string {
@@ -2349,7 +2812,18 @@ function prepare(db: Database) {
          updated_at = excluded.updated_at, ended_at = excluded.ended_at`,
     ),
     openSessions: db.query<SessionRow, [number]>(
-      'SELECT session_id, cwd, role, name, socket, token, team, started_at, updated_at FROM sessions WHERE ended_at IS NULL AND updated_at > ?',
+      'SELECT session_id, cwd, role, name, socket, token, team, started_at, updated_at, rules_hash, launch_hash, task_open_since FROM sessions WHERE ended_at IS NULL AND updated_at > ?',
+    ),
+    updateHashes: db.query('UPDATE sessions SET rules_hash = ?, launch_hash = ? WHERE session_id = ?'),
+    updateTaskOpen: db.query('UPDATE sessions SET task_open_since = ? WHERE session_id = ?'),
+    countBriefs: db.query<{ n: number }, [string, number]>(
+      "SELECT COUNT(*) AS n FROM gate_decisions WHERE scope = ? AND decision = 'pass' AND ts > ?",
+    ),
+    recentPrompts: db.query<{ ts: number; prompt: string | null }, [string]>(
+      "SELECT ts, json_extract(payload, '$.prompt') AS prompt FROM events WHERE agent_key = ? AND event = 'UserPromptSubmit' ORDER BY ts DESC LIMIT 50",
+    ),
+    lastAsk: db.query<{ ts: number | null }, [string]>(
+      "SELECT MAX(ts) AS ts FROM events WHERE agent_key = ? AND event = 'PostToolUse' AND tool = 'AskUserQuestion'",
     ),
     endSession: db.query('UPDATE sessions SET ended_at = ? WHERE session_id = ?'),
     insertEdit: db.query('INSERT INTO edits (ts, agent_key, floor, path) VALUES (?, ?, ?, ?)'),
