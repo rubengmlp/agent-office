@@ -2122,8 +2122,8 @@ details[open] > .floors-summary::before {
 
 .office-view > .usage-card {
   position: absolute;
-  top: 12px;
-  left: 12px;
+  right: 60px;
+  bottom: 12px;
   z-index: 2;
   width: 190px;
   background: color-mix(in srgb, var(--surface) 88%, transparent);
