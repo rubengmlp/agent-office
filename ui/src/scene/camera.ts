@@ -1,4 +1,4 @@
-import { Box3, PerspectiveCamera, Vector3 } from 'three';
+import { Box3, PerspectiveCamera, Plane, Raycaster, Vector2, Vector3 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 export type FloorButton = { slug: string; label: string; accent: string; annex: boolean };
@@ -13,10 +13,23 @@ export type CameraCallbacks = {
 
 type Tween = { fromPosition: Vector3; toPosition: Vector3; fromTarget: Vector3; toTarget: Vector3; elapsed: number; duration: number };
 
+type GestureLike = Event & { scale?: number; clientX?: number; clientY?: number };
+
+const PINCH_SPEED = 0.01;
+const WHEEL_LINE_PX = 16;
+
 const _size = new Vector3();
 const _center = new Vector3();
 const _delta = new Vector3();
 const _clamped = new Vector3();
+const _right = new Vector3();
+const _offset = new Vector3();
+const _shift = new Vector3();
+const _hit = new Vector3();
+const _dir = new Vector3();
+const _ndc = new Vector2();
+const _plane = new Plane();
+const _ray = new Raycaster();
 
 function ease(t: number): number {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
@@ -35,11 +48,14 @@ export class CameraRig {
   private floorsSignature = '';
   private activeSlug: string | null = null;
   private hasView = false;
+  private gestureDistance = 0;
+  private gesturing = false;
+  private readonly surface: HTMLElement;
   preset: string | null = null;
 
   constructor(
-    overlay: HTMLElement,
-    domElement: HTMLElement,
+    private readonly overlay: HTMLElement,
+    private readonly domElement: HTMLElement,
     private readonly callbacks: CameraCallbacks,
   ) {
     this.camera.position.set(6, 9, 30);
@@ -58,6 +74,11 @@ export class CameraRig {
     controls.rotateSpeed = 0.7;
     controls.panSpeed = 0.9;
     controls.addEventListener('start', this.onStart);
+    this.surface = domElement.parentElement ?? domElement;
+    this.surface.addEventListener('wheel', this.onWheel, { passive: false, capture: true });
+    this.surface.addEventListener('gesturestart', this.onGestureStart, { passive: false });
+    this.surface.addEventListener('gesturechange', this.onGestureChange, { passive: false });
+    this.surface.addEventListener('gestureend', this.onGestureEnd);
 
     this.nav = document.createElement('nav');
     this.nav.className = 'scene-floors';
@@ -141,6 +162,10 @@ export class CameraRig {
       this.buttons.set(item.slug, button);
       list.push(button);
     }
+    const hint = document.createElement('p');
+    hint.className = 'scene-hint';
+    hint.textContent = 'Desliza con dos dedos para subir, bajar o ir a los lados. Pellizca para acercar. Arrastra para girar.';
+    list.push(hint);
     this.nav.replaceChildren(...list);
     this.activeSlug = null;
   }
@@ -224,6 +249,10 @@ export class CameraRig {
 
   dispose(): void {
     this.controls.removeEventListener('start', this.onStart);
+    this.surface.removeEventListener('wheel', this.onWheel, { capture: true });
+    this.surface.removeEventListener('gesturestart', this.onGestureStart);
+    this.surface.removeEventListener('gesturechange', this.onGestureChange);
+    this.surface.removeEventListener('gestureend', this.onGestureEnd);
     this.controls.dispose();
     this.nav.remove();
     this.followBox.remove();
@@ -247,4 +276,80 @@ export class CameraRig {
     this.tween = null;
     this.preset = null;
   };
+
+  private takeControl(): void {
+    this.tween = null;
+    this.preset = null;
+    if (this.followKey) this.callbacks.onStopFollow();
+  }
+
+  private readonly onWheel = (event: WheelEvent): void => {
+    if (event.target instanceof Node && this.overlay.contains(event.target)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const unit = event.deltaMode === 1 ? WHEEL_LINE_PX : event.deltaMode === 2 ? this.domElement.clientHeight : 1;
+    if (event.ctrlKey || event.metaKey) {
+      if (this.gesturing) return;
+      this.takeControl();
+      this.zoomAt(event.clientX, event.clientY, Math.exp(event.deltaY * unit * PINCH_SPEED));
+      return;
+    }
+    this.takeControl();
+    this.pan(event.deltaX * unit, event.deltaY * unit);
+  };
+
+  private readonly onGestureStart = (event: Event): void => {
+    event.preventDefault();
+    this.gesturing = true;
+    this.takeControl();
+    this.gestureDistance = this.camera.position.distanceTo(this.controls.target);
+  };
+
+  private readonly onGestureChange = (event: Event): void => {
+    event.preventDefault();
+    const gesture = event as GestureLike;
+    if (!gesture.scale || this.gestureDistance <= 0) return;
+    const current = this.camera.position.distanceTo(this.controls.target);
+    const rect = this.domElement.getBoundingClientRect();
+    const x = gesture.clientX ?? rect.left + rect.width / 2;
+    const y = gesture.clientY ?? rect.top + rect.height / 2;
+    this.zoomAt(x, y, this.gestureDistance / gesture.scale / current);
+  };
+
+  private readonly onGestureEnd = (): void => {
+    this.gesturing = false;
+  };
+
+  private pan(dx: number, dy: number): void {
+    const distance = this.camera.position.distanceTo(this.controls.target);
+    const height = Math.max(1, this.domElement.clientHeight);
+    const perPixel = (2 * distance * Math.tan((this.camera.fov * Math.PI) / 360)) / height;
+    _right.setFromMatrixColumn(this.camera.matrix, 0);
+    _right.y = 0;
+    if (_right.lengthSq() < 1e-6) _right.set(1, 0, 0);
+    else _right.normalize();
+    _shift.copy(_right).multiplyScalar(dx * perPixel);
+    _shift.y -= dy * perPixel;
+    this.controls.target.add(_shift);
+    this.camera.position.add(_shift);
+  }
+
+  private zoomAt(clientX: number, clientY: number, factor: number): void {
+    const target = this.controls.target;
+    _offset.subVectors(this.camera.position, target);
+    const distance = _offset.length();
+    const next = Math.min(this.controls.maxDistance, Math.max(this.controls.minDistance, distance * factor));
+    if (Math.abs(next - distance) < 1e-4) return;
+    const rect = this.domElement.getBoundingClientRect();
+    _ndc.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+    this.camera.updateMatrixWorld();
+    _ray.setFromCamera(_ndc, this.camera);
+    this.camera.getWorldDirection(_dir);
+    _plane.setFromNormalAndCoplanarPoint(_dir, target);
+    if (_ray.ray.intersectPlane(_plane, _hit)) {
+      _shift.subVectors(_hit, target).multiplyScalar(1 - next / distance);
+      target.add(_shift);
+    }
+    this.camera.position.copy(target).addScaledVector(_offset.normalize(), next);
+  }
 }

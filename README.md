@@ -52,16 +52,19 @@ Los perfiles por stack (skill, comandos de test y de revisión) están en `plugi
 
 La pestaña **Ajustes** edita `config.json`: el modelo (`opus`, `sonnet`, `haiku`, `fable`, `inherit` o un id completo) y el esfuerzo (`low` a `max`) de cada rol, los departamentos activos, el número máximo de rondas de revisión, los topes de la memoria y la rama base de cada planta. Al guardar, el hub regenera los agentes de `~/.claude/agents/` y los lanzadores; vale para las sesiones y los equipos nuevos, y las sesiones abiertas siguen igual hasta que las reinicias con `bun run office`.
 
-| Rol | Por defecto |
-|---|---|
-| Director | opus · high |
-| Jefes (plantas y departamentos) | sonnet · medium |
-| Desarrolladores | opus · medium |
-| Testers y revisores de código | sonnet · medium |
-| Redactores | opus · high |
-| Revisores de planes | sonnet · xhigh |
-| Artesanos de skills | sonnet · medium |
-| Revisores de skills | opus · medium |
+| Rol | Por defecto | Por qué |
+|---|---|---|
+| Director | opus · high | Reparte entre plantas y fija los contratos que comparten: un error se propaga a todas. |
+| Jefes (plantas y departamentos) | sonnet · medium | Coordinan, reparten piezas ya decididas y vigilan las puertas. |
+| Desarrolladores | opus · high | Cambios en varios ficheros de código real, donde un fallo cuesta de detectar. |
+| Testers | sonnet · medium | Ejecutan los tests que pide el jefe y resumen el resultado. |
+| Revisores de código | opus · high | Buscan fallos y problemas de seguridad que se escaparían. |
+| Redactores | opus · high | Diseñan el plan: deciden ficheros, pasos y riesgos. |
+| Revisores de planes | sonnet · xhigh | Otro modelo que el redactor y revisión a fondo; en la prueba en vivo encontró un bloqueante real. |
+| Artesanos de skills | sonnet · medium | Siguen `skill-creator` sobre un brief cerrado. |
+| Revisores de skills | opus · high | Revisan scripts que se instalarán en tus sesiones: es revisión de seguridad. |
+
+El esfuerzo sigue el que tienes por modelo en `~/.claude/settings.json` (high para Opus, medium para el resto), salvo el revisor de planes. Fable y Haiku no son el valor por defecto de ningún rol: Fable queda para problemas excepcionales y Haiku no entra en el reparto habitual. Los dos se pueden elegir en Ajustes.
 
 Los lanzadores pasan además `--model` y `--effort` al director y a los jefes, y los jefes no nombran modelo al lanzar compañeros: manda el agente generado.
 

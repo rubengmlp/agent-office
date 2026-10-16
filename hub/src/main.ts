@@ -77,7 +77,15 @@ export function main(argv: string[]): void {
   if (process.env.AGENT_OFFICE_RECORD) console.log(`Grabando en ${process.env.AGENT_OFFICE_RECORD}`);
   if (argv.includes('--open')) openSessions(p, url);
 
-  const shutdown = () => {
+  process.on('uncaughtException', (error) => {
+    console.error(`Agent Office: error no capturado: ${error.stack ?? String(error)}`);
+  });
+  process.on('unhandledRejection', (reason) => {
+    console.error(`Agent Office: promesa rechazada sin capturar: ${reason instanceof Error ? (reason.stack ?? reason.message) : String(reason)}`);
+  });
+
+  const shutdown = (signal: string) => {
+    console.log(`Agent Office: ${signal} recibido, cerrando el hub`);
     clearInterval(pruneTimer);
     clearInterval(tickTimer);
     stopWatching();
@@ -87,8 +95,7 @@ export function main(argv: string[]): void {
     db.close();
     process.exit(0);
   };
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(signal, () => shutdown(signal));
 }
 
 function openSessions(p: Paths, url: string): void {

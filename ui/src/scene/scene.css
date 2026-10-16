@@ -414,3 +414,12 @@
     animation: none !important;
   }
 }
+
+.scene-hint {
+  margin: 6px 6px 2px;
+  max-width: 190px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--muted);
+  white-space: normal;
+}

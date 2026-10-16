@@ -91,9 +91,20 @@ export class DocumentDesk {
     for (const dir of [join(root, PLANS_DIR), join(root, SKILLS_DIR)]) {
       if (!existsSync(dir)) continue;
       try {
-        this.watchers.push(watch(dir, { recursive: true }, () => this.schedule()));
+        const watcher = watch(dir, { recursive: true }, () => this.schedule());
+        watcher.on('error', () => this.rewatchLater());
+        this.watchers.push(watcher);
       } catch {}
     }
+  }
+
+  private rewatchLater(): void {
+    this.unwatch();
+    this.watchedRoot = null;
+    setTimeout(() => {
+      this.watch();
+      this.refresh();
+    }, 5000);
   }
 
   unwatch(): void {

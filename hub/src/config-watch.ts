@@ -14,11 +14,11 @@ export function watchTargets(targets: WatchTarget[], onChange: () => void, debou
   };
   for (const target of targets) {
     try {
-      watchers.push(
-        watch(target.dir, (_event, filename) => {
-          if (filename && target.match(String(filename))) fire();
-        }),
-      );
+      const watcher = watch(target.dir, (_event, filename) => {
+        if (filename && target.match(String(filename))) fire();
+      });
+      watcher.on('error', () => watcher.close());
+      watchers.push(watcher);
     } catch {}
   }
   return () => {
