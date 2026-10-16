@@ -482,5 +482,8 @@ describe('session liveness', () => {
       now: () => h.clock.now,
     });
     expect(restarted.snapshot().sessions.map((s) => s.sessionId)).toEqual(['live-1']);
+    expect(restarted.snapshot().agents).toMatchObject([
+      { key: 'live-1', name: 'lead-mobile', role: 'office-lead-mobile', roleKind: 'lead', state: 'idle', floor: 'mobile', endedAt: null },
+    ]);
   });
 });

@@ -1350,6 +1350,31 @@ export class Office {
         continue;
       }
       const floor = this.floors.resolve(row.cwd);
+      const now = this.now();
+      this.agents.set(row.session_id, {
+        key: row.session_id,
+        sessionId: row.session_id,
+        parentKey: null,
+        name: row.name,
+        role: canonicalRole(row.role),
+        spawnType: null,
+        teammate: false,
+        team: row.team,
+        floor: floor.slug,
+        floorKind: floor.kind,
+        touchedFloor: null,
+        state: 'idle',
+        stateSince: now,
+        detail: 'esperando',
+        tool: null,
+        blockedReason: null,
+        lastTest: null,
+        startedAt: row.started_at,
+        closing: null,
+        updatedAt: now,
+        endedAt: null,
+        sentState: null,
+      });
       this.sessions.set(row.session_id, {
         sessionId: row.session_id,
         cwd: row.cwd,
