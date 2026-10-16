@@ -94,6 +94,32 @@ describe('blocked agents', () => {
     expect(agent('dev-1')?.state).toBe('reading');
   });
 
+  test('the panel receives the BLOQUEADO and HECHO messages it notifies about', () => {
+    h = harness();
+    const repo = managedRepo();
+    h.office.ingest(ev(LEAD, repo, 'SessionStart', { source: 'startup' }), leadMeta);
+    h.office.ingest(
+      ev(LEAD, repo, 'PreToolUse', {
+        agent_id: 'adev-1',
+        agent_type: 'office-dev-mobile',
+        tool_name: 'SendMessage',
+        tool_input: { to: 'main', message: 'BLOQUEADO: falta el contrato de /trips — necesito status de backend' },
+      }),
+    );
+    expect(h.messages).toContainEqual({ type: 'message', data: expect.objectContaining({ fromKey: 'adev-1', text: expect.stringMatching(/^BLOQUEADO:/) }) });
+    expect(h.messages).toContainEqual({ type: 'agent', data: expect.objectContaining({ key: 'adev-1', state: 'blocked' }) });
+
+    h.office.ingest(
+      ev(LEAD, repo, 'PreToolUse', {
+        tool_name: 'SendMessage',
+        tool_input: { to: 'director', message: 'HECHO: pantalla de viajes — validado por tester-mobile — pendiente: nada' },
+      }),
+      leadMeta,
+    );
+    expect(h.messages).toContainEqual({ type: 'message', data: expect.objectContaining({ fromKey: LEAD, text: expect.stringMatching(/^HECHO:/) }) });
+    expect(h.messages).toContainEqual({ type: 'agent', data: expect.objectContaining({ key: LEAD, roleKind: 'lead' }) });
+  });
+
   test('a question without answer turns into blocked after the configured minutes', () => {
     h = harness();
     const repo = managedRepo();
