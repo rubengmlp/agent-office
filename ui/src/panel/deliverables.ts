@@ -7,7 +7,7 @@ import { renderMarkdown } from './markdown';
 
 const SHORT_SHA = 7;
 const DATE_FORMAT = new Intl.DateTimeFormat('es', { day: 'numeric', month: 'short', year: 'numeric' });
-const CLOSED: ReadonlySet<DocumentStatus> = new Set<DocumentStatus>(['cerrado', 'descartado']);
+const NOT_DISCARDABLE: ReadonlySet<DocumentStatus> = new Set<DocumentStatus>(['ejecutando', 'cerrado', 'descartado']);
 
 const openAhead = new Set<string>();
 
@@ -63,8 +63,8 @@ function metaLines(doc: DocumentView): HTMLElement[] {
   return lines;
 }
 
-function canDiscard(doc: DocumentView): boolean {
-  return doc.kind === 'plan' && !CLOSED.has(doc.status);
+export function canDiscard(doc: DocumentView): boolean {
+  return doc.kind === 'plan' && !NOT_DISCARDABLE.has(doc.status);
 }
 
 function trackAhead(root: HTMLElement): void {
@@ -88,8 +88,12 @@ export function documentBadge(doc: DocumentView, text: string = documentStatusTe
   return badge;
 }
 
-async function discardDocument(store: Store, doc: DocumentView, control: HTMLButtonElement): Promise<boolean> {
-  const api = viewerApi;
+export async function discardDocument(
+  api: OfficeApi | null,
+  store: Store,
+  doc: DocumentView,
+  control: HTMLButtonElement,
+): Promise<boolean> {
   if (api === null || !window.confirm(`¿Descartar el plan «${doc.title}»?`)) return false;
   control.disabled = true;
   const result = await api.discardDocument(doc.path);
@@ -100,6 +104,25 @@ async function discardDocument(store: Store, doc: DocumentView, control: HTMLBut
   }
   store.toast(`Plan descartado: ${doc.title}`, 'ok');
   return true;
+}
+
+export async function downloadDocument(api: OfficeApi | null, store: Store, doc: DocumentView, control: HTMLButtonElement): Promise<void> {
+  if (api === null) return;
+  control.disabled = true;
+  const result = await api.documentContent(doc.path);
+  control.disabled = false;
+  if (!result.ok) {
+    store.toast(result.message, 'error');
+    return;
+  }
+  const url = URL.createObjectURL(new Blob([result.data.markdown], { type: 'text/markdown' }));
+  const link = el('a');
+  link.href = url;
+  link.download = `${doc.slug}.md`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 class DocumentViewer {
@@ -200,7 +223,7 @@ class DocumentViewer {
   }
 
   private async discardCurrent(): Promise<void> {
-    if (await discardDocument(this.store, this.doc, this.discard)) this.dispose();
+    if (await discardDocument(viewerApi, this.store, this.doc, this.discard)) this.dispose();
   }
 }
 
@@ -218,11 +241,18 @@ function card(store: Store, doc: DocumentView): HTMLElement {
   );
   root.dataset.path = doc.path;
   root.title = doc.path;
+  const actions = el('div', 'doc-actions');
+  if (viewerApi !== null) {
+    const download = button('Descargar', 'doc-download', `Descargar ${doc.slug}.md`);
+    download.addEventListener('click', () => void downloadDocument(viewerApi, store, doc, download));
+    actions.append(download);
+  }
   if (canDiscard(doc)) {
     const discard = button('Descartar', 'doc-discard');
-    discard.addEventListener('click', () => void discardDocument(store, doc, discard));
-    root.append(el('div', 'doc-actions', discard));
+    discard.addEventListener('click', () => void discardDocument(viewerApi, store, doc, discard));
+    actions.append(discard);
   }
+  if (actions.childElementCount > 0) root.append(actions);
   return root;
 }
 
@@ -232,6 +262,11 @@ function watchApprovals(store: Store): void {
   store.watch(['documents'], () => {
     for (const doc of store.documents) {
       const before = known.get(doc.path);
+      const becameDelivered = doc.kind === 'plan' && doc.status === 'entregado' && before !== undefined && before !== 'entregado';
+      if (becameDelivered) {
+        store.toast(`Plan entregado: decide en Planes · ${doc.title}`, 'ok');
+        continue;
+      }
       const becameApproved = doc.status === 'aprobado' && before !== undefined && before !== 'aprobado';
       if (!becameApproved || announced.has(doc.path)) continue;
       announced.add(doc.path);
@@ -256,7 +291,7 @@ export function mountDeliverables(host: HTMLElement, store: Store, api: OfficeAp
 
   host.addEventListener('click', (event) => {
     const target = event.target;
-    if (!(target instanceof Element) || target.closest('.doc-discard, summary, .doc-files')) return;
+    if (!(target instanceof Element) || target.closest('.doc-discard, .doc-download, summary, .doc-files')) return;
     const path = target.closest<HTMLElement>('.doc')?.dataset.path;
     const doc = path === undefined ? undefined : store.documents.find((item) => item.path === path);
     if (doc) openDocument(store, doc);

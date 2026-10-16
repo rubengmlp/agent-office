@@ -1451,7 +1451,13 @@ button.doc-title:hover:not(:disabled) {
 .doc-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 6px;
   margin-top: 8px;
+}
+
+button.doc-download {
+  padding: 3px 10px;
+  font-size: 12px;
 }
 
 button.doc-discard {
@@ -1668,5 +1674,116 @@ button.doc-discard:hover:not(:disabled) {
 
 .permission-hint {
   margin-top: 6px;
+  font-size: 12px;
+}
+
+.tab-count {
+  display: inline-block;
+  min-width: 18px;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #a855f7;
+  color: #ffffff;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+}
+
+.plans-view {
+  overflow: auto;
+  padding: 16px;
+}
+
+.plans {
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.plans-head {
+  margin-bottom: 16px;
+}
+
+.plans-heading {
+  margin-bottom: 4px;
+  font-size: 18px;
+}
+
+.plans-group {
+  margin-bottom: 20px;
+}
+
+.plans-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.plans-group-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.plans-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plans-row {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.plans-entregado {
+  border-color: color-mix(in srgb, #a855f7 55%, var(--border));
+}
+
+.plans-descartado,
+.plans-cerrado {
+  opacity: 0.7;
+}
+
+.plans-row-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.plans-title {
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.plans-path {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.plans-meta {
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+.plans-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+button.plans-action {
+  padding: 3px 10px;
   font-size: 12px;
 }

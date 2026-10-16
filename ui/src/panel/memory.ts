@@ -178,7 +178,7 @@ export function mountMemory(host: HTMLElement, store: Store, api: OfficeApi | nu
     const key = store.selectedKey;
     const agent = key === null ? undefined : store.agents.get(key);
     const floor = agent ? store.floorBySlug(agent.floor) : undefined;
-    if (!agent || agent.roleId === null || !floor || !MEMORY_KINDS.has(floor.kind)) {
+    if (!agent || agent.roleId === null || agent.roleKind === 'planReviewer' || !floor || !MEMORY_KINDS.has(floor.kind)) {
       ticket += 1;
       target = null;
       data = null;

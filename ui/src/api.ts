@@ -5,6 +5,7 @@ import type {
   LessonView,
   MemoryView,
   OrderRequest,
+  PlanDecision,
   ReportView,
   RoleId,
   SettingsResult,
@@ -88,6 +89,10 @@ export class OfficeApi {
 
   discardDocument(path: string): Promise<ApiData<{ ok: true }>> {
     return this.send('POST', '/api/documents/discard', { path });
+  }
+
+  decidePlan(path: string, decision: PlanDecision): Promise<ApiData<{ ok: true }>> {
+    return this.send('POST', '/api/documents/decide', { path, decision });
   }
 
   private get<T>(path: string): Promise<ApiData<T>> {

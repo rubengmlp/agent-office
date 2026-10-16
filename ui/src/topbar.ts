@@ -1,7 +1,7 @@
 import { button, el } from './dom';
 import type { ConnectionStatus, Store } from './store';
 
-export type Tab = 'office' | 'table' | 'settings';
+export type Tab = 'office' | 'table' | 'plans' | 'settings';
 
 export type Topbar = {
   root: HTMLElement;
@@ -21,6 +21,7 @@ const STATUS_TEXT: Record<ConnectionStatus, string> = {
 const TABS: readonly { tab: Tab; label: string }[] = [
   { tab: 'office', label: 'Oficina' },
   { tab: 'table', label: 'Tabla' },
+  { tab: 'plans', label: 'Planes' },
   { tab: 'settings', label: 'Ajustes' },
 ];
 
@@ -34,8 +35,11 @@ export function mountTopbar(store: Store, onTab: (tab: Tab) => void): Topbar {
 
   const tabButtons = new Map<Tab, HTMLButtonElement>();
   const tabs = el('nav', 'tabs');
+  const plansCount = el('b', 'tab-count');
+  plansCount.hidden = true;
   for (const { tab, label } of TABS) {
     const tabButton = button(label, 'tab');
+    if (tab === 'plans') tabButton.append(plansCount);
     tabButton.addEventListener('click', () => onTab(tab));
     tabButtons.set(tab, tabButton);
     tabs.append(tabButton);
@@ -59,6 +63,13 @@ export function mountTopbar(store: Store, onTab: (tab: Tab) => void): Topbar {
   store.watch(['connection'], () => {
     dot.dataset.status = store.connection;
     statusText.textContent = STATUS_TEXT[store.connection];
+  });
+
+  store.watch(['documents'], () => {
+    const count = store.documents.filter((doc) => doc.kind === 'plan' && doc.status === 'entregado').length;
+    plansCount.textContent = String(count);
+    plansCount.hidden = count === 0;
+    tabButtons.get('plans')?.setAttribute('title', count > 0 ? `${count} ${count === 1 ? 'plan pendiente' : 'planes pendientes'} de decisión` : '');
   });
 
   store.watch(['questions'], () => {

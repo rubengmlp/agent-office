@@ -7,6 +7,7 @@ import { LiveConnection } from './live';
 import type { OfficeHandle } from './office/office';
 import { mountSettings } from './settings/settings';
 import { mountPanel } from './panel/panel';
+import { mountPlans } from './plans/plans';
 import { loadRecording, mountReplayControls, ReplayPlayer } from './replay';
 import { Store } from './store';
 import { mountTable } from './table/table';
@@ -33,6 +34,7 @@ function boot(): void {
 
   const officeHost = el('div', 'view office-view active');
   const tableHost = el('div', 'view table-view');
+  const plansHost = el('div', 'view plans-view');
   const settingsHost = el('div', 'view settings-view');
   const view = new URLSearchParams(location.search).get('view') === '3d' ? '3d' : '2d';
   const notice = el('div', 'notice');
@@ -50,18 +52,20 @@ function boot(): void {
     topbar.setTab(next);
     officeHost.classList.toggle('active', next === 'office');
     tableHost.classList.toggle('active', next === 'table');
+    plansHost.classList.toggle('active', next === 'plans');
     settingsHost.classList.toggle('active', next === 'settings');
     office?.setActive(next === 'office');
   };
 
   const topbar = mountTopbar(store, showTab);
-  root.replaceChildren(topbar.root, el('main', 'main', officeHost, tableHost, settingsHost, notice), panelHost, toastHost);
+  root.replaceChildren(topbar.root, el('main', 'main', officeHost, tableHost, plansHost, settingsHost, notice), panelHost, toastHost);
 
   const api = replayUrl || !key ? null : new OfficeApi(key);
   const actions: Actions = api ? liveActions(store, api) : replayActions(store);
 
   mountTable(tableHost, store);
   mountPanel(panelHost, store, actions, api);
+  mountPlans(plansHost, store, api);
   mountSettings(settingsHost, store, api);
   mountToasts(toastHost, store);
 
