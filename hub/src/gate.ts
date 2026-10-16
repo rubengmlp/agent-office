@@ -169,11 +169,11 @@ export function decideOrderGate(f: OrderGateFacts): OrderGateDecision {
     );
   }
   if (f.dirty.length > 0) {
-    return block(`Hay cambios sin comprobar después de ${f.run ? short(f.run.sha) : 'el último punto'}: ${listed(f.dirty)}. La oficina lanza las comprobaciones; espera el aviso COMPROBACIONES y repite el HECHO.`, 'run-checks');
+    return block(`Hay cambios sin comprobar${f.run ? ` después de ${short(f.run.sha)}` : ''}: ${listed(f.dirty)}. La oficina lanza las comprobaciones; espera el aviso COMPROBACIONES y repite el HECHO.`, 'run-checks');
   }
   if (!f.run || f.run.status === 'cancelled' || f.run.sha !== f.head) {
     return block(
-      `Hay cambios sin comprobar después de ${f.run && f.run.status !== 'cancelled' ? short(f.run.sha) : 'el último punto'}. La oficina lanza las comprobaciones; espera el aviso COMPROBACIONES y repite el HECHO.`,
+      `Hay cambios sin comprobar${f.run && f.run.status !== 'cancelled' ? ` después de ${short(f.run.sha)}` : ''}. La oficina lanza las comprobaciones; espera el aviso COMPROBACIONES y repite el HECHO.`,
       'run-checks',
     );
   }

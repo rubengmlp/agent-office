@@ -53,13 +53,17 @@ export function randomSuffix(random: () => number = Math.random): string {
   return out;
 }
 
-// The brief of a director: the line after ENCARGO: is the title, the rest the description.
+// The brief of a director is ENCARGO: <short title> — <what> — criteria — out of scope: the title is what comes
+// before the first dash with spaces around it, the rest the description.
 export function splitBrief(text: string, prefix: RegExp): { title: string; description: string } {
   const body = text.replace(prefix, '').trim();
   const lines = body.split('\n');
   const first = (lines.shift() ?? '').trim();
-  const title = first.length > BRIEF_TITLE_MAX ? `${first.slice(0, BRIEF_TITLE_MAX - 1).trimEnd()}…` : first;
-  const rest = [first.length > BRIEF_TITLE_MAX ? first : '', ...lines].join('\n').trim();
+  const dash = /\s[—–]\s/.exec(first);
+  const head = dash ? first.slice(0, dash.index).trim() : first;
+  const tail = dash ? first.slice(dash.index + dash[0].length).trim() : '';
+  const title = head.length > BRIEF_TITLE_MAX ? `${head.slice(0, BRIEF_TITLE_MAX - 1).trimEnd()}…` : head;
+  const rest = [head.length > BRIEF_TITLE_MAX ? head : '', tail, ...lines].filter((part) => part !== '').join('\n').trim();
   return { title: title || 'Encargo', description: rest.slice(0, BRIEF_DESCRIPTION_MAX) };
 }
 

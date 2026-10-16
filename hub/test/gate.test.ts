@@ -23,7 +23,7 @@ describe('decideOrderGate', () => {
     for (const run of [null, { sha: OLD, status: 'passed' as const, failed: null }, { sha: HEAD, status: 'cancelled' as const, failed: null }]) {
       const decision = decideOrderGate(facts({ run }));
       expect(decision).toMatchObject({ pass: false, action: 'run-checks' });
-      expect(decision.reason).toContain('Hay cambios sin comprobar después de');
+      expect(decision.reason).toContain('Hay cambios sin comprobar');
     }
     expect(decideOrderGate(facts({ run: { sha: OLD, status: 'passed', failed: null } })).reason).toContain(OLD.slice(0, 7));
   });

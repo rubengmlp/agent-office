@@ -57,10 +57,12 @@ describe('transitions', () => {
     expect(orderSlug('x'.repeat(100), 'a1b2').length).toBe(45);
     expect(randomSuffix(() => 0)).toBe('aaaa');
     expect(randomSuffix(() => 0.9999)).toBe('9999');
-    expect(splitBrief('ENCARGO: Login — criterios: x\nmás detalle\notra línea', BRIEF_PREFIX)).toEqual({
-      title: 'Login — criterios: x',
-      description: 'más detalle\notra línea',
+    expect(splitBrief('ENCARGO: Login — qué se hace — criterios: x — fuera: y\nmás detalle\notra línea', BRIEF_PREFIX)).toEqual({
+      title: 'Login',
+      description: 'qué se hace — criterios: x — fuera: y\nmás detalle\notra línea',
     });
+    expect(splitBrief('ENCARGO: Solo una frase', BRIEF_PREFIX)).toEqual({ title: 'Solo una frase', description: '' });
+    expect(splitBrief('ENCARGO: Con-guion-pegado y más', BRIEF_PREFIX).title).toBe('Con-guion-pegado y más');
     const long = splitBrief(`ENCARGO: ${'a'.repeat(150)}`, BRIEF_PREFIX);
     expect(long.title).toHaveLength(100);
     expect(long.description).toBe('a'.repeat(150));
@@ -81,7 +83,7 @@ describe('an ENCARGO of the director', () => {
     const decision = brief(rig, 'ENCARGO: Pantalla de login — criterios: que compile — fuera: nada');
     expect(decision.pass).toBe(true);
     const [card] = boardOrders(rig);
-    expect(card).toMatchObject({ title: 'Pantalla de login — criterios: que compile — fuera: nada', floor: 'mobile', status: 'pendiente', source: 'director', lead: 'lead-mobile', cycle: 1 });
+    expect(card).toMatchObject({ title: 'Pantalla de login', description: 'criterios: que compile — fuera: nada', floor: 'mobile', status: 'pendiente', source: 'director', lead: 'lead-mobile', cycle: 1 });
     await rig.h.office.idle();
     const made = orderOf(rig, card?.slug ?? '');
     expect(made.branch).toBe(`encargo/${made.slug}`);
