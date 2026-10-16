@@ -284,7 +284,7 @@ export const en: Messages = {
   'table.askFlag.hint': 'The agent is waiting for your answer in the panel.',
   'table.round': 'round {n}',
   'table.roundOfMax': 'round {n}/{max}',
-  'table.round.hint': 'Current or last review round, out of the round cap. Each NO AGREEMENT from the reviewer opens as many more.',
+  'table.round.hint': 'Current or last review round, out of the round cap. Each SIN ACUERDO from the reviewer opens as many more.',
   'table.score.hint': 'Score of the last verdict (MEJORAR, APROBADO or SIN ACUERDO).',
   'table.docs.plans': 'Plans',
   'table.docs.skills': 'Skills',

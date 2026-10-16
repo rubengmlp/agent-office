@@ -35,7 +35,7 @@ function floorsText(doc: DocumentView): string {
   return floors.length > 0 ? t('plans.floors', { floors: floors.join(', ') }) : t('plans.floorsUnknown');
 }
 
-function roundText(doc: DocumentView): string | null {
+export function roundText(doc: DocumentView): string | null {
   if (doc.round === 0) return null;
   const round = hasMaxRounds(doc) ? plural('plans.roundsOfMax', doc.round, { max: doc.maxRounds }) : plural('plans.rounds', doc.round);
   return doc.score === null ? round : `${round} · ${scoreText(doc.score)}`;
