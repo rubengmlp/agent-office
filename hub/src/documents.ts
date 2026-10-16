@@ -6,6 +6,7 @@ import type { DocumentAhead, DocumentBase, DocumentContent, DocumentKind, Docume
 
 export const PLANS_DIR = join('redaccion', 'planes');
 export const SKILLS_DIR = join('taller', 'skills');
+export const HISTORY_DIR = join('redaccion', 'historial');
 const MAX_CONTENT_BYTES = 1_000_000;
 const SKIP_DIRS = new Set(['evals', '.git', 'node_modules', '__pycache__']);
 
@@ -220,7 +221,16 @@ export class DocumentDesk {
       )
       .all();
     for (const r of rows) finished.add(r.slug);
+    for (const slug of this.splitPlanSlugs()) finished.add(slug);
     return finished;
+  }
+
+  private splitPlanSlugs(): string[] {
+    const root = this.opts.root();
+    return safeList(join(root, HISTORY_DIR)).flatMap((name) => {
+      const slug = /^([a-z0-9][a-z0-9_-]{0,79})\.partido\.md$/.exec(name)?.[1];
+      return slug && !existsSync(join(root, PLANS_DIR, `${slug}.md`)) ? [slug] : [];
+    });
   }
 
   content(path: string): DocumentContent | null {

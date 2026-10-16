@@ -500,8 +500,6 @@ export class Office {
     return this.readCap(c, agent, session, false, now);
   }
 
-  // A verdict role reads within review.maxReviewerReads, and not at all once retired. The denial travels in the
-  // answer of /events that emit.sh already prints for every PreToolUse: there is no hook of its own.
   private readCap(c: Classified, agent: AgentRuntime, session: SessionRuntime, retired: boolean, now: number): string | null {
     if (c.event !== 'PreToolUse' || !READ_CAP_TOOLS.has(c.tool ?? '') || !isVerdictRole(agent.role) || !isDepartmentFloor(session.floorKind)) {
       return null;
@@ -1205,7 +1203,6 @@ export class Office {
     return decision;
   }
 
-  // The same decision for gate.sh and for ingest, which sees the REVISAR: in the same PreToolUse even when blocked.
   private reviewBlock(ref: DocRef, round: number | null, from: 'gate' | 'ingest'): { decision: GateDecision; summary: HubText | null } {
     const file = join(this.docsRoot(), ref.path);
     let bytes: number | null = null;
@@ -1287,6 +1284,19 @@ export class Office {
     if (!isDepartmentFloor(session.floorKind)) return;
     const ref = docRef(parsed.target, this.docsRoot(), session.cwd);
     if (!ref) return;
+    if (parsed.kind === 'split') {
+      if (ref.kind === 'plan') {
+        this.pushActivity({
+          ts: now,
+          agentKey: from.key,
+          event: 'Split',
+          tool: 'SendMessage',
+          state: null,
+          summary: { key: 'hub.act.splitRequested', params: { who: from.name ?? from.key, path: ref.path } },
+        });
+      }
+      return;
+    }
     if (parsed.kind === 'plan') {
       if (ref.kind === 'plan' && isLeadRole(from.role)) {
         this.pushActivity({ ts: now, agentKey: from.key, event: 'Plan', tool: 'SendMessage', state: null, summary: { key: 'hub.act.planNotice', params: { to: message.to, path: ref.path } } });

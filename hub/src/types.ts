@@ -106,6 +106,7 @@ export type HubTextParams = {
   'hub.act.reviewBlockedTooLong': { path: string; kb: number; max: number };
   'hub.act.reviewIgnoredTooLong': { path: string; kb: number; max: number };
   'hub.act.readCapReached': { who: string; n: number };
+  'hub.act.splitRequested': { who: string; path: string };
   'hub.act.chatPost': { who: string; channel: string; text: string };
   'hub.act.chatClaim': { who: string; channel: string; files: string };
   'hub.act.chatRelease': { who: string; channel: string; files: string };

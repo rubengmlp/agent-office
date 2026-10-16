@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { realPath } from '../src/floors';
+import { taskLine } from '../src/office';
 import { docRef, normalizeLesson, parseProtocol } from '../src/protocol';
 import { tempDir } from './helpers';
 
@@ -35,6 +36,18 @@ describe('protocol messages', () => {
     expect(parseProtocol('LECCION: sin tilde también')).toMatchObject({ kind: 'lesson' });
     expect(parseProtocol('BLOQUEADO: falta el contrato')).toMatchObject({ kind: 'blocked', target: null });
     expect(parseProtocol('Te paso el plan para REVISAR: x')).toBeNull();
+  });
+
+  test('PARTIR carries the plan path and its phases, and a lead never takes it as a task', () => {
+    expect(parseProtocol('PARTIR: redaccion/planes/login.md — fases: 1. backend\n2. mobile')).toMatchObject({
+      kind: 'split',
+      target: 'redaccion/planes/login.md',
+      round: null,
+      rest: 'redaccion/planes/login.md — fases: 1. backend\n2. mobile',
+    });
+    expect(parseProtocol('partir: `redaccion/planes/x.md` — fases: una')).toMatchObject({ kind: 'split', target: 'redaccion/planes/x.md' });
+    expect(parseProtocol('Hay que PARTIR: redaccion/planes/x.md')).toBeNull();
+    expect(taskLine('PARTIR: redaccion/planes/login.md — fases: backend | mobile')).toBeNull();
   });
 
   test('PLAN carries the plan path, PREGUNTA has no target and both are case sensitive', () => {

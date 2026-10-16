@@ -337,6 +337,59 @@ describe('plan length', () => {
   });
 });
 
+describe('splitting a plan', () => {
+  test('PARTIR only shows in the activity: no gate, no round, and the plan moved to historial leaves Planes', async () => {
+    const cwd = redaccionTeam();
+    const file = join(docs, PLAN);
+    writeFileSync(file, '# Login\n');
+    h.office.refreshDocuments();
+    const message = `PARTIR: ${PLAN} — fases: 1. backend\n2. mobile`;
+    expect(gate(LEAD, cwd, 'ared-1', 'redactor-login', message)).toEqual({ pass: true, reason: 'no es un aviso de fin' });
+    say(LEAD, cwd, 'ared-1', 'redactor-login', 'team-lead', message);
+    await h.office.idle();
+    const summaries = h.office.snapshot().activity.map((a) => a.summary);
+    expect(summaries).toContainEqual({ key: 'hub.act.splitRequested', params: { who: 'redactor-login', path: PLAN } });
+    expect(summaries.some((x) => keyOf(x) === 'hub.act.reviewRequested')).toBe(false);
+    expect(doc(PLAN)).toMatchObject({ status: 'borrador', round: 0 });
+    expect(h.db.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM gate_decisions').get()?.n).toBe(0);
+    expect(h.db.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM documents').get()?.n).toBe(0);
+    expect(git(docs, 'log', '--format=%s')).not.toContain('login');
+
+    git(docs, 'add', PLAN);
+    git(docs, 'commit', '-q', '-m', 'plan');
+    mkdirSync(join(docs, 'redaccion', 'historial'), { recursive: true });
+    git(docs, 'mv', PLAN, 'redaccion/historial/login.partido.md');
+    h.office.refreshDocuments();
+    expect(doc(PLAN)).toBeUndefined();
+    expect(h.office.documents().map((d) => d.path)).toEqual([]);
+  });
+
+  test('the snapshot of a split plan is retired on the next cleanup, that of a plan in progress is kept', async () => {
+    office();
+    const mobile = originAndClone(h.root, 'mobile');
+    h.config.floors.mobile = floor(mobile.repo);
+    expect((await h.office.syncSources({ slug: 'login', floors: ['mobile'] })).ok).toBe(true);
+    expect((await h.office.syncSources({ slug: 'login-fase-1', floors: ['mobile'] })).ok).toBe(true);
+    mkdirSync(join(docs, 'redaccion', 'historial'), { recursive: true });
+    writeFileSync(join(docs, 'redaccion', 'historial', 'login.partido.md'), '# Login\n');
+    const restarted = new Office({
+      hubId: 'hub-test',
+      db: h.db,
+      config: h.config,
+      profiles: loadProfiles(PROFILES_DIR),
+      workspaceDir: h.workspace,
+      claudeHome: join(h.root, 'claude-home'),
+      gitRoot: (cwd) => cwd,
+      now: () => h.clock.now,
+    });
+    restarted.start();
+    await restarted.idle();
+    restarted.stop();
+    expect(existsSync(join(docs, 'redaccion', '.fuentes', 'login'))).toBe(false);
+    expect(existsSync(join(docs, 'redaccion', '.fuentes', 'login-fase-1', 'mobile', 'README.md'))).toBe(true);
+  });
+});
+
 describe('reviewer reads', () => {
   const read = (agentId: string, name: string, tool = 'Read') =>
     h.office.ingest(

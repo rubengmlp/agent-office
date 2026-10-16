@@ -3,7 +3,7 @@ import { isAbsolute, posix, relative, resolve, sep } from 'node:path';
 import { isInside, realPath } from './floors';
 import type { DocumentKind } from './types';
 
-export type ProtocolKind = 'review' | 'improve' | 'approved' | 'no-agreement' | 'done' | 'lesson' | 'blocked' | 'plan' | 'question';
+export type ProtocolKind = 'review' | 'improve' | 'approved' | 'no-agreement' | 'done' | 'lesson' | 'blocked' | 'plan' | 'question' | 'split';
 
 export type ProtocolMessage = {
   kind: ProtocolKind;
@@ -25,9 +25,10 @@ const PREFIXES: readonly [ProtocolKind, RegExp][] = [
   ['blocked', /^\s*BLOQUEADO\s*:\s*/i],
   ['plan', /^\s*PLAN\s*:\s*/],
   ['question', /^\s*PREGUNTA\s*:\s*/],
+  ['split', /^\s*PARTIR\s*:\s*/i],
 ];
 
-const WITH_TARGET: ReadonlySet<ProtocolKind> = new Set(['review', 'improve', 'approved', 'no-agreement', 'done', 'plan']);
+const WITH_TARGET: ReadonlySet<ProtocolKind> = new Set(['review', 'improve', 'approved', 'no-agreement', 'done', 'plan', 'split']);
 
 function firstToken(line: string): string | null {
   const token = line.trim().split(/\s+/)[0] ?? '';
