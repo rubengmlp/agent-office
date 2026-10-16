@@ -192,15 +192,21 @@ class OfficeScene {
     this.fill.position.set(-0.3, 1, 0.5);
     this.garden = new Garden(assets);
     const exitX = (floor: string): number => this.site.nav.floors.get(floor)?.exitX ?? 0;
+    const spot = { x: 0, z: 0 };
+    const place = (x: number, z: number): { x: number; z: number } => {
+      spot.x = x;
+      spot.z = z;
+      return spot;
+    };
     const link = linkLift<{ x: number; z: number }>(this.lift, {
       serves: (from, to) => servesLift(from, to, this.site.nav, this.site.liftStops),
       landing: (floor, face) => {
         const x = exitX(floor);
-        if (face === 'street') return { x, z: AISLE_Z + STREET_LANDING_DZ };
-        if (face === 'bridge') return { x: x + BRIDGE_LANDING_DX, z: AISLE_Z };
-        return { x: x - LANDING_DX, z: AISLE_Z };
+        if (face === 'street') return place(x, AISLE_Z + STREET_LANDING_DZ);
+        if (face === 'bridge') return place(x + BRIDGE_LANDING_DX, AISLE_Z);
+        return place(x - LANDING_DX, AISLE_Z);
       },
-      cabin: (floor) => ({ x: exitX(floor), z: AISLE_Z }),
+      cabin: (floor) => place(exitX(floor), AISLE_Z),
     });
     this.liftLink = Object.assign(link, { stops: () => this.site.liftStops });
     this.scene.add(this.sun, this.sun.target, this.fill, this.hemi, this.site.root, this.actors, this.talkLines.mesh);
@@ -527,7 +533,8 @@ class OfficeScene {
       const agent = this.store.agents.get(key) ?? entry.agent;
       const state = this.store.shownState(agent);
       if (state === 'testing') testing.add(agent.floor);
-      if (agent.away && entry.character.leaving && !entry.character.moving) this.garden.lot.depart(key);
+      const parking = agent.away && this.garden.root.visible;
+      if (parking && entry.character.leaving && !entry.character.moving) this.garden.lot.depart(key);
       entry.character.update(
         {
           dt,
@@ -538,7 +545,7 @@ class OfficeScene {
           pending: this.store.questionFor(key) !== undefined,
           ended: agent.endedAt !== null && !agent.away,
           away: agent.away,
-          hold: agent.away && this.garden.lot.boarding(key),
+          hold: parking && this.garden.lot.boarding(key),
           lastTest: agent.lastTest,
           name: agentName(agent),
           following: following === key,

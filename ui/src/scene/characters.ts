@@ -644,13 +644,14 @@ export class Character {
   }
 
   private worldPosition(resolve: Resolver, out: Vector3): Vector3 | null {
-    const origin = resolve(this.at.floor);
-    if (!origin) return null;
     if (this.ride?.phase === 'riding' && this.lift) {
+      const from = resolve(this.ride.leg.from) ?? resolve(this.at.floor);
+      if (!from) return null;
       const cabin = this.lift.cabin(this.ride.leg.from);
-      const from = resolve(this.ride.leg.from) ?? origin;
       return out.set(from.x + cabin.x, this.lift.position(), from.z + cabin.z);
     }
+    const origin = resolve(this.at.floor);
+    if (!origin) return null;
     out.set(origin.x + this.at.x, origin.y + this.stepDown(), origin.z + this.at.z);
     if (this.transfer && this.path.length > 0) {
       const next = this.path[0];

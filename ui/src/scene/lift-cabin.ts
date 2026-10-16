@@ -11,6 +11,8 @@ const ROOF_H = 2.45;
 
 type Leaves = { face: LiftFace; a: Mesh; b: Mesh };
 
+const ROOM_ONLY: readonly LiftFace[] = ['room'];
+
 export class LiftCabin {
   readonly group = new Group();
   private readonly leaves: Leaves[] = [];
@@ -49,7 +51,7 @@ export class LiftCabin {
     if (!controller) return;
     this.group.position.set(x, controller.position, z);
     const served = controller.servedFaces();
-    const open = served.length > 0 ? served : (['room'] as const);
+    const open = served.length > 0 ? served : ROOM_ONLY;
     for (const { face, a, b } of this.leaves) {
       const amount = open.includes(face) ? controller.doors : 0;
       const offset = LEAF / 2 + LEAF * amount;

@@ -135,6 +135,7 @@ class Gardener {
   readonly group = new Group();
   private rig: Rig | null = null;
   private body: Group | null = null;
+  private materials: MeshStandardMaterial[] = [];
   private readonly mower = new Group();
   private x = 0;
   private dir = 1;
@@ -190,14 +191,21 @@ class Gardener {
 
   dispose(): void {
     this.disposed = true;
-    this.rig?.dispose();
-    this.rig = null;
+    this.detach();
     this.group.removeFromParent();
   }
 
-  private attach(model: LoadedModel | null, assets: AssetLibrary): void {
-    if (this.body) this.body.removeFromParent();
+  private detach(): void {
     this.rig?.dispose();
+    this.rig = null;
+    this.body?.removeFromParent();
+    this.body = null;
+    for (const material of this.materials) material.dispose();
+    this.materials = [];
+  }
+
+  private attach(model: LoadedModel | null, assets: AssetLibrary): void {
+    this.detach();
     const body = new Group();
     if (model) {
       const object = cloneSkinned(model.scene);
@@ -217,6 +225,7 @@ class Gardener {
       mannequin.root.traverse((child) => {
         if (child instanceof Mesh) child.castShadow = true;
       });
+      this.materials = mannequin.materials;
       this.rig = new MannequinRig(mannequin);
     }
     this.body = body;
