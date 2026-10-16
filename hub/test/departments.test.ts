@@ -26,6 +26,12 @@ afterEach(() => h?.cleanup());
 const agent = (key: string): AgentView | undefined => h.office.snapshot().agents.find((a) => a.key === key);
 const doc = (path: string) => h.office.documents().find((d) => d.path === path);
 
+// The last list of documents the panel received, which is what its desktop notifications compare.
+function emittedDoc(path: string) {
+  const lists = h.messages.flatMap((msg) => (msg.type === 'documents' ? [msg.data] : []));
+  return lists.at(-1)?.find((d) => d.path === path);
+}
+
 function office(git?: GitRunner): void {
   h = harness({
     ...(git ? { git } : {}),
@@ -140,6 +146,7 @@ describe('Redacción review loop', () => {
     h.clock.advance(1000);
     say(LEAD, cwd, 'arev-2', 'revisor-planes-login-r2', 'redactor-login', `APROBADO: ${PLAN} ronda 2 — nota 9/10 — sin bloqueantes`);
     expect(doc(PLAN)).toMatchObject({ status: 'aprobado', round: 2, score: 9 });
+    expect(emittedDoc(PLAN)).toMatchObject({ status: 'aprobado', round: 2 });
 
     expect(gate(LEAD, cwd, 'ared-1', 'redactor-login', 'HECHO: plan listo').reason).toContain('Falta la ruta');
     expect(gate(LEAD, cwd, 'ared-1', 'redactor-login', `HECHO: ${PLAN} aprobado en 2 rondas — listo`).pass).toBe(true);
@@ -167,6 +174,7 @@ describe('Redacción review loop', () => {
     say(LEAD, cwd, 'ared-1', 'redactor-login', 'team-lead', `REVISAR: ${PLAN} ronda 3`);
     say(LEAD, cwd, 'arev-1', 'revisor-planes-login-r1', 'team-lead', `SIN ACUERDO: ${PLAN} ronda 3 — falta la migración`);
     expect(doc(PLAN)).toMatchObject({ status: 'sin-acuerdo', round: 3 });
+    expect(emittedDoc(PLAN)).toMatchObject({ status: 'sin-acuerdo', round: 3 });
     expect(gate(LEAD, cwd, null, null, `HECHO: ${PLAN} aprobado en 3 rondas — x`).pass).toBe(false);
   });
 
@@ -336,6 +344,10 @@ describe('guard alerts', () => {
     h.office.ingest(ev(LEAD, cwd, 'SubagentStop', { agent_id: 'ared-1', agent_type: 'redactor-login' }));
     await h.office.idle();
     expect(h.office.snapshot().alerts.map((a) => [a.level, a.floor, a.files])).toEqual([['alerta', 'sandbox', [join(repo, 'a.ts')]]]);
+    expect(h.messages).toContainEqual({
+      type: 'alert',
+      data: expect.objectContaining({ level: 'alerta', floor: 'sandbox', agentKey: 'ared-1', files: [join(repo, 'a.ts')] }),
+    });
   });
 });
 
