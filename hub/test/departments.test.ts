@@ -557,6 +557,7 @@ describe('delivered plans', () => {
   test('a restart reads the floors of a delivered plan from the database and keeps its sources removed', async () => {
     await deliveredPlan();
     const restarted = new Office({
+      hubId: 'hub-test',
       db: h.db,
       config: h.config,
       profiles: loadProfiles(PROFILES_DIR),
@@ -623,6 +624,7 @@ describe('hub restarts', () => {
     h.office.refreshDocuments();
     expect(await h.office.discardDocument('redaccion/planes/cerrado.md')).toBe('ok');
     const restarted = new Office({
+      hubId: 'hub-test',
       db: h.db,
       config: h.config,
       profiles: loadProfiles(PROFILES_DIR),

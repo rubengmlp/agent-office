@@ -73,6 +73,7 @@ export type HubTextParams = {
   'hub.act.order': { text: string };
   'hub.act.planDiscarded': { path: string };
   'hub.act.sourcesReady': { slug: string; floors: string };
+  'hub.act.sourcesForeign': { n: number; dirs: string };
   'hub.act.guardAlert.one': { level: HubText; n: number; floor: string; who: string };
   'hub.act.guardAlert.other': { level: HubText; n: number; floor: string; who: string };
   'hub.act.memoryDelivered': { lessons: number; reports: number };

@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import {
   PROFILES_DIR,
   REPO_ROOT,
+  createIdIfMissing,
   createKeyIfMissing,
   defaultConfig,
   docsRepoPath,
@@ -39,6 +40,8 @@ async function setup(argv: string[]): Promise<void> {
   ensureHome(p);
   const { created } = createKeyIfMissing(p);
   console.log(created ? `Key creada en ${p.key}` : `Key existente en ${p.key}`);
+  const hubId = createIdIfMissing(p);
+  console.log(hubId.created ? `Id del hub creado en ${p.id}` : `Id del hub en ${p.id}`);
   if (!existsSync(p.config)) {
     saveConfig(p, defaultConfig());
     console.log(`Configuración creada en ${p.config}`);

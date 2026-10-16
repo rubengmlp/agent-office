@@ -603,6 +603,7 @@ export const en: Messages = {
   'hub.act.order': 'order from the panel: {text}',
   'hub.act.planDiscarded': 'plan discarded from the panel: {path}',
   'hub.act.sourcesReady': 'sources ready for {slug}: {floors}',
+  'hub.act.sourcesForeign': 'snapshots from another hub or unmarked in redaccion/.fuentes, left alone ({n}): {dirs}',
   'hub.act.guardAlert.one': '{level}: {n} file of {floor} changed unattributed while {who} was working',
   'hub.act.guardAlert.other': '{level}: {n} files of {floor} changed unattributed while {who} was working',
   'hub.act.memoryDelivered': 'memory delivered: {lessons} lessons and {reports} reports',

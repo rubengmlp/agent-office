@@ -6,6 +6,7 @@ import type { GateDecision } from './gate';
 import type { GitRunner } from './git';
 import { departmentOf } from './scope';
 import { text } from './state-machine';
+import { SLUG_PATTERN } from './sync';
 import type { GuardAlertLevel } from './types';
 
 export const GUARDED_TOOLS: ReadonlySet<string> = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash']);
@@ -14,9 +15,10 @@ export type GuardFloor = { slug: string; path: string };
 
 export type GuardContext = { docsRoot: string; claudeHome: string; floors: GuardFloor[]; home?: string };
 
-export type GuardInput = { tool: string; input: Record<string, unknown>; cwd: string | null; role: string | null };
+export type GuardInput = { tool: string; input: Record<string, unknown>; cwd: string | null; role: string | null; name?: string | null };
 
-export type Zones = { label: string; allowed: string[]; forbidden: string[] };
+// order: the slug of the plan or the name of the skill the zone is narrowed to, or null for the department zone.
+export type Zones = { label: string; order: string | null; allowed: string[]; forbidden: string[] };
 
 export type ShellPath = { path: string; write: boolean };
 
@@ -31,12 +33,33 @@ const GIT_WRITES = new Set([
 ]);
 const OUTPUT_FLAGS = new Set(['-o', '--output', '--out', '--path', '--dest', '--destination', '--target', '--output-dir', '--outdir']);
 
-export function zonesFor(role: string | null, ctx: GuardContext): Zones | null {
+// The order of a writer (redactor-<slug>) or a skillwright (artesano-<name>), from the name its lead gave it.
+// Anyone else, or a name that does not fit, has none and keeps the department zone.
+export function orderOf(role: string | null, name: string | null): string | null {
+  const prefix = role === 'office-redactor' ? 'redactor-' : role === 'office-artesano' ? 'artesano-' : null;
+  if (!prefix || !name?.startsWith(prefix)) return null;
+  const order = name.slice(prefix.length);
+  return SLUG_PATTERN.test(order) ? order : null;
+}
+
+// Without a name (not known yet, or none) the zone is the department's: the order only ever narrows it.
+export function zonesFor(role: string | null, ctx: GuardContext, name: string | null = null): Zones | null {
   const department = departmentOf(role);
   if (!department) return null;
+  const order = orderOf(role, name);
+  if (order && department === 'redaccion') {
+    return {
+      label: `redactor-${order}`,
+      order,
+      allowed: [join(ctx.docsRoot, 'redaccion', 'planes', `${order}.md`), join(ctx.docsRoot, 'redaccion', 'historial', `${order}.md`)],
+      forbidden: [join(ctx.docsRoot, 'redaccion', '.fuentes')],
+    };
+  }
+  if (order) return { label: `artesano-${order}`, order, allowed: [join(ctx.docsRoot, 'taller', 'skills', order)], forbidden: [] };
   if (department === 'redaccion') {
     return {
       label: 'Redacción',
+      order: null,
       allowed: [join(ctx.docsRoot, 'redaccion')],
       forbidden: [join(ctx.docsRoot, 'redaccion', '.fuentes')],
     };
@@ -45,7 +68,7 @@ export function zonesFor(role: string | null, ctx: GuardContext): Zones | null {
   if (role === 'office-lead-mantenimiento') {
     allowed.push(join(ctx.claudeHome, 'skills'), ...ctx.floors.map((f) => join(f.path, '.claude', 'skills')));
   }
-  return { label: 'Mantenimiento', allowed, forbidden: [] };
+  return { label: 'Mantenimiento', order: null, allowed, forbidden: [] };
 }
 
 export function inZone(path: string, zones: Zones): boolean {
@@ -221,6 +244,8 @@ function block(reason: string, target: string): GuardDecision {
 
 export function guardDecision(g: GuardInput, ctx: GuardContext): GuardDecision {
   if (!GUARDED_TOOLS.has(g.tool)) return PASS;
+  // Bash keeps the department zone: its path detection is partial, and the skill-creator scripts of a
+  // skillwright write next to its skill folder.
   const zones = zonesFor(g.role, ctx);
   if (!zones) return PASS;
   const home = ctx.home ?? homedir();
@@ -230,7 +255,14 @@ export function guardDecision(g: GuardInput, ctx: GuardContext): GuardDecision {
     const raw = text(g.input.file_path) ?? text(g.input.notebook_path);
     if (!raw) return PASS;
     const target = resolvePath(raw, g.cwd, home);
-    if (inZone(target, zones)) return PASS;
+    const own = zonesFor(g.role, ctx, g.name ?? null) ?? zones;
+    if (inZone(target, own)) return PASS;
+    if (own.order) {
+      return block(
+        `${own.label} solo escribe los ficheros de su encargo: ${own.allowed.join(' y ')}. ${target} es de otro encargo o queda fuera; si de verdad hace falta tocarlo, pídeselo a tu jefe.`,
+        target,
+      );
+    }
     return block(`${zones.label} solo escribe dentro de ${where}${fuentesNote}. ${target} queda fuera; escribe en tu carpeta.`, target);
   }
   const command = text(g.input.command) ?? '';

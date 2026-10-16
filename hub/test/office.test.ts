@@ -520,6 +520,7 @@ describe('session liveness', () => {
     h.office.ingest(ev('live-1', repo, 'SessionStart', {}), { ...leadMeta, socket: live });
     h.office.ingest(ev('dead-1', repo, 'SessionStart', {}), { ...leadMeta, socket: join(h.root, 'gone.sock') });
     const restarted = new Office({
+      hubId: 'hub-test',
       db: h.db,
       config: h.config,
       profiles: loadProfiles(PROFILES_DIR),

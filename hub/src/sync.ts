@@ -1,5 +1,5 @@
 import type { Database } from 'bun:sqlite';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { validBranch } from './config';
 import { isInside, realPath } from './floors';
@@ -9,6 +9,8 @@ import type { DocumentAhead, DocumentBase, FloorConfig } from './types';
 
 export const FUENTES_DIR = join('redaccion', '.fuentes');
 export const SLUG_PATTERN = /^[a-z0-9][a-z0-9_-]{0,79}$/;
+// redaccion/.fuentes/<slug>/.office holds the id of the hub that made the snapshots of that plan.
+export const MARKER = '.office';
 const MAX_LOG = 30;
 const MAX_AHEAD_FILES = 50;
 const FETCH_TIMEOUT_MS = 120_000;
@@ -57,6 +59,8 @@ export type SyncOptions = {
   floors: () => Record<string, FloorConfig>;
   now: () => number;
   onChange: () => void;
+  id: string;
+  onForeign?: (dirs: string[]) => void;
 };
 
 export function isSyncError(r: SyncFloorResult): r is SyncFloorError {
@@ -208,6 +212,10 @@ export class SyncDesk {
     if (changed) this.opts.onChange();
   }
 
+  // Retires finished plans and orphan snapshots, but only snapshots marked with this hub's id: those of
+  // another hub, or unmarked ones outside this database, are reported and left alone. Unmarked folders that
+  // are in the database are adopted. With an empty database and foreign snapshots nothing is touched: the
+  // newcomer is most likely this hub.
   async cleanup(finished: Set<string>): Promise<string[]> {
     const removed: string[] = [];
     for (const slug of this.slugs()) {
@@ -216,17 +224,37 @@ export class SyncDesk {
       removed.push(slug);
     }
     const known = new Set(this.opts.db.query<{ path: string }, []>('SELECT path FROM sync_worktrees').all().map((r) => r.path));
-    for (const slug of safeList(this.fuentes())) {
-      for (const floor of safeList(join(this.fuentes(), slug))) {
-        const dir = join(this.fuentes(), slug, floor);
-        if (known.has(dir)) continue;
-        const repo = worktreeRepo(dir);
-        if (repo) await this.queue.run(repo, () => this.opts.git(repo, ['worktree', 'remove', '--force', dir]));
-        this.removeDir(dir);
-        removed.push(`${slug}/${floor}`);
+    const foreign: string[] = [];
+    const orphans: { slug: string; floor: string; dir: string }[] = [];
+    const ownSlugs: string[] = [];
+    for (const slug of visible(safeList(this.fuentes()))) {
+      const slugDir = join(this.fuentes(), slug);
+      const floors = visible(safeList(slugDir));
+      let owner = readMarker(slugDir);
+      if (owner === null && floors.some((floor) => known.has(join(slugDir, floor)))) {
+        writeMarker(slugDir, this.opts.id);
+        owner = this.opts.id;
       }
-      this.removeDir(join(this.fuentes(), slug), true);
+      for (const floor of floors) {
+        const dir = join(slugDir, floor);
+        if (known.has(dir)) continue;
+        if (owner === this.opts.id) orphans.push({ slug, floor, dir });
+        else foreign.push(`${slug}/${floor}`);
+      }
+      if (owner === this.opts.id || owner === null) ownSlugs.push(slug);
     }
+    if (known.size === 0 && foreign.length > 0) {
+      this.opts.onForeign?.(foreign);
+      return removed;
+    }
+    for (const { slug, floor, dir } of orphans) {
+      const repo = worktreeRepo(dir);
+      if (repo) await this.queue.run(repo, () => this.opts.git(repo, ['worktree', 'remove', '--force', dir]));
+      this.removeDir(dir);
+      removed.push(`${slug}/${floor}`);
+    }
+    for (const slug of ownSlugs) this.removeDir(join(this.fuentes(), slug), true);
+    if (foreign.length > 0) this.opts.onForeign?.(foreign);
     for (const floor of Object.values(this.opts.floors())) {
       const repo = realPath(floor.path);
       if (existsSync(repo)) await this.queue.run(repo, () => this.opts.git(repo, ['worktree', 'prune']));
@@ -250,6 +278,7 @@ export class SyncDesk {
     const target = join(this.fuentes(), slug, floorSlug);
     const existing = this.row(slug, floorSlug);
     if (existing && existsSync(target)) {
+      this.markIfMissing(dirname(target));
       return {
         floor: floorSlug,
         ref: existing.ref,
@@ -289,6 +318,8 @@ export class SyncDesk {
     }
     await git(repo, ['worktree', 'prune']);
     mkdirSync(dirname(target), { recursive: true });
+    // Marked before the worktree exists: if the hub dies before the INSERT, the orphan is still known as its own.
+    this.markIfMissing(dirname(target));
     const add = await git(repo, ['worktree', 'add', '--detach', '--quiet', target, sha], WORKTREE_TIMEOUT_MS);
     if (add.code !== 0) return { floor: floorSlug, error: `No se pudo crear la foto de ${floorSlug}: ${firstLine(add.stderr)}` };
     const last = this.opts.db
@@ -340,10 +371,16 @@ export class SyncDesk {
     return this.opts.db.query<WorktreeRow, [string, string]>('SELECT * FROM sync_worktrees WHERE slug = ? AND floor = ?').get(slug, floor) ?? null;
   }
 
+  // Another hub's marker is never overwritten: its snapshot of the same slug stays its own.
+  private markIfMissing(slugDir: string): void {
+    if (readMarker(slugDir) === null) writeMarker(slugDir, this.opts.id);
+  }
+
+  // Empty means no entry but dot files: the marker goes with the folder of the plan.
   private removeDir(dir: string, onlyIfEmpty = false): void {
     const fuentes = realPath(this.fuentes());
     if (!existsSync(dir) || !isInside(realPath(dir), fuentes) || realPath(dir) === fuentes) return;
-    if (onlyIfEmpty && safeList(dir).length > 0) return;
+    if (onlyIfEmpty && visible(safeList(dir)).length > 0) return;
     rmSync(dir, { recursive: true, force: true });
   }
 }
@@ -356,6 +393,24 @@ function parseFiles(raw: string | null): string[] {
   } catch {
     return [];
   }
+}
+
+function visible(entries: string[]): string[] {
+  return entries.filter((entry) => !entry.startsWith('.'));
+}
+
+function readMarker(slugDir: string): string | null {
+  try {
+    return readFileSync(join(slugDir, MARKER), 'utf8').trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function writeMarker(slugDir: string, id: string): void {
+  try {
+    writeFileSync(join(slugDir, MARKER), `${id}\n`);
+  } catch {}
 }
 
 function safeList(dir: string): string[] {

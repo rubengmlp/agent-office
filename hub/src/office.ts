@@ -186,6 +186,8 @@ export type OfficeOptions = {
   holdMs?: number;
   now?: () => number;
   deliverFn?: typeof deliver;
+  // Id of this hub, written in the marker of its snapshots in redaccion/.fuentes.
+  hubId: string;
 };
 
 const MAX_ACTIVITY = 300;
@@ -304,6 +306,16 @@ export class Office {
       floors: () => this.config.floors,
       now: this.now,
       onChange: () => this.refreshDocuments(),
+      id: opts.hubId,
+      onForeign: (dirs) =>
+        this.pushActivity({
+          ts: this.now(),
+          agentKey: 'redaccion',
+          event: 'Sync',
+          tool: null,
+          state: null,
+          summary: { key: 'hub.act.sourcesForeign', params: { n: dirs.length, dirs: dirs.join(', ') } },
+        }),
     });
     this.docs = new DocumentDesk({
       db: opts.db,
@@ -629,7 +641,7 @@ export class Office {
     const role = this.roleForEvent(e, session);
     if (!departmentOf(role)) return { pass: true, reason: 'fuera de los departamentos' };
     const decision = guardDecision(
-      { tool: e.tool_name ?? '', input: record(e.tool_input), cwd: text(e.cwd) ?? session.cwd, role },
+      { tool: e.tool_name ?? '', input: record(e.tool_input), cwd: text(e.cwd) ?? session.cwd, role, name: this.agents.get(e.agent_id ?? e.session_id)?.name ?? null },
       this.guardContext(),
     );
     if (!decision.pass) {

@@ -5,6 +5,7 @@ import {
   PUBLIC_DIR,
   RAW_FIXTURES_DIR,
   WORKSPACE_DIR,
+  createIdIfMissing,
   loadConfig,
   paths,
   readKey,
@@ -37,11 +38,14 @@ export function main(argv: string[]): void {
     console.error('No hay key de Agent Office. Ejecuta primero: bun run setup');
     process.exit(1);
   }
+  // An install updated without going through setup again has no id yet: without it, it could not mark its snapshots.
+  const { id: hubId } = createIdIfMissing(p);
   let config = loadConfig(p);
   writePortFile(p, config.port);
   const db = openDb(p.db);
   const office = new Office({
     db,
+    hubId,
     config,
     profiles: loadProfiles(PROFILES_DIR),
     workspaceDir: WORKSPACE_DIR,
