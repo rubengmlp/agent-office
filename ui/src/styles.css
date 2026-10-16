@@ -2093,6 +2093,13 @@ button.plans-action {
   overflow-wrap: anywhere;
 }
 
+.now-tokens {
+  margin: 8px 0 0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+}
+
 .now-steps-title {
   margin-top: 12px;
 }

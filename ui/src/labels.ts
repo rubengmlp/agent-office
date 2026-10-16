@@ -1,4 +1,4 @@
-import { currentLang, t } from './i18n';
+import { currentLang, plural, t } from './i18n';
 import { hubText } from './i18n/hub';
 import type {
   AgentState,
@@ -12,6 +12,7 @@ import type {
   HubText,
   RoleKind,
   Stack,
+  TokenTotals,
   VerdictKind,
 } from './types';
 
@@ -247,4 +248,33 @@ export function doingPhrase(agent: AgentView, state: AgentState = agent.state): 
       return clip(text || t('doing.working'));
     }
   }
+}
+
+export function formatTokens(n: number): string {
+  const decimals = currentLang() === 'es' ? ',' : '.';
+  const shorten = (value: number, unit: 'k' | 'm'): string => {
+    const rounded = Math.round(value * 10) / 10;
+    const text = rounded >= 100 ? String(Math.round(value)) : rounded.toFixed(1);
+    return `${text.replace('.', decimals)} ${t(`tokens.unit.${unit}`)}`;
+  };
+  if (n < 1000) return String(Math.round(n));
+  if (n < 999_950) return shorten(n / 1000, 'k');
+  return shorten(n / 1_000_000, 'm');
+}
+
+export function tokenWritten(tokens: TokenTotals): number {
+  return tokens.input + tokens.cacheCreate;
+}
+
+export function tokenParts(tokens: TokenTotals): string {
+  return t('tokens.parts', {
+    turns: plural('tokens.turns', tokens.turns),
+    read: formatTokens(tokens.cacheRead),
+    written: formatTokens(tokenWritten(tokens)),
+    output: formatTokens(tokens.output),
+  });
+}
+
+export function tokensLine(tokens: TokenTotals): string {
+  return t('tokens.row', { parts: tokenParts(tokens) });
 }

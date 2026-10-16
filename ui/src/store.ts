@@ -213,6 +213,13 @@ export class Store {
         this.usage = message.data;
         this.mark('usage');
         break;
+      case 'tokens': {
+        const agent = this.agents.get(message.data.agentKey);
+        if (!agent) break;
+        this.agents.set(agent.key, { ...agent, tokens: message.data.tokens });
+        this.mark('agents');
+        break;
+      }
       case 'chat':
         if (this.chat.some((m) => m.id === message.data.id)) break;
         this.chat.push(message.data);
@@ -394,12 +401,13 @@ export class Store {
 }
 
 export function withDefaults(agent: AgentView): AgentView {
-  const partial: Partial<Pick<AgentView, 'file' | 'task' | 'away'>> = agent;
+  const partial: Partial<Pick<AgentView, 'file' | 'task' | 'away' | 'tokens'>> = agent;
   return {
     ...agent,
     file: partial.file ?? null,
     task: partial.task ?? null,
     away: partial.away ?? agent.endedAt !== null,
+    tokens: partial.tokens ?? null,
   };
 }
 

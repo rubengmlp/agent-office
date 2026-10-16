@@ -30,6 +30,9 @@ const SAME_KEYS: MessageKey[] = [
   'topbar.tab.chat',
   'chat.title',
   'chat.global',
+  'tokens.row',
+  'tokens.unit.k',
+  'tokens.unit.m',
 ];
 
 const SOURCE_DIR = join(import.meta.dir, '../src');

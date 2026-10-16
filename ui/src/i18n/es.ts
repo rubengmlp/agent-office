@@ -502,6 +502,13 @@ export const es = {
   'usage.noData': 'sin datos aún',
   'usage.noWindow': 'sin ventana vigente · {time}',
   'usage.lastSample': 'última muestra {time}',
+  'tokens.unit.k': 'K',
+  'tokens.unit.m': 'M',
+  'tokens.turns.one': '{n} turno',
+  'tokens.turns.other': '{n} turnos',
+  'tokens.parts': '{turns} · {read} leídos · {written} escritos · {output} generados',
+  'tokens.row': 'Tokens: {parts}',
+  'tokens.row.hint': 'Leídos: contexto leído de la caché. Escritos: contexto nuevo enviado. Generados: texto que produce el modelo. Un turno es una llamada a la API.',
 
   'notify.permission.title': 'Permiso pendiente · {agent}',
   'notify.permission.tool': 'Permiso para {tool} · {agent}',

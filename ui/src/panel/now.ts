@@ -1,7 +1,7 @@
 import { append, el, setStateColor } from '../dom';
 import { t } from '../i18n';
 import { hubText } from '../i18n/hub';
-import { AWAY_ICON, doingPhrase, isAway, STATE_COLORS, STATE_ICONS } from '../labels';
+import { AWAY_ICON, doingPhrase, isAway, STATE_COLORS, STATE_ICONS, tokensLine } from '../labels';
 import type { Store } from '../store';
 import { clockTime, relativeTime } from '../time';
 import type { ActivityView, AgentView } from '../types';
@@ -46,6 +46,13 @@ function chips(agent: AgentView, now: number, times: TimeNode[]): HTMLElement | 
   return items.length > 0 ? el('div', 'now-chips', ...items) : null;
 }
 
+function tokensRow(agent: AgentView): HTMLElement | null {
+  if (!agent.tokens) return null;
+  const row = el('p', 'now-tokens muted', tokensLine(agent.tokens));
+  row.title = t('tokens.row.hint');
+  return row;
+}
+
 export function mountNow(host: HTMLElement, store: Store): void {
   let times: TimeNode[] = [];
   const section = panelSection({ id: 'now', title: () => t('now.title'), defaultOpen: true, host });
@@ -79,6 +86,7 @@ export function mountNow(host: HTMLElement, store: Store): void {
     append(section.body, [
       el('div', 'now-head', icon, el('div', 'now-headline', el('p', 'now-title', doing), since)),
       chips(agent, now, times),
+      tokensRow(agent),
       agent.task ? el('p', 'now-task', el('span', 'muted', `${t('now.task')} `), agent.task) : null,
       el('h4', 'now-steps-title section-title', t('now.steps')),
       steps.length > 0 ? el('ul', 'now-steps', ...steps.map(stepItem)) : el('p', 'muted hint', t('now.noActivity')),

@@ -503,6 +503,13 @@ export const en: Messages = {
   'usage.noData': 'no data yet',
   'usage.noWindow': 'no current window · {time}',
   'usage.lastSample': 'last sample {time}',
+  'tokens.unit.k': 'K',
+  'tokens.unit.m': 'M',
+  'tokens.turns.one': '{n} turn',
+  'tokens.turns.other': '{n} turns',
+  'tokens.parts': '{turns} · {read} read · {written} written · {output} generated',
+  'tokens.row': 'Tokens: {parts}',
+  'tokens.row.hint': 'Read: context read from the cache. Written: new context sent. Generated: text the model produces. A turn is one API call.',
 
   'notify.permission.title': 'Pending permission · {agent}',
   'notify.permission.tool': 'Permission for {tool} · {agent}',
