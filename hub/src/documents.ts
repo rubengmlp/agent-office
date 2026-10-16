@@ -2,7 +2,7 @@ import type { Database } from 'bun:sqlite';
 import { existsSync, readdirSync, readFileSync, statSync, watch, type Dirent, type FSWatcher } from 'node:fs';
 import { join } from 'node:path';
 import type { DocRef } from './protocol';
-import type { DocumentAhead, DocumentBase, DocumentContent, DocumentKind, DocumentStatus, DocumentView, PlanDecision } from './types';
+import type { DocumentAhead, DocumentBase, DocumentContent, DocumentKind, DocumentStatus, DocumentType, DocumentView, PlanDecision } from './types';
 
 export const PLANS_DIR = join('redaccion', 'planes');
 export const SKILLS_DIR = join('taller', 'skills');
@@ -56,19 +56,29 @@ export function latestMtime(dir: string, depth = 0): number {
   return latest;
 }
 
-function titleOf(kind: DocumentKind, file: string, slug: string): string {
-  let head = '';
+function readHead(file: string): string | null {
   try {
-    head = readFileSync(file, 'utf8').slice(0, 4000);
+    return readFileSync(file, 'utf8').slice(0, 4000);
   } catch {
-    return slug;
+    return null;
   }
+}
+
+function titleOf(kind: DocumentKind, head: string | null, slug: string): string {
+  if (head === null) return slug;
   if (kind === 'skill') {
     const name = /^name:\s*(.+)$/m.exec(head)?.[1]?.trim();
     return name ? name.replace(/^['"]|['"]$/g, '') : slug;
   }
   const heading = /^#\s+(.+)$/m.exec(head)?.[1]?.trim();
   return heading || slug;
+}
+
+const TYPE_MARKER = /^#[ \t]+.+\r?\n(?:[ \t]*\r?\n)*>[ \t]*(?:tipo|type)[ \t]*:[ \t]*(an[aá]lisis|analysis)\b/im;
+
+export function docTypeOf(kind: DocumentKind, head: string | null): DocumentType {
+  if (kind !== 'plan' || head === null) return 'implementacion';
+  return TYPE_MARKER.test(head) ? 'analisis' : 'implementacion';
 }
 
 export class DocumentDesk {
@@ -265,11 +275,13 @@ export class DocumentDesk {
       .all(ref.path);
     const last = verdicts[0] ?? null;
     const round = Math.max(row?.round ?? 0, last?.round ?? 0);
+    const head = readHead(file);
     return {
       path: ref.path,
       kind: ref.kind,
       slug: ref.slug,
-      title: titleOf(ref.kind, file, ref.slug),
+      title: titleOf(ref.kind, head, ref.slug),
+      docType: docTypeOf(ref.kind, head),
       status: statusOf(row ?? null, last, mtime),
       round,
       score: last?.score ?? null,

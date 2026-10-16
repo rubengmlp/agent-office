@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { ensureDocsRepo } from '../src/docs-repo';
 import { realPath } from '../src/floors';
 import { runGit, type GitRunner } from '../src/git';
-import { statusOf, type DocRow } from '../src/documents';
+import { docTypeOf, statusOf, type DocRow } from '../src/documents';
 import { Office, type OfficeOptions } from '../src/office';
 import { PROFILES_DIR } from '../src/config';
 import { loadProfiles } from '../src/profiles';
@@ -452,6 +452,39 @@ describe('delivered plans', () => {
     expect(doc(PLAN)).toMatchObject({ status: 'cerrado', base: [{ floor: 'mobile' }] });
     expect(await h.office.decidePlan(PLAN, 'ejecutar')).toBe('invalid-state');
     expect(await h.office.discardDocument(PLAN)).toBe('closed');
+  });
+
+  test('the document type comes from the line after the title: accents, case and English accepted, implementation by default', () => {
+    const type = (text: string, kind: 'plan' | 'skill' = 'plan') => docTypeOf(kind, text);
+    expect(type('# T\n> Tipo: análisis\n')).toBe('analisis');
+    expect(type('# T\n\n> tipo: ANALISIS\n')).toBe('analisis');
+    expect(type('# T\r\n> Type: Analysis\r\n')).toBe('analisis');
+    expect(type('# T\n> Tipo: implementación\n')).toBe('implementacion');
+    expect(type('# T\n> Type: implementation\n')).toBe('implementacion');
+    expect(type('# T\n\n## Contexto\n> Tipo: análisis\n')).toBe('implementacion');
+    expect(type('# T\n> Tipo: otra cosa\n')).toBe('implementacion');
+    expect(type('# T\n')).toBe('implementacion');
+    expect(docTypeOf('plan', null)).toBe('implementacion');
+    expect(type('# T\n> Tipo: análisis\n', 'skill')).toBe('implementacion');
+  });
+
+  test('a delivered analysis goes to the director as an order to ask the user first, an implementation plan keeps the old order', async () => {
+    await deliveredPlan();
+    expect(doc(PLAN)?.docType).toBe('implementacion');
+    writeFileSync(join(docs, PLAN), '# Auditoría de login\n> Tipo: análisis\n\n## Pasos\n1. encargar plan de migración\n');
+    h.office.refreshDocuments();
+    expect(doc(PLAN)).toMatchObject({ docType: 'analisis', title: 'Auditoría de login', status: 'entregado' });
+
+    director(join(h.root, 'director.sock'));
+    expect(await h.office.decidePlan(PLAN, 'ejecutar')).toBe('ok');
+    expect(sent).toHaveLength(1);
+    const payload = sent[0]?.payload ?? '';
+    expect(payload).toContain(`Analiza el documento \`${PLAN}\` («Auditoría de login») que te ha entregado Redacción.`);
+    expect(payload).toContain(`Léelo en \`${docs}/${PLAN}\``);
+    expect(payload).toContain('pregúntame con AskUserQuestion qué planes de implementación quieres que encargue a Redacción y en qué orden');
+    expect(payload).not.toContain('Ejecuta el plan');
+    expect(doc(PLAN)?.status).toBe('ejecutando');
+    expect(h.office.snapshot().activity.map((a) => a.summary)).toContainEqual({ key: 'hub.act.planAnalysisSent', params: { path: PLAN } });
   });
 
   test('an unreachable director leaves the plan as it was, and a delivered plan can be discarded', async () => {

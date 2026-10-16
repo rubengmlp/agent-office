@@ -93,6 +93,7 @@ export type HubTextParams = {
   'hub.act.floorRemoved': { slug: string };
   'hub.act.asks': { to: string; question: HubText };
   'hub.act.planExecuting': { path: string };
+  'hub.act.planAnalysisSent': { path: string };
   'hub.act.planParked': { path: string };
   'hub.act.planClosed': { path: string };
   'hub.act.planNotice': { to: string; path: string };
@@ -445,6 +446,8 @@ export type ReportView = {
 
 export type DocumentKind = 'plan' | 'skill';
 
+export type DocumentType = 'implementacion' | 'analisis';
+
 export type DocumentStatus =
   | 'borrador'
   | 'revision'
@@ -467,6 +470,7 @@ export type DocumentView = {
   kind: DocumentKind;
   slug: string;
   title: string;
+  docType: DocumentType;
   status: DocumentStatus;
   round: number;
   score: number | null;

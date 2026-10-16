@@ -710,7 +710,8 @@ export class Office {
     if (decision === 'ejecutar') {
       const director = this.directorSession();
       if (!director) return 'no-director';
-      const sent = await this.order(director.sessionId, executeOrderText(doc, this.docsRoot()));
+      const text = doc.docType === 'analisis' ? analysisOrderText(doc, this.docsRoot()) : executeOrderText(doc, this.docsRoot());
+      const sent = await this.order(director.sessionId, text);
       if (sent === 'not-found') return 'no-director';
       if (sent !== 'ok') return sent;
     }
@@ -719,7 +720,7 @@ export class Office {
     this.refreshDocuments();
     const summary: HubText =
       decision === 'ejecutar'
-        ? { key: 'hub.act.planExecuting', params: { path: doc.path } }
+        ? { key: doc.docType === 'analisis' ? 'hub.act.planAnalysisSent' : 'hub.act.planExecuting', params: { path: doc.path } }
         : decision === 'aparcar'
           ? { key: 'hub.act.planParked', params: { path: doc.path } }
           : { key: 'hub.act.planClosed', params: { path: doc.path } };
@@ -1763,6 +1764,14 @@ export function executeOrderText(doc: Pick<DocumentView, 'path' | 'title' | 'rou
     `Plantas: ${floorList}.`,
     `Léelo en \`${docsRepo}/${doc.path}\`, divídelo por planta según sus Pasos y manda a cada jefe${leads} su parte con la ruta del plan; ya lo conocen por el aviso PLAN de Redacción.`,
     'Avísame cuando terminen todas.',
+  ].join(' ');
+}
+
+export function analysisOrderText(doc: Pick<DocumentView, 'path' | 'title'>, docsRepo: string): string {
+  return [
+    `Analiza el documento \`${doc.path}\` («${doc.title}») que te ha entregado Redacción.`,
+    `Léelo en \`${docsRepo}/${doc.path}\` y, antes de encargar nada, pregúntame con AskUserQuestion qué planes de implementación quieres que encargue a Redacción y en qué orden (opciones: las acciones que propone el documento).`,
+    'Encarga solo los que elija, en ese orden, y avísame.',
   ].join(' ');
 }
 
