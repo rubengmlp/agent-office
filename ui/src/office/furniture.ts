@@ -145,10 +145,13 @@ export function drawCoffeeLed(g: Graphics, x: number, y: number): void {
 export function drawLift(g: Graphics, x: number, y: number, w: number, h: number, walkY: number): void {
   px(g, x, y, w, h, 0x1d2127, 0.5);
   px(g, x + 1, y + 1, w - 2, h - 2, 0x2b3038, 0.5);
-  px(g, x + 1, walkY - 14, w - 2, 18, 0x9aa3ae);
-  px(g, x + w / 2, walkY - 14, 1, 18, 0x6b7380);
-  px(g, x + 3, walkY - 19, w - 6, 3, 0x1b1e24);
-  px(g, x + w / 2 - 1, walkY - 18, 2, 1, 0x5fd68a);
+  px(g, x + 2, y, 1, h, 0x4a505c, 0.8);
+  px(g, x + w - 3, y, 1, h, 0x4a505c, 0.8);
+  px(g, x, walkY - 28, w, 2, 0x6b7380);
+  px(g, x, walkY - 28, 1, 30, 0x6b7380);
+  px(g, x + w - 1, walkY - 28, 1, 30, 0x6b7380);
+  px(g, x + 3, walkY - 33, w - 6, 3, 0x1b1e24);
+  px(g, x + w / 2 - 1, walkY - 32, 2, 1, 0x5fd68a);
 }
 
 export function drawRug(g: Graphics, x: number, y: number, w: number, h: number, palette: FloorPalette): void {
