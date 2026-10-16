@@ -737,6 +737,7 @@ export const en: Messages = {
   'hub.api.chatFields': 'The channel or the message text is missing',
   'hub.api.chatTooLong': 'The message is too long',
   'hub.api.chatKind': 'Unknown message kind',
+  'hub.api.usageRange': 'The range must be today or week',
   'hub.api.chatAuthorUnknown': 'No live agent on the floor has that name',
   'hub.api.chatFloorUnknown': 'The folder belongs to no managed floor',
   'hub.api.chatChannelUnknown': 'That channel does not exist',

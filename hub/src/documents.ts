@@ -319,6 +319,7 @@ export class DocumentDesk {
       base: ref.kind === 'plan' ? this.planBase(ref.slug, row?.delivered_base ?? null) : [],
       ahead: ref.kind === 'plan' ? this.opts.ahead(ref.slug) : [],
       installedAt: ref.kind === 'skill' ? this.installedAt(ref.slug) : [],
+      tokens: null,
     };
   }
 

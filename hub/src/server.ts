@@ -183,6 +183,12 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
     return office.removeLesson(id) ? c.json({ ok: true }) : c.json({ error: { key: 'hub.api.lessonNotFound' } }, 404);
   });
 
+  app.get('/api/usage/summary', requireKey, (c) => {
+    const range = c.req.query('range') ?? 'today';
+    if (range !== 'today' && range !== 'week') return c.json({ error: { key: 'hub.api.usageRange' } }, 400);
+    return c.json(office.tokenSummary(range));
+  });
+
   app.get('/api/reports/:agentKey', requireKey, (c) => {
     const report = office.report(c.req.param('agentKey') ?? '');
     return report ? c.json(report) : c.json({ error: { key: 'hub.api.noReport' } }, 404);

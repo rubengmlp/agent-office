@@ -736,6 +736,7 @@ export const es = {
   'hub.api.chatFields': 'Faltan el canal o el texto del mensaje',
   'hub.api.chatTooLong': 'El mensaje es demasiado largo',
   'hub.api.chatKind': 'Tipo de mensaje desconocido',
+  'hub.api.usageRange': 'El rango debe ser today o week',
   'hub.api.chatAuthorUnknown': 'No hay ningún agente vivo con ese nombre en la planta',
   'hub.api.chatFloorUnknown': 'La carpeta no pertenece a ninguna planta gestionada',
   'hub.api.chatChannelUnknown': 'Ese canal no existe',

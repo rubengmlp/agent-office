@@ -192,6 +192,7 @@ export type HubTextParams = {
   'hub.api.chatFields': undefined;
   'hub.api.chatTooLong': undefined;
   'hub.api.chatKind': undefined;
+  'hub.api.usageRange': undefined;
   'hub.api.chatAuthorUnknown': undefined;
   'hub.api.chatFloorUnknown': undefined;
   'hub.api.chatChannelUnknown': undefined;
@@ -362,6 +363,7 @@ export type AgentView = {
   file: string | null;
   task: string | null;
   away: boolean;
+  tokens: TokenTotals | null;
 };
 
 export type FloorView = {
@@ -492,6 +494,7 @@ export type ReportView = {
   blocked: number;
   lessons: string[];
   closing: string | null;
+  tokens: TokenTotals | null;
 };
 
 export type DocumentKind = 'plan' | 'skill';
@@ -531,6 +534,7 @@ export type DocumentView = {
   base: DocumentBase[];
   ahead: DocumentAhead[];
   installedAt: string[];
+  tokens: TokenTotals | null;
 };
 
 export type GuardAlertLevel = 'alerta' | 'posible';
@@ -595,6 +599,25 @@ export type UsageWindow = { usedPct: number; resetsAt: number };
 
 export type UsageView = { fiveHour: UsageWindow | null; sevenDay: UsageWindow | null; at: number | null };
 
+export type TokenTotals = { turns: number; input: number; cacheRead: number; cacheCreate: number; output: number };
+
+export type TokenRow = { key: string; tokens: TokenTotals; agents: number };
+
+export type UsageRange = 'today' | 'week';
+
+export type UsageSummary = {
+  range: UsageRange;
+  from: string;
+  to: string;
+  total: { tokens: TokenTotals; agents: number };
+  byRole: TokenRow[];
+  byModel: TokenRow[];
+  byFloor: TokenRow[];
+  byPlan: TokenRow[];
+};
+
+export type TokensEvent = { agentKey: string; tokens: TokenTotals; plan: { slug: string; tokens: TokenTotals } | null };
+
 export type Snapshot = {
   now: number;
   floors: FloorView[];
@@ -624,6 +647,7 @@ export type ServerMessage =
   | { type: 'memory'; floor: string; role: RoleId }
   | { type: 'settings'; data: SettingsView }
   | { type: 'usage'; data: UsageView }
+  | { type: 'tokens'; data: TokensEvent }
   | { type: 'chat'; data: ChatMessageView };
 
 export type ClientMessage =

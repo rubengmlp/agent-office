@@ -60,6 +60,7 @@ import {
 } from './state-machine';
 import { SyncDesk, type SyncResult } from './sync';
 import { floorText, plural, roleText, roundText, scoreText } from './texts';
+import { planSlugIn, planSlugOf, SWEEP_BUDGET, TokenMeter, type MeterAgent, type PlanSubject } from './tokens';
 import { UsageDesk } from './usage';
 import type {
   ActivityView,
@@ -91,6 +92,8 @@ import type {
   Snapshot,
   Stack,
   TestResult,
+  UsageRange,
+  UsageSummary,
   VerdictKind,
 } from './types';
 
@@ -123,6 +126,7 @@ type AgentRuntime = {
   file: string | null;
   task: string | null;
   away: boolean;
+  planSlug: string | null;
 };
 
 type SessionRuntime = {
@@ -210,6 +214,7 @@ const FILE_TOOLS: ReadonlySet<string> = new Set([...EDIT_TOOLS, 'Read', 'Noteboo
 const READ_CAP_TOOLS: ReadonlySet<string> = new Set(['Read', 'Grep', 'Glob', 'Bash']);
 const LEAD_BUSY: ReadonlySet<AgentState> = new Set<AgentState>(['working', 'reading', 'testing', 'checking', 'talking']);
 const TASK_MAX = 120;
+const METER_SWEEP_MS = 60_000;
 const VERDICT_DETAILS: Record<Exclude<VerdictKind, 'tests'>, HubText> = {
   approved: { key: 'hub.detail.verdictApproved' },
   improve: { key: 'hub.detail.verdictImprove' },
@@ -275,6 +280,8 @@ export class Office {
   private readonly sync: SyncDesk;
   private readonly watch: GuardWatch;
   private readonly usage: UsageDesk;
+  private readonly meter: TokenMeter;
+  private meterSweptAt: number;
   readonly chat: ChatDesk;
   private readonly chatNudged = new Set<string>();
   private readonly chatWarned = new Set<string>();
@@ -328,7 +335,7 @@ export class Office {
       installTargets: () => this.installTargets(),
       base: (slug) => this.sync.base(slug),
       ahead: (slug) => this.sync.ahead(slug),
-      onChange: (docs) => this.emit({ type: 'documents', data: docs }),
+      onChange: (docs) => this.emit({ type: 'documents', data: this.withPlanTokens(docs) }),
       maxRounds: () => this.config.review.maxRounds,
     });
     this.watch = new GuardWatch({
@@ -345,6 +352,13 @@ export class Office {
       report: (finding) => this.recordAlert(finding),
     });
     this.usage = new UsageDesk(this.now, (view) => this.emit({ type: 'usage', data: view }));
+    this.meter = new TokenMeter({
+      db: opts.db,
+      claudeHome: opts.claudeHome,
+      now: this.now,
+      onRead: (data) => this.emit({ type: 'tokens', data }),
+    });
+    this.meterSweptAt = this.now();
     this.chat = new ChatDesk({
       db: opts.db,
       now: this.now,
@@ -388,7 +402,7 @@ export class Office {
       questions: this.desk.list(),
       messages: this.messages.slice(-100),
       activity: this.activity.slice(-MAX_ACTIVITY),
-      documents: this.docs.list(),
+      documents: this.withPlanTokens(this.docs.list()),
       alerts: this.alerts(),
       usage: this.usage.view(),
       chat: this.chat.recent(SNAPSHOT_LIMIT),
@@ -396,6 +410,11 @@ export class Office {
   }
 
   ingestUsage(raw: unknown): string {
+    const sessionId = text(record(raw).session_id);
+    if (sessionId) {
+      this.meter.noteSession(sessionId, record(raw).transcript_path);
+      this.meter.noteAgent(sessionId, record(raw).transcript_path);
+    }
     return this.usage.ingest(raw);
   }
 
@@ -414,6 +433,7 @@ export class Office {
       this.sql.insertEvent.run(now, e.session_id, c.agentKey, session.floor, c.event, null, null, null, storedPayload(e, kind));
       return null;
     }
+    this.noteTranscripts(e, c.agentKey);
     const agent = this.touchAgent(e, c, session, now);
     if (this.isRetired(agent)) {
       this.ingestRetired(e, c, agent, session, now);
@@ -461,6 +481,8 @@ export class Office {
     if (c.event === 'UserPromptSubmit' && agent.key === session.sessionId) {
       const task = taskLine(publicText(text(e.prompt), kind));
       if (task) agent.task = task;
+      const plan = planSlugIn(text(e.prompt));
+      if (plan) this.setPlan(agent, plan);
     }
     const closing = text(e.last_assistant_message);
     if (closing && remembers(kind) && (c.event === 'SubagentStop' || c.event === 'Stop')) agent.closing = closing;
@@ -494,6 +516,7 @@ export class Office {
     this.settlePermissions(agent.key, c.event, c.tool, e.tool_input);
     if (c.event === 'SubagentStop' || c.event === 'Stop' || c.event === 'SessionEnd') this.storeReport(agent, now);
 
+    if (TURN_OVER.has(c.event)) this.meterLater(agent);
     if (c.sessionEnded) this.endSession(session, now);
     if (c.event === 'SubagentStart' || c.event === 'SessionStart' || c.event === 'UserPromptSubmit') return this.injection(c.event, agent, session);
     if (c.event === 'PreToolUse' && c.tool && EDIT_TOOLS.has(c.tool) && c.filePath) return this.chatReminder(agent, session, c.filePath, now);
@@ -703,6 +726,8 @@ export class Office {
       summary: { key: 'hub.act.order', params: { text: short(body, 60) } },
     });
     const main = this.agents.get(sessionId);
+    const plan = planSlugIn(body);
+    if (main && main.retiredAt === null && plan) this.setPlan(main, plan);
     const task = taskLine(publicText(body, session.floorKind));
     if (main && main.retiredAt === null && task) {
       main.task = task;
@@ -818,12 +843,16 @@ export class Office {
 
   report(agentKey: string): ReportView | null {
     const agent = this.agents.get(agentKey);
-    if (agent) return this.buildReportFor(agent);
-    return savedReport(this.opts.db, agentKey);
+    const report = agent ? this.buildReportFor(agent) : savedReport(this.opts.db, agentKey);
+    return report ? { ...report, tokens: this.meter.totals(agentKey) } : null;
+  }
+
+  tokenSummary(range: UsageRange): UsageSummary {
+    return this.meter.summary(range);
   }
 
   documents(): DocumentView[] {
-    return this.docs.list();
+    return this.withPlanTokens(this.docs.list());
   }
 
   documentContent(path: string): DocumentContent | null {
@@ -908,6 +937,7 @@ export class Office {
       }
       if (this.view(agent, now).state !== agent.sentState) this.emitAgent(agent, now);
     }
+    this.meterSweep(now);
     for (const session of [...this.sessions.values()]) {
       if (session.endedAt === null && session.socket && !existsSync(session.socket)) this.endSession(session, now);
       if (session.endedAt !== null && now - session.endedAt > FORGET_ENDED_MS) this.sessions.delete(session.sessionId);
@@ -931,6 +961,7 @@ export class Office {
     for (const q of this.desk.list()) if (sessionIds.has(q.sessionId)) this.desk.release(q.id);
     for (const [id, hold] of this.permissionHolds) if (keys.has(hold.agentKey)) this.permissionHolds.delete(id);
     for (const key of keys) this.agents.delete(key);
+    this.meter.forget(keys);
     this.forgetChatNotes(keys);
     for (const id of sessionIds) this.sessions.delete(id);
     const keptMessages = this.messages.filter((message) => message.floor !== slug);
@@ -1383,6 +1414,7 @@ export class Office {
     this.persistAgent(agent);
     this.emitAgent(agent, now);
     this.storeReport(agent, now);
+    this.meterLater(agent);
   }
 
   // The script is not a hook and brings no agent_id: the floor comes from its folder and the author from --de,
@@ -1468,6 +1500,7 @@ export class Office {
     this.sql.insertEvent.run(now, e.session_id, agent.key, session.floor, c.event, c.tool, null, c.filePath, storedPayload(e, kind));
     if (TURN_OVER.has(c.event)) {
       agent.retiredAwake = false;
+      this.meterLater(agent);
     } else if (!agent.retiredAwake) {
       agent.retiredAwake = true;
       this.pushActivity({
@@ -1644,6 +1677,7 @@ export class Office {
         file: null,
         task: null,
         away: false,
+        planSlug: null,
       };
       this.agents.set(agent.key, agent);
     }
@@ -1743,6 +1777,8 @@ export class Office {
 
   private messageReceived(agent: AgentRuntime, body: string | null, now: number): void {
     if (agent.retiredAt !== null || agent.endedAt !== null) return;
+    const plan = planSlugIn(body);
+    if (plan) this.setPlan(agent, plan);
     const task = taskLine(body);
     if (!task && !agent.away) return;
     if (task) agent.task = task;
@@ -1903,6 +1939,7 @@ export class Office {
       this.persistAgent(agent);
       this.emitAgent(agent, now);
       this.storeReport(agent, now);
+      this.meterLater(agent);
       if (this.watch.watching(agent.key)) this.background(this.watch.finish(agent.key));
     }
     for (const q of this.desk.list()) if (q.sessionId === session.sessionId) this.desk.release(q.id);
@@ -1962,6 +1999,7 @@ export class Office {
       file: agent.file,
       task: agent.task,
       away: agent.away || agent.endedAt !== null || agent.retiredAt !== null,
+      tokens: this.meter.totals(agent.key),
     };
   }
 
@@ -2044,6 +2082,7 @@ export class Office {
         file: null,
         task: null,
         away: false,
+        planSlug: null,
       });
       this.sessions.set(row.session_id, {
         sessionId: row.session_id,
@@ -2061,6 +2100,60 @@ export class Office {
         endedAt: null,
       });
     }
+  }
+
+  private noteTranscripts(e: HookEvent, agentKey: string): void {
+    this.meter.noteSession(e.session_id, e.transcript_path);
+    this.meter.noteAgent(agentKey, agentKey === e.session_id ? e.transcript_path : e.agent_transcript_path);
+  }
+
+  private planSubject(agent: AgentRuntime): PlanSubject {
+    return { name: agent.name, roleId: roleIdOf(agent.role), floorKind: agent.floorKind, planSlug: agent.planSlug };
+  }
+
+  private meterAgent(agent: AgentRuntime): MeterAgent | null {
+    const lead = this.agents.get(agent.sessionId) ?? null;
+    if (!inOfficeScope({ floorKind: agent.floorKind, sessionRole: agent.role, leadRole: lead?.role ?? null })) return null;
+    return {
+      key: agent.key,
+      sessionId: agent.sessionId,
+      floor: agent.floor,
+      roleId: roleIdOf(agent.role),
+      name: agent.name,
+      cwd: this.sessions.get(agent.sessionId)?.cwd ?? null,
+      plan: planSlugOf(this.planSubject(agent), lead && lead !== agent ? this.planSubject(lead) : null),
+    };
+  }
+
+  private meterLater(agent: AgentRuntime): void {
+    const subject = this.meterAgent(agent);
+    if (subject) this.background(this.meter.schedule(subject));
+  }
+
+  // What the agent spent so far stays with the plan it had until now.
+  private setPlan(agent: AgentRuntime, slug: string): void {
+    if (agent.planSlug === slug) return;
+    const subject = this.meterAgent(agent);
+    if (subject) this.meter.readNow(subject);
+    agent.planSlug = slug;
+  }
+
+  private meterSweep(now: number): void {
+    if (now - this.meterSweptAt < METER_SWEEP_MS) return;
+    this.meterSweptAt = now;
+    let budget = SWEEP_BUDGET;
+    for (const agent of this.agents.values()) {
+      if (budget <= 0) break;
+      if (agent.endedAt !== null || agent.away) continue;
+      if (agent.updatedAt <= this.meter.lastRead(agent.key) && !this.meter.behind(agent.key)) continue;
+      const subject = this.meterAgent(agent);
+      if (subject) budget -= this.meter.readNow(subject, subject.plan, budget);
+    }
+  }
+
+  private withPlanTokens(docs: DocumentView[]): DocumentView[] {
+    const plans = this.meter.planTotals();
+    return docs.map((doc) => (doc.kind === 'plan' ? { ...doc, tokens: plans.get(doc.slug) ?? null } : doc));
   }
 
   private dumpRaw(e: HookEvent, now: number): void {

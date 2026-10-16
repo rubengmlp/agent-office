@@ -100,11 +100,12 @@ export function buildReport(db: Database, s: ReportSubject, nameOf: (key: string
     blocked: sentAll.filter((m) => m.text && BLOCK_PREFIX.test(m.text)).length,
     lessons: lessonsBy(db, s.key),
     closing: s.closing,
+    tokens: null,
   };
 }
 
 export function saveReport(db: Database, report: ReportView, now: number): void {
-  const data = JSON.stringify({ ...report, live: false });
+  const data = JSON.stringify({ ...report, live: false, tokens: null });
   db.query(
     `INSERT INTO reports (agent_key, floor, role_id, name, started_at, ended_at, summary, data, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
