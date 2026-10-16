@@ -1,4 +1,5 @@
 import { StateDebouncer } from './debounce';
+import { applyLang, currentLang, storeLang, type Lang } from './i18n';
 import type {
   ActivityView,
   AgentState,
@@ -32,7 +33,8 @@ export type Topic =
   | 'documents'
   | 'alerts'
   | 'memory'
-  | 'settings';
+  | 'settings'
+  | 'lang';
 
 export type ConnectionStatus = 'nokey' | 'connecting' | 'online' | 'offline' | 'denied' | 'replay';
 export type ToastKind = 'ok' | 'info' | 'error';
@@ -88,6 +90,17 @@ export class Store {
   setClock(clock: () => number): void {
     this.clock = clock;
     this.mark('tick');
+  }
+
+  get lang(): Lang {
+    return currentLang();
+  }
+
+  setLang(lang: Lang): void {
+    if (lang === currentLang()) return;
+    applyLang(lang);
+    storeLang(lang);
+    this.mark('lang');
   }
 
   setReplay(replay: boolean): void {
@@ -237,7 +250,7 @@ export class Store {
     }
     return [...known.values()].sort((a, b) => {
       const byKind = FLOOR_KIND_RANK[a.kind] - FLOOR_KIND_RANK[b.kind];
-      return byKind !== 0 ? byKind : a.label.localeCompare(b.label, 'es');
+      return byKind !== 0 ? byKind : a.label.localeCompare(b.label, currentLang());
     });
   }
 

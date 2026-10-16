@@ -266,6 +266,12 @@ textarea {
   margin-left: auto;
 }
 
+.lang-select {
+  width: auto;
+  flex: none;
+  margin-left: 4px;
+}
+
 .tab {
   border-color: transparent;
   background: transparent;

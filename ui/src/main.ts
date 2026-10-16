@@ -3,6 +3,7 @@ import { liveActions, replayActions, type Actions } from './actions';
 import { OfficeApi } from './api';
 import { el } from './dom';
 import { Heartbeat } from './heartbeat';
+import { applyLang, readStoredLang } from './i18n';
 import { LiveConnection } from './live';
 import type { OfficeHandle } from './office/office';
 import { mountSettings } from './settings/settings';
@@ -21,6 +22,7 @@ function messageOf(error: unknown): string {
 }
 
 function boot(): void {
+  applyLang(readStoredLang());
   const root = document.getElementById('app');
   if (!root) return;
 

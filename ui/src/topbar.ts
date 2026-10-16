@@ -1,4 +1,5 @@
 import { button, el } from './dom';
+import { LANG_NAMES, LANGS, t, type Lang, type MessageKey } from './i18n';
 import type { ConnectionStatus, Store } from './store';
 
 export type Tab = 'office' | 'table' | 'settings';
@@ -9,37 +10,44 @@ export type Topbar = {
   setTab(tab: Tab): void;
 };
 
-const STATUS_TEXT: Record<ConnectionStatus, string> = {
-  nokey: 'Sin key',
-  connecting: 'Conectando…',
-  online: 'Conectado',
-  offline: 'Sin conexión',
-  denied: 'Key rechazada',
-  replay: 'Replay',
+const STATUS_KEYS: Record<ConnectionStatus, MessageKey> = {
+  nokey: 'topbar.status.nokey',
+  connecting: 'topbar.status.connecting',
+  online: 'topbar.status.online',
+  offline: 'topbar.status.offline',
+  denied: 'topbar.status.denied',
+  replay: 'topbar.status.replay',
 };
 
-const TABS: readonly { tab: Tab; label: string }[] = [
-  { tab: 'office', label: 'Oficina' },
-  { tab: 'table', label: 'Tabla' },
-  { tab: 'settings', label: 'Ajustes' },
+const TABS: readonly { tab: Tab; labelKey: MessageKey }[] = [
+  { tab: 'office', labelKey: 'topbar.tab.office' },
+  { tab: 'table', labelKey: 'topbar.tab.table' },
+  { tab: 'settings', labelKey: 'topbar.tab.settings' },
 ];
 
 export function mountTopbar(store: Store, onTab: (tab: Tab) => void): Topbar {
   const dot = el('span', 'status-dot');
   const statusText = el('span', 'status-text');
   const pendingCount = el('b', 'pending-count');
-  const pending = button('', 'pending', 'Ir al agente con la pregunta más antigua');
-  pending.append('Preguntas pendientes ', pendingCount);
+  const pending = button('', 'pending');
   const replayHost = el('div', 'replay-controls');
 
   const tabButtons = new Map<Tab, HTMLButtonElement>();
   const tabs = el('nav', 'tabs');
-  for (const { tab, label } of TABS) {
-    const tabButton = button(label, 'tab');
+  for (const { tab } of TABS) {
+    const tabButton = button('', 'tab');
     tabButton.addEventListener('click', () => onTab(tab));
     tabButtons.set(tab, tabButton);
     tabs.append(tabButton);
   }
+
+  const langSelect = el('select', 'lang-select');
+  for (const lang of LANGS) {
+    const option = el('option', '', LANG_NAMES[lang]);
+    option.value = lang;
+    langSelect.append(option);
+  }
+  langSelect.addEventListener('change', () => store.setLang(langSelect.value as Lang));
 
   const root = el(
     'header',
@@ -49,6 +57,7 @@ export function mountTopbar(store: Store, onTab: (tab: Tab) => void): Topbar {
     pending,
     replayHost,
     tabs,
+    langSelect,
   );
 
   pending.addEventListener('click', () => {
@@ -56,9 +65,21 @@ export function mountTopbar(store: Store, onTab: (tab: Tab) => void): Topbar {
     if (oldest) store.select(oldest.agentKey);
   });
 
-  store.watch(['connection'], () => {
+  const relabel = (): void => {
+    pending.title = t('topbar.pending.title');
+    pending.replaceChildren(t('topbar.pending'), ' ', pendingCount);
+    for (const { tab, labelKey } of TABS) {
+      const tabButton = tabButtons.get(tab);
+      if (tabButton) tabButton.textContent = t(labelKey);
+    }
+    langSelect.setAttribute('aria-label', t('topbar.lang'));
+    langSelect.value = store.lang;
+  };
+  store.watch(['lang'], relabel);
+
+  store.watch(['connection', 'lang'], () => {
     dot.dataset.status = store.connection;
-    statusText.textContent = STATUS_TEXT[store.connection];
+    statusText.textContent = t(STATUS_KEYS[store.connection]);
   });
 
   store.watch(['questions'], () => {
