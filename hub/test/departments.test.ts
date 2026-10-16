@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ensureDocsRepo } from '../src/docs-repo';
 import { realPath } from '../src/floors';
@@ -174,11 +174,15 @@ describe('Redacción review loop', () => {
     const cwd = redaccionTeam();
     writeFileSync(join(docs, PLAN), '# Plan\n');
     say(LEAD, cwd, 'ared-1', 'redactor-login', 'team-lead', `REVISAR: ${PLAN} ronda 1`);
+    await h.office.idle();
     expect(await h.office.discardDocument(PLAN)).toBe('ok');
     expect(doc(PLAN)?.status).toBe('descartado');
+    await h.office.idle();
+    expect(readFileSync(join(docs, PLAN), 'utf8')).toStartWith('> **Descartado** desde el panel de Agent Office el ');
+    expect(git(docs, 'log', '-1', '--format=%s')).toBe('redaccion: login descartado');
     expect(await h.office.discardDocument(PLAN)).toBe('closed');
     expect(await h.office.discardDocument('redaccion/planes/otro.md')).toBe('not-found');
-    expect(h.office.documentContent(PLAN)?.markdown).toBe('# Plan\n');
+    expect(h.office.documentContent(PLAN)?.markdown).toContain('# Plan\n');
     expect(h.office.documentContent('../../etc/passwd')).toBeNull();
   });
 });

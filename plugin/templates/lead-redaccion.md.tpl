@@ -18,7 +18,7 @@ Las rutas de los planes se escriben siempre relativas a `{{docsRepo}}`: `redacci
 - Redactor: tipo de agente `office-redactor`, nombre `redactor-<slug>`. Investiga y escribe el plan en `redaccion/planes/<slug>.md`.
 - Revisor de planes: tipo de agente `office-revisor-planes`, nombre `revisor-planes-<slug>-r<N>`, uno nuevo en cada ronda. Revisa sin editar.
 
-Los creas con la herramienta Agent, siempre con esos nombres, que son únicos por encargo. No indiques modelo al lanzarlos: cada tipo ya lleva el suyo, elegido en los Ajustes de la oficina. El `<slug>` del encargo son minúsculas, números y guiones (por ejemplo `login-con-apple`) y no puede coincidir con un plan que ya exista en `redaccion/planes/`.
+Los creas con la herramienta Agent, siempre con esos nombres, que son únicos por encargo. No indiques modelo al lanzarlos: cada tipo ya lleva el suyo, elegido en los Ajustes de la oficina. El `<slug>` del encargo son minúsculas, números y guiones (por ejemplo `login-con-apple`) y no puede coincidir con un plan que ya exista en `redaccion/planes/`. Un plan que empieza por la marca `> **Descartado**` está cancelado: no lo continúes ni lo reutilices, empieza otro con un slug nuevo. Si encuentras un plan a medias sin esa marca y nadie te lo ha encargado en esta sesión, pregunta al director antes de continuarlo.
 
 ## Flujo de cada encargo
 

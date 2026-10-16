@@ -160,6 +160,7 @@ const VERDICT_DEDUP_MS = 10 * 60_000;
 const DAY_MS = 86_400_000;
 const EMPTY_META: HookMeta = { socket: null, token: null, role: null, name: null };
 const NO_TESTS: Matchers = { test: /(?!)/, check: /(?!)/ };
+export const DISCARDED_MARK = '> **Descartado**';
 
 export const ROLE_LABELS: Record<RoleId, string> = {
   director: 'director',
@@ -601,7 +602,9 @@ export class Office {
     if (!doc || doc.kind !== 'plan') return 'not-found';
     if (doc.status === 'cerrado' || doc.status === 'descartado') return 'closed';
     const now = this.now();
-    this.docs.markDiscarded({ path: doc.path, kind: doc.kind, slug: doc.slug }, now);
+    const ref: DocRef = { path: doc.path, kind: doc.kind, slug: doc.slug };
+    this.docs.markDiscarded(ref, now);
+    this.markDiscardedFile(ref, now);
     this.refreshDocuments();
     this.pushActivity({ ts: now, agentKey: 'panel', event: 'Discard', tool: null, state: null, summary: `plan descartado desde el panel: ${doc.path}` });
     await this.sync.remove(doc.slug);
@@ -908,6 +911,20 @@ export class Office {
       state: null,
       summary: `${label} ${ref.path}${round ? ` (ronda ${round})` : ''}${score}`,
     });
+  }
+
+  private markDiscardedFile(ref: DocRef, now: number): void {
+    const file = join(this.docsRoot(), ref.path);
+    try {
+      const content = readFileSync(file, 'utf8');
+      if (!content.startsWith(DISCARDED_MARK)) {
+        writeFileSync(file, `${DISCARDED_MARK} desde el panel de Agent Office el ${new Date(now).toISOString().slice(0, 16).replace('T', ' ')}. No se continúa: un encargo nuevo empieza con otro slug.\n\n${content}`);
+      }
+    } catch {
+      return;
+    }
+    const root = this.docsRoot();
+    this.background(this.docsQueue.run(root, () => commitDocument(this.git, root, ref.path, `redaccion: ${ref.slug} descartado`)));
   }
 
   private commitRound(ref: DocRef, round: number | null): void {
