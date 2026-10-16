@@ -94,6 +94,8 @@ Los lanzadores de los departamentos comprueban `GET /health` y no abren la sesi�
 ## Uso
 
 - La oficina vive en <http://127.0.0.1:4747>. Pestañas **Oficina**, **Tabla** y **Ajustes**; el panel de la derecha muestra el agente seleccionado. La oficina 3D está en <http://127.0.0.1:4747/?view=3d>; la 2D (PixiJS) sigue siendo la vista por defecto hasta que la 3D esté a la par.
+- **Idioma**: el selector de la cabecera cambia todo el panel entre español e inglés al momento. La elección se guarda en el navegador (`localStorage`); sin elegir, el panel sale en español. Los textos que llegan del hub y de los agentes (actividad, notas de guardado, errores, preguntas, títulos de documentos) siguen en español.
+- **Ayuda**: la Tabla tiene una leyenda desplegable con las columnas, los estados, los chips, los estados de los documentos y las alertas, y recuerda si la cierras. En Ajustes, cada rol, el bloque de modelos y esfuerzos, cada destino de permisos, cada planta y cada dato del hub llevan una línea que explica para qué sirven.
 - **Entregables**: al seleccionar un agente de Redacción o Mantenimiento, el panel lista sus planes o skills con estado, ronda, nota, base y avance de la rama, y los abre en un visor de markdown.
 - **Preguntas**: con la pestaña visible, las `AskUserQuestion` de las sesiones de la oficina se retienen en el panel en vez de salir en la terminal. "Devolver al terminal" las suelta al momento. Con la pestaña oculta o cerrada salen en la terminal como siempre.
 - **Órdenes**: el cuadro de órdenes escribe en el inbox de la sesión elegida (por defecto el director). Llegan con el prefijo `[Agent Office]`.
