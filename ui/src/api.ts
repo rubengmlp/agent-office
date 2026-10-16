@@ -2,6 +2,9 @@ import { t } from './i18n';
 import type {
   AnswerRequest,
   DocumentContent,
+  FloorAddRequest,
+  FloorAddResult,
+  FloorRemoveResult,
   LessonCreate,
   LessonView,
   MemoryView,
@@ -87,6 +90,14 @@ export class OfficeApi {
 
   discardDocument(path: string): Promise<ApiData<{ ok: true }>> {
     return this.send('POST', '/api/documents/discard', { path });
+  }
+
+  addFloor(request: FloorAddRequest): Promise<ApiData<Extract<FloorAddResult, { ok: true }>>> {
+    return this.send('POST', '/api/floors', request);
+  }
+
+  deleteFloor(slug: string): Promise<ApiData<Extract<FloorRemoveResult, { ok: true }>>> {
+    return this.send('DELETE', `/api/floors/${encodeURIComponent(slug)}`, undefined);
   }
 
   private get<T>(path: string): Promise<ApiData<T>> {

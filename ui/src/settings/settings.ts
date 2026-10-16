@@ -32,6 +32,7 @@ import {
   type NumberField,
   type NumberKey,
 } from './options';
+import { mountProjects } from './projects';
 
 type Outcome = { text: string; kind: 'ok' | 'error' };
 
@@ -140,6 +141,7 @@ class SettingsPage {
   private readonly saveButton = button('', 'primary');
   private readonly status = el('span', 'settings-status');
   private readonly actions = el('div', 'settings-actions', this.saveButton, this.status);
+  private readonly projectsHost = el('div', 'settings-projects');
 
   constructor(
     private readonly host: HTMLElement,
@@ -150,6 +152,7 @@ class SettingsPage {
   start(): void {
     this.saveButton.addEventListener('click', () => void this.submit());
     this.host.replaceChildren(el('div', 'settings', this.notice, this.content, this.actions));
+    mountProjects(this.projectsHost, this.store, this.api);
     this.store.watch(['settings'], () => {
       if (this.store.settings) this.accept(this.store.settings);
     });
@@ -371,7 +374,7 @@ class SettingsPage {
       readonlyRow(t('settings.hub.port'), t('settings.hub.hint.port'), String(view.port)),
     );
 
-    return { root: el('div', 'settings-form', fieldset, hub), fieldset, roles, departments, numbers, branches, modes };
+    return { root: el('div', 'settings-form', fieldset, this.projectsHost, hub), fieldset, roles, departments, numbers, branches, modes };
   }
 
   private syncControls(): void {

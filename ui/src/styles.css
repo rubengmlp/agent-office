@@ -1723,3 +1723,28 @@ button.doc-discard:hover:not(:disabled) {
   margin-top: 6px;
   font-size: 12px;
 }
+
+.project-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.project-form .project-path {
+  flex: 2 1 260px;
+  min-width: 0;
+}
+
+.project-form .project-slug {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.project-form button {
+  flex: none;
+}
+
+.project-delete {
+  flex: none;
+}
