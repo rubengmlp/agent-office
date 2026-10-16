@@ -16,6 +16,8 @@ import { configTargets, watchTargets } from './config-watch';
 import { dbRegistry, openDb } from './db';
 import { createFloorAdmin } from './floor-admin';
 import { Office } from './office';
+import { newNonce } from './panel-auth';
+import { panelUrl } from './panel-url';
 import { loadProfiles } from './profiles';
 import { prune } from './prune';
 import { startRecording } from './recorder';
@@ -92,7 +94,8 @@ export function main(argv: string[]): void {
   logLine(p, `hub arrancado en ${url} (pid ${process.pid})`);
   if (!existsSync(join(PUBLIC_DIR, 'index.html'))) console.log('La interfaz no está compilada: bun run build');
   if (process.env.AGENT_OFFICE_RECORD) console.log(`Grabando en ${process.env.AGENT_OFFICE_RECORD}`);
-  if (argv.includes('--open')) openSessions(p, url);
+  if (argv.includes('--open')) openSessions(p, panelUrl(config.port, key, Date.now(), newNonce()));
+  else console.log('Panel: bun run panel');
 
   process.on('uncaughtException', (error) => {
     const message = `error no capturado: ${error.stack ?? String(error)}`;
@@ -120,8 +123,9 @@ export function main(argv: string[]): void {
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(signal, () => shutdown(signal));
 }
 
-function openSessions(p: Paths, url: string): void {
-  if (process.platform === 'darwin') Bun.spawn(['open', url]);
+function openSessions(p: Paths, panel: string): void {
+  if (process.platform === 'darwin') Bun.spawn(['open', panel]);
+  else console.log('Panel: bun run panel --print');
   if (!existsSync(p.officeSh)) {
     console.log('No hay sesiones que abrir: añade una planta con bun run floor add <ruta>');
     return;

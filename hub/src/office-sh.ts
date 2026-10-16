@@ -231,6 +231,7 @@ else
     echo "  '$SESSIONS/$name.sh'"
   done
 fi
+echo "Panel: bun run panel"
 `;
 }
 

@@ -341,6 +341,7 @@ describe('launch scripts', () => {
     );
     expect(office).toContain('tmux new-session -d -s agent-office');
     expect(office).toContain('tell application \\"Terminal\\" to do script');
+    expect(office.trimEnd().endsWith('echo "Panel: bun run panel"')).toBe(true);
     const config = testConfig({ floors: { mobile: floor('/m'), old: floor('/o', false, 'node') }, departments: { redaccion: true, mantenimiento: false } });
     const floors = directorFloorsText(config, loadProfiles(PROFILES_DIR));
     expect(floors).toContain('`mobile`: Flutter, repositorio /m, rama base `develop`. Jefe de planta: sesión `lead-mobile`.');

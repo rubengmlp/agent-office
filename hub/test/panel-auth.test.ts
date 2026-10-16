@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test';
+import { writeFileSync } from 'node:fs';
 import { LAUNCH_TTL_MS, PANEL_TTL_MS, claimLaunchToken, mintLaunchToken, mintPanelToken, newNonce, verifyPanelToken } from '../src/panel-auth';
+import { hubPort, panelUrl } from '../src/panel-url';
+import { fakePaths, tempDir } from './helpers';
 
 const KEY = 'a'.repeat(64);
 const OTHER = 'b'.repeat(64);
@@ -65,5 +68,26 @@ describe('panel token', () => {
     expect(verifyPanelToken(KEY, mintLaunchToken(KEY, NOW, newNonce()), NOW)).toBe(false);
     expect(verifyPanelToken(KEY, KEY, NOW)).toBe(false);
     expect(verifyPanelToken(KEY, undefined, NOW)).toBe(false);
+  });
+});
+
+describe('panel url', () => {
+  test('points at the hub port with a claimable launch link', () => {
+    const nonce = newNonce();
+    const url = new URL(panelUrl(4799, KEY, NOW, nonce));
+    expect(`${url.origin}${url.pathname}`).toBe('http://127.0.0.1:4799/');
+    expect(url.searchParams.get('t')).toBe(mintLaunchToken(KEY, NOW, nonce));
+    expect(claimLaunchToken(KEY, url.searchParams.get('t'), NOW, new Map())).toBe(true);
+  });
+
+  test('reads the port file the hub writes and falls back to the default port', () => {
+    const { dir, cleanup } = tempDir();
+    const p = fakePaths(dir);
+    expect(hubPort(p)).toBe(4747);
+    writeFileSync(p.port, '4799\n');
+    expect(hubPort(p)).toBe(4799);
+    writeFileSync(p.port, 'nada');
+    expect(hubPort(p)).toBe(4747);
+    cleanup();
   });
 });

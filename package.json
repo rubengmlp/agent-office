@@ -9,6 +9,7 @@
     "floor": "bun hub/src/floor-cli.ts",
     "hub": "bun hub/src/main.ts",
     "office": "bun hub/src/main.ts --open",
+    "panel": "bun hub/src/panel-url.ts",
     "dev:hub": "AGENT_OFFICE_DEV=1 bun hub/src/main.ts",
     "dev:ui": "cd ui && bun run dev",
     "build": "cd ui && bun run build",

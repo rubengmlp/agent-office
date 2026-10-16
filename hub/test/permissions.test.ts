@@ -222,6 +222,8 @@ describe('permission modes and clone floors in the launchers', () => {
     const rules = clonePermissions();
     expect(rules).toContain('Bash(bun run hub)');
     expect(rules).toContain('Bash(bun run setup *)');
+    expect(rules).toContain('Bash(bun run panel)');
+    expect(rules).toContain('Bash(bun run panel *)');
     expect(rules).toContain('Edit(~/.claude/agents/**)');
     const specs = sessionSpecs(testConfig({ floors: { 'agent-office-dev': floor(clone), web: floor(other) } }), p, '/ws');
     const cloneSpec = specs.find((s) => s.name === 'lead-agent-office-dev')!;
