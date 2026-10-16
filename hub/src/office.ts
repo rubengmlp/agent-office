@@ -62,7 +62,7 @@ import { settingsView } from './settings';
 import { StallDesk } from './stall-desk';
 import { DONE_PREFIX, EDIT_TOOLS, classify, record, text, type Classified } from './state-machine';
 import { SyncDesk, type SyncResult } from './sync';
-import { planSlugIn } from './tokens';
+import { planDocSlugIn, planSlugIn } from './tokens';
 import type {
   ActivityView,
   ChatMessageView,
@@ -297,7 +297,7 @@ export class Office {
       context: () => this.guards.context(),
       busy: (floor) => this.guards.busy(floor),
       userAnswered: (sessionId) => this.stall.userAnswered(sessionId),
-      briefAccepted: (to, body) => this.board.briefAccepted(to, body, planSlugIn(body)),
+      briefAccepted: (to, body) => this.board.briefAccepted(to, body, planDocSlugIn(body)),
       doneGate: (args) => this.board.doneGate(args),
     });
     this.protocol = new ProtocolDesk({
@@ -373,6 +373,7 @@ export class Office {
   start(): void {
     // A question still pending in the database lost the request that held it when the hub went down.
     this.sql.releaseStalePending.run(this.now());
+    this.checks.sweepStale();
     this.docs.watch();
     this.refreshDocuments();
     this.bus.background(this.sync.cleanup(this.docs.finishedPlanSlugs()));

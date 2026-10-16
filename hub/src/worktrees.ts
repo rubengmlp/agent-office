@@ -345,8 +345,29 @@ export class WorktreeDesk {
     return 'ok';
   }
 
+  // The setup of a folder that failed or was cut short, again: the state goes back to preparando and ends in listo or error.
+  async resetup(orderId: number): Promise<OrderRow | null> {
+    const row = this.opts.store.get(orderId);
+    const floor = row ? this.opts.config().floors[row.floor] : undefined;
+    if (!row?.worktree_path || !floor || !existsSync(row.worktree_path) || row.worktree_state === 'retirado') return null;
+    const setup = setupOf(floor);
+    if (!setup) {
+      const ready = this.opts.store.update(orderId, { worktree_state: 'listo', setup_error: null, updated_at: this.opts.now() }) as OrderRow;
+      this.opts.changed(ready);
+      return ready;
+    }
+    const busy = this.opts.store.update(orderId, { worktree_state: 'preparando', setup_error: null, updated_at: this.opts.now() }) as OrderRow;
+    this.opts.changed(busy);
+    return this.prepare(busy, setup);
+  }
+
   // Folders of this hub that no order owns any more are removed if clean; dirty or foreign ones are reported.
   async cleanup(): Promise<void> {
+    // A setup the hub was in the middle of when it went down never finishes: it is marked so it can be retried.
+    for (const row of this.opts.store.withWorktree()) {
+      if (row.worktree_state !== 'preparando') continue;
+      this.opts.changed(this.opts.store.update(row.id, { worktree_state: 'error', setup_error: 'interrupted', updated_at: this.opts.now() }) as OrderRow);
+    }
     const owned = new Set(this.opts.store.withWorktree().map((row) => row.worktree_path));
     const warned: string[] = [];
     for (const floor of Object.values(this.opts.config().floors)) {

@@ -169,6 +169,31 @@ describe('an ENCARGO of the director', () => {
     expect((await rig.h.office.retryOrderFolder(card?.id ?? 0)).ok).toBe(false);
   });
 
+  test('a brief that names another encargo does not make a plan of it', async () => {
+    rig = deliveryRig();
+    brief(rig, 'ENCARGO: Seguir lo de encargo/otro-1111 — y redaccion/planes/login.md');
+    await rig.h.office.idle();
+    expect(boardOrders(rig)[0]?.planSlug).toBe('login');
+    brief(rig, 'ENCARGO: Rematar encargo/otro-2222');
+    await rig.h.office.idle();
+    expect(boardOrders(rig)[1]?.planSlug).toBeNull();
+  });
+
+  test('retrying a folder whose setup failed runs it again and tells the lead when it is ready', async () => {
+    // The setup of the floor is a real command in the folder: it fails until the marker file exists.
+    rig = deliveryRig({ configure: (config) => (config.floors.mobile!.setup = 'test -f .deps-ready') });
+    brief(rig, 'ENCARGO: Algo con dependencias');
+    await rig.h.office.idle();
+    const [card] = boardOrders(rig);
+    expect(card?.worktree).toMatchObject({ state: 'error' });
+    expect(rig.sent.at(-1)?.text).toContain('dependencias: con error');
+    write(card?.worktree?.path ?? '', '.deps-ready', '1');
+    const retried = await rig.h.office.retryOrderFolder(card?.id ?? 0);
+    expect(retried).toMatchObject({ ok: true, order: { worktree: { state: 'listo' } } });
+    expect(rig.sent.at(-1)?.text).toContain('dependencias: listas');
+    expect((await rig.h.office.retryOrderFolder(card?.id ?? 0)).ok).toBe(false);
+  });
+
   test('the tokens of an order are the ones labelled encargo/<slug>', async () => {
     rig = deliveryRig();
     const card = await newOrder(rig);

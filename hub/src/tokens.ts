@@ -76,6 +76,11 @@ export function localDay(ts: number): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
+// The slug of the plan whose path the text names, and nothing else.
+export function planDocSlugIn(body: string | null | undefined): string | null {
+  return body ? (PLAN_PATH.exec(body)?.[1] ?? null) : null;
+}
+
 // A plan path gives the slug of the plan; encargo/<slug> gives the order, labelled with its branch name so it
 // never collides with the slug of a plan.
 export function planSlugIn(body: string | null | undefined): string | null {

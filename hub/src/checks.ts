@@ -20,6 +20,7 @@ import type {
 } from './types';
 
 const LISTO_DELAY_MS = 20_000;
+const SPECS_CACHE_MS = 10_000;
 const RED_LINES = 40;
 const HISTORY = 10;
 
@@ -82,6 +83,7 @@ export class ChecksDesk {
   private readonly listoTimers = new Map<number, ReturnType<typeof setTimeout>>();
   private readonly touchedCache = new Map<string, string[]>();
   private readonly memo = new Map<string, string[]>();
+  private readonly specsCache = new Map<string, { at: number; specs: CheckSpec[] }>();
   private readonly slots: Semaphore;
 
   constructor(private readonly opts: ChecksDeskOpts) {
@@ -92,9 +94,25 @@ export class ChecksDesk {
     return (this.opts.gitSync ?? realGitSync)(cwd, args);
   }
 
+  // The checks of a floor; a node floor reads its package.json, so the answer is kept a few seconds.
   specs(order: OrderRow): CheckSpec[] {
     const floor = this.opts.config().floors[order.floor];
-    return floor ? checksOf(floor) : [];
+    if (!floor) return [];
+    const now = this.opts.now();
+    const key = `${order.floor}:${floor.path}:${floor.stack}:${JSON.stringify(floor.checks ?? null)}`;
+    const known = this.specsCache.get(key);
+    if (known && now - known.at < SPECS_CACHE_MS) return known.specs;
+    const specs = checksOf(floor);
+    this.specsCache.set(key, { at: now, specs });
+    if (this.specsCache.size > 100) this.specsCache.delete(this.specsCache.keys().next().value as string);
+    return specs;
+  }
+
+  // Runs a hub that went down left as running never finish: at start they are cancelled.
+  sweepStale(): void {
+    const { db, now } = this.opts;
+    db.query("UPDATE checks SET status = 'cancelled' WHERE status IN ('pending', 'running') AND run_id IN (SELECT id FROM check_runs WHERE status = 'running')").run();
+    db.query("UPDATE check_runs SET status = 'cancelled', ended_at = ? WHERE status = 'running'").run(now());
   }
 
   // ---- running --------------------------------------------------------------------------------------------

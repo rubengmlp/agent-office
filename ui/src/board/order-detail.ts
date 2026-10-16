@@ -143,7 +143,7 @@ export function mountOrderDetail(host: HTMLElement, store: Store, api: OfficeApi
       });
       row.append(confirm);
     }
-    if (current.worktree?.state === 'error' && !current.worktree.path) {
+    if (current.worktree?.state === 'error') {
       const retry = button(t('board.folder.retry'));
       retry.addEventListener('click', () => void act(async () => {
         const result = await api.retryOrderFolder(orderId);

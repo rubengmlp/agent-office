@@ -112,7 +112,7 @@ export function mountBoard(host: HTMLElement, store: Store, api: OfficeApi | nul
         'div',
         'board-card-badges',
         checksBadgeNode(order),
-        order.checks && order.checks.touched.length > 0 && !order.checks.forced ? touchedBadge(order) : null,
+        order.checks && order.checks.touched.length > 0 ? touchedBadge(order) : null,
         order.review.state !== 'none' ? el('span', 'chip', t('board.card.review', { state: order.review.state })) : null,
         folderBadgeNode(order),
         link,
@@ -227,7 +227,8 @@ export function mountBoard(host: HTMLElement, store: Store, api: OfficeApi | nul
 }
 
 function touchedBadge(order: OrderView): HTMLElement {
-  const chip = el('span', 'chip checks-touched', t('board.checks.touchedBadge'));
-  chip.title = t('board.checks.touched', { files: order.checks?.touched.join(', ') ?? '' });
+  const forced = order.checks?.forced === true;
+  const chip = el('span', `chip checks-touched${forced ? ' confirmed' : ''}`, t('board.checks.touchedBadge'));
+  chip.title = t(forced ? 'board.checks.touchedConfirmed' : 'board.checks.touched', { files: order.checks?.touched.join(', ') ?? '' });
   return chip;
 }

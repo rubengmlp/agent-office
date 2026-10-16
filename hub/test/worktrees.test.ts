@@ -215,6 +215,40 @@ describe('create', () => {
   });
 });
 
+describe('a setup that did not finish', () => {
+  test('a hub that went down while preparing marks the folder as an error, and resetup brings it back', async () => {
+    let calls = 0;
+    const shell = async () => {
+      calls += 1;
+      return { code: 0, timedOut: false, cancelled: false, tail: '', durationMs: 1 };
+    };
+    const r = rig({ shell }, (config) => {
+      config.floors.mobile.setup = 'make deps';
+    });
+    const made = await created(r);
+    r.store.update(made.id, { worktree_state: 'preparando' });
+    await r.desk.cleanup();
+    expect(r.store.get(made.id)).toMatchObject({ worktree_state: 'error', setup_error: 'interrupted' });
+    const back = await r.desk.resetup(made.id);
+    expect(back).toMatchObject({ worktree_state: 'listo', setup_error: null });
+    expect(calls).toBe(2);
+    expect(await r.desk.resetup(999)).toBeNull();
+  });
+
+  test('resetup of a floor without setup is just ready, and a failing one stays an error with its tail', async () => {
+    const r = rig();
+    const made = await created(r);
+    r.store.update(made.id, { worktree_state: 'error', setup_error: 'x' });
+    expect(await r.desk.resetup(made.id)).toMatchObject({ worktree_state: 'listo' });
+    const failing = rig({ shell: async () => ({ code: 3, timedOut: false, cancelled: false, tail: 'nope', durationMs: 1 }) }, (config) => {
+      config.floors.mobile.setup = 'make deps';
+    });
+    const other = await created(failing);
+    expect(failing.store.get(other.id)?.worktree_state).toBe('error');
+    expect(await failing.desk.resetup(other.id)).toMatchObject({ worktree_state: 'error', setup_error: 'nope' });
+  });
+});
+
 describe('byPath', () => {
   test('finds the order whose folder holds the cwd and nothing else', async () => {
     const r = rig();

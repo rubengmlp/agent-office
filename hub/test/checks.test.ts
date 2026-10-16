@@ -217,6 +217,21 @@ describe('time, cancel and sharing', () => {
   });
 });
 
+describe('a hub that went down in the middle of a run', () => {
+  test('its running runs are cancelled at start, so the gate asks for a new run instead of waiting for ever', () => {
+    rig = deskRig({ configure: checksOf(['uno', 'exit 0']) });
+    const head = git(rig.path, 'rev-parse', 'HEAD');
+    const db = (rig.checks as unknown as { opts: { db: import('bun:sqlite').Database } }).opts.db;
+    db.query("INSERT INTO check_runs (order_id, floor, slug, sha, trigger, status, started_at) VALUES (?, 'mobile', 'login-a1b2', ?, 'hecho', 'running', 1)").run(rig.order.id, head);
+    db.query("INSERT INTO checks (run_id, floor, slug, name, command, status) VALUES (1, 'mobile', 'login-a1b2', 'uno', 'exit 0', 'running')").run();
+    expect(rig.checks.gateReading(rig.order).run).toMatchObject({ sha: head, status: 'running' });
+    rig.checks.sweepStale();
+    expect(rig.checks.gateReading(rig.order).run).toMatchObject({ sha: head, status: 'cancelled' });
+    expect(rig.checks.latest(rig.order.id)?.checks[0]?.status).toBe('cancelled');
+    expect(rig.checks.latest(rig.order.id)?.endedAt).not.toBeNull();
+  });
+});
+
 describe('the reading of the gate', () => {
   test('HEAD, dirt, the last run and the definition files of the order', async () => {
     rig = deskRig({ configure: checksOf(['uno', 'exit 0']) });

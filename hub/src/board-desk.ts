@@ -40,7 +40,7 @@ export type BoardDeskOpts = {
   bus: OfficeBus;
   book: SessionBook;
   config: () => OfficeConfig;
-  worktrees: { create(order: OrderRow): Promise<CreateResult> };
+  worktrees: { create(order: OrderRow): Promise<CreateResult>; resetup(orderId: number): Promise<OrderRow | null> };
   byPath: (cwd: string | null | undefined) => OrderRow | null;
   deliver: typeof deliver;
   order: (sessionId: string, text: string) => Promise<OrderResult>;
@@ -278,9 +278,15 @@ export class BoardDesk {
   async retryFolder(id: number): Promise<MoveResult> {
     const row = this.opts.store.get(id);
     if (!row) return { ok: false, status: 404, error: { key: 'hub.api.orderNotFound' } };
-    if (row.worktree_state !== 'error' || row.worktree_path) return { ok: false, status: 409, error: { key: 'hub.api.orderBadState' } };
-    const reset = this.opts.store.update(id, { worktree_state: null, setup_error: null }) as OrderRow;
-    await this.begin(reset);
+    if (row.worktree_state !== 'error') return { ok: false, status: 409, error: { key: 'hub.api.orderBadState' } };
+    if (row.worktree_path) {
+      const ready = await this.opts.worktrees.resetup(id);
+      if (!ready) return { ok: false, status: 409, error: { key: 'hub.api.noFolder' } };
+      await this.tellLead(ready, folderText({ branch: ready.branch ?? '', path: ready.worktree_path ?? '', base: ready.base_ref ?? '', sha: ready.base_sha ?? '' }, this.dependencies(ready)));
+    } else {
+      const reset = this.opts.store.update(id, { worktree_state: null, setup_error: null }) as OrderRow;
+      await this.begin(reset);
+    }
     return { ok: true, order: this.view(this.opts.store.get(id) as OrderRow) };
   }
 
