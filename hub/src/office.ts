@@ -39,6 +39,7 @@ import {
   isLeadRole,
   isOfficeRole,
   isVerdictRole,
+  noLessons,
   remembers,
   roleFromName,
   roleIdOf,
@@ -1164,14 +1165,14 @@ export class Office {
     return canonicalRole(resolved);
   }
 
-  // REVISAR: over the effective round cap. Only a block is recorded: a REVISAR: that passes already shows in the
+  // REVISAR: over the round cap. Only a block is recorded: a REVISAR: that passes already shows in the
   // activity when ingest processes it.
   private gateReview(e: HookEvent, review: { target: string | null; round: number | null }, session: SessionRuntime, now: number): GateDecision {
     // session.cwd, as handleProtocol: touchSession has already taken the cwd of this event.
     const ref = docRef(review.target, this.docsRoot(), session.cwd);
     if (!ref) return { pass: true, reason: 'sin documento: handleProtocol tampoco lo cuenta' };
-    const cap = this.docs.roundCap(ref);
-    const decision = decideReviewGate({ path: ref.path, round: review.round, cap, maxRounds: this.config.review.maxRounds });
+    const max = this.config.review.maxRounds;
+    const decision = decideReviewGate({ path: ref.path, round: review.round, maxRounds: max });
     if (decision.pass || review.round === null) return decision;
     this.sql.insertGate.run(now, teamOfSession(session.sessionId), ref.path, 'block', decision.reason);
     this.pushActivity({
@@ -1180,7 +1181,7 @@ export class Office {
       event: 'GateMessage',
       tool: 'SendMessage',
       state: null,
-      summary: { key: 'hub.act.reviewBlockedOverMax', params: { path: ref.path, round: review.round, max: cap } },
+      summary: { key: 'hub.act.reviewBlockedOverMax', params: { path: ref.path, round: review.round, max } },
     });
     return decision;
   }
@@ -1226,17 +1227,7 @@ export class Office {
     const parsed = parseProtocol(message.text);
     if (!parsed) return;
     if (parsed.kind === 'lesson') {
-      if (contextFree(roleKind(from.role))) {
-        this.pushActivity({
-          ts: now,
-          agentKey: from.key,
-          event: 'Lesson',
-          tool: 'SendMessage',
-          state: null,
-          summary: { key: 'hub.act.lessonIgnoredReviewer' },
-        });
-        return;
-      }
+      if (noLessons(roleKind(from.role))) return;
       this.captureAgentLesson(from, parsed.rest, now);
       return;
     }
@@ -1252,15 +1243,15 @@ export class Office {
     const round = parsed.round;
     if (parsed.kind === 'review' && isAuthorRole(from.role)) {
       // gate.sh blocks it, but emit.sh runs in the same PreToolUse: no round opens over the cap.
-      const cap = this.docs.roundCap(ref);
-      if (round !== null && round > cap) {
+      const max = this.config.review.maxRounds;
+      if (round !== null && round > max) {
         this.pushActivity({
           ts: now,
           agentKey: from.key,
           event: 'Review',
           tool: 'SendMessage',
           state: null,
-          summary: { key: 'hub.act.reviewIgnoredOverMax', params: { path: ref.path, round, max: cap } },
+          summary: { key: 'hub.act.reviewIgnoredOverMax', params: { path: ref.path, round, max } },
         });
         return;
       }
@@ -1291,8 +1282,7 @@ export class Office {
       });
       return;
     }
-    // A SIN ACUERDO: counts at most at the round the document had: without a round the cap still renews, and a
-    // wrong "ronda 40" does not lift it.
+    // A SIN ACUERDO: is recorded at most at the round the document had, and without a round at that round.
     const docRound = this.docs.find(ref.path)?.round ?? 0;
     const stored = verdict !== 'no-agreement' || docRound <= 0 ? round : Math.min(round ?? docRound, docRound);
     this.sql.insertVerdict.run(now, from.key, from.role, session.floor, verdict, verdict === 'approved' ? 1 : 0, null, ref.path, stored, parsed.score);

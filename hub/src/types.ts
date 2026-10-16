@@ -100,7 +100,7 @@ export type HubTextParams = {
   'hub.act.planNotice': { to: string; path: string };
   'hub.act.verdictIgnored': { who: string; path: string };
   'hub.act.retiredIgnored': { who: string };
-  'hub.act.lessonIgnoredReviewer': undefined;
+
   'hub.act.reviewBlockedOverMax': { path: string; round: number; max: number };
   'hub.act.reviewIgnoredOverMax': { path: string; round: number; max: number };
   'hub.act.chatPost': { who: string; channel: string; text: string };

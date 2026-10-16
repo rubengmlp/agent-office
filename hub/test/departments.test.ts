@@ -235,31 +235,35 @@ describe('Redacción review loop', () => {
     expect(h.db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM gate_decisions WHERE decision = 'block' AND task_id = ?").get(PLAN)?.n).toBe(1);
   });
 
-  test('a SIN ACUERDO opens another maxRounds budget; the lead is not capped', () => {
+  test('a SIN ACUERDO does not renew the round budget; the lead is not capped', () => {
     const cwd = redaccionTeam();
     h.config.review.maxRounds = 2;
     writeFileSync(join(docs, PLAN), '# Plan\n');
     touch(join(docs, PLAN), -60_000);
     say(LEAD, cwd, 'ared-1', 'redactor-login', 'team-lead', `REVISAR: ${PLAN} ronda 2`);
     say(LEAD, cwd, 'arev-1', 'revisor-planes-login-r1', 'redactor-login', `SIN ACUERDO: ${PLAN} ronda 2 — falta la migración`);
-    expect(doc(PLAN)).toMatchObject({ status: 'sin-acuerdo', round: 2, maxRounds: 4 });
-    expect(gate(LEAD, cwd, 'ared-1', 'redactor-login', `REVISAR: ${PLAN} ronda 3`).pass).toBe(true);
+    expect(doc(PLAN)).toMatchObject({ status: 'sin-acuerdo', round: 2, maxRounds: 2 });
+    const blocked = gate(LEAD, cwd, 'ared-1', 'redactor-login', `REVISAR: ${PLAN} ronda 3`);
+    expect(blocked.pass).toBe(false);
+    expect(blocked.reason).toContain('Rondas máximas');
     say(LEAD, cwd, 'ared-1', 'redactor-login', 'team-lead', `REVISAR: ${PLAN} ronda 3`);
-    expect(doc(PLAN)?.round).toBe(3); // status stays sin-acuerdo until the next verdict
-    expect(gate(LEAD, cwd, 'ared-1', 'redactor-login', `REVISAR: ${PLAN} ronda 5`).pass).toBe(false);
+    expect(doc(PLAN)).toMatchObject({ status: 'sin-acuerdo', round: 2 });
     expect(gate(LEAD, cwd, 'ared-1', 'redactor-login', `REVISAR: ${PLAN}`).pass).toBe(true); // no round: out of scope, unchanged
     expect(gate(LEAD, cwd, null, null, `REVISAR: ${PLAN} ronda 9`).pass).toBe(true); // the lead is not an author
+    h.config.review.maxRounds = 3;
+    expect(gate(LEAD, cwd, 'ared-1', 'redactor-login', `REVISAR: ${PLAN} ronda 3`).pass).toBe(true);
   });
 
-  test('a SIN ACUERDO with a round past the document counts at the document round', () => {
+  test('a SIN ACUERDO without a round number is recorded at the current round of the document', () => {
     const cwd = redaccionTeam();
     h.config.review.maxRounds = 2;
     writeFileSync(join(docs, PLAN), '# Plan\n');
     touch(join(docs, PLAN), -60_000);
     say(LEAD, cwd, 'ared-1', 'redactor-login', 'team-lead', `REVISAR: ${PLAN} ronda 2`);
-    say(LEAD, cwd, 'arev-1', 'revisor-planes-login-r1', 'redactor-login', `SIN ACUERDO: ${PLAN} ronda 40 — falta la migración`);
-    expect(doc(PLAN)?.maxRounds).toBe(4);
-    expect(gate(LEAD, cwd, 'ared-1', 'redactor-login', `REVISAR: ${PLAN} ronda 5`).pass).toBe(false);
+    say(LEAD, cwd, 'arev-1', 'revisor-planes-login-r1', 'redactor-login', `SIN ACUERDO: ${PLAN} — falta la migración`);
+    expect(doc(PLAN)).toMatchObject({ status: 'sin-acuerdo', round: 2, maxRounds: 2 });
+    expect(h.db.query<{ round: number }, []>("SELECT round FROM verdicts WHERE kind = 'no-agreement'").get()?.round).toBe(2);
+    expect(gate(LEAD, cwd, 'ared-1', 'redactor-login', `REVISAR: ${PLAN} ronda 3`).pass).toBe(false);
   });
 
   test('the gate and ingest resolve a relative path against the same folder', () => {
@@ -272,17 +276,6 @@ describe('Redacción review loop', () => {
     expect(gate(LEAD, cwd, 'ared-1', 'redactor-login', 'REVISAR: planes/login.md ronda 3').pass).toBe(false);
     say(LEAD, cwd, 'ared-1', 'redactor-login', 'team-lead', 'REVISAR: planes/login.md ronda 3');
     expect(doc(PLAN)?.round).toBe(2);
-  });
-
-  test('a SIN ACUERDO without a round number counts at the current round of the document', () => {
-    const cwd = redaccionTeam();
-    h.config.review.maxRounds = 2;
-    writeFileSync(join(docs, PLAN), '# Plan\n');
-    touch(join(docs, PLAN), -60_000);
-    say(LEAD, cwd, 'ared-1', 'redactor-login', 'team-lead', `REVISAR: ${PLAN} ronda 2`);
-    say(LEAD, cwd, 'arev-1', 'revisor-planes-login-r1', 'redactor-login', `SIN ACUERDO: ${PLAN} — falta la migración`);
-    expect(doc(PLAN)).toMatchObject({ status: 'sin-acuerdo', round: 2, maxRounds: 4 });
-    expect(gate(LEAD, cwd, 'ared-1', 'redactor-login', `REVISAR: ${PLAN} ronda 3`).pass).toBe(true);
   });
 });
 
@@ -358,7 +351,7 @@ describe('plan reviewers', () => {
     expect(start(LEAD, cwd, 'ared-1', 'redactor-login')).toContain('Cita la regla de layering');
     say(LEAD, cwd, 'arev-1', 'revisor-planes-login-r1', 'team-lead', 'LECCIÓN: los planes de mobile olvidan el backfill');
     expect(h.office.memoryView('redaccion', 'revisor-planes').lessons.map((l) => l.text)).toEqual(['Mira siempre las migraciones']);
-    expect(h.office.snapshot().activity.map((a) => a.summary)).toContainEqual({ key: 'hub.act.lessonIgnoredReviewer' });
+    expect(h.office.snapshot().activity.filter((a) => a.agentKey === 'arev-1' && a.event === 'Lesson')).toEqual([]);
     expect(h.office.snapshot().activity.some((a) => a.agentKey === 'arev-1' && keyOf(a.summary) === 'hub.act.memoryDelivered')).toBe(false);
     h.office.ingest(ev(LEAD, cwd, 'SubagentStop', { agent_id: 'arev-1', agent_type: 'revisor-planes-login-r1' }));
     h.office.ingest(ev(LEAD, cwd, 'SessionEnd', { reason: 'exit' }));
@@ -369,6 +362,20 @@ describe('plan reviewers', () => {
     h.office.addLesson({ floor: 'mantenimiento', role: 'revisor-skills', text: 'Lee siempre los scripts' });
     h.office.ingest(ev(MANT, taller, 'SessionStart', {}), mantMeta);
     expect(start(MANT, taller, 'arsk-1', 'revisor-skills-pdf-r1')).toContain('Lee siempre los scripts');
+  });
+
+  test('a LECCIÓN from the skill reviewer is dropped without activity; the author still saves its own', () => {
+    office();
+    const taller = join(docs, 'taller');
+    h.office.ingest(ev(MANT, taller, 'SessionStart', {}), mantMeta);
+    start(MANT, taller, 'arsk-1', 'revisor-skills-pdf-r1');
+    start(MANT, taller, 'aart-1', 'artesano-pdf');
+    const before = h.office.snapshot().activity.length;
+    say(MANT, taller, 'arsk-1', 'revisor-skills-pdf-r1', 'team-lead', 'LECCIÓN: las skills de PDF olvidan los scripts');
+    expect(h.office.memoryView('mantenimiento', 'revisor-skills').lessons).toEqual([]);
+    expect(h.office.snapshot().activity.slice(before).filter((a) => a.event === 'Lesson')).toEqual([]);
+    say(MANT, taller, 'aart-1', 'artesano-pdf', 'team-lead', 'LECCIÓN: valida el frontmatter antes de pedir revisión');
+    expect(h.office.memoryView('mantenimiento', 'artesano').lessons.map((l) => l.text)).toEqual(['valida el frontmatter antes de pedir revisión']);
   });
 
   test('the round history lives outside the plan, is committed with its round and is never a plan', async () => {

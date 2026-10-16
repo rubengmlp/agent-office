@@ -35,10 +35,6 @@ export type DocumentsOptions = {
   maxRounds: () => number;
 };
 
-// Each SIN ACUERDO: opens another maxRounds budget on top of the round it was given in.
-export function roundCap(maxRounds: number, lastNoAgreementRound: number | null): number {
-  return maxRounds + (lastNoAgreementRound ?? 0);
-}
 
 export function latestMtime(dir: string, depth = 0): number {
   let latest = 0;
@@ -103,12 +99,6 @@ export class DocumentDesk {
     return this.cache.find((d) => d.path === path) ?? null;
   }
 
-  roundCap(ref: DocRef): number {
-    const row = this.opts.db
-      .query<{ round: number | null }, [string]>("SELECT round FROM verdicts WHERE path = ? AND kind = 'no-agreement' ORDER BY ts DESC, id DESC LIMIT 1")
-      .get(ref.path);
-    return roundCap(this.opts.maxRounds(), row?.round ?? null);
-  }
 
   refresh(): boolean {
     const next = this.scan();
@@ -297,7 +287,7 @@ export class DocumentDesk {
       docType: docTypeOf(ref.kind, head),
       status: statusOf(row ?? null, last, mtime),
       round,
-      maxRounds: this.roundCap(ref),
+      maxRounds: this.opts.maxRounds(),
       score: last?.score ?? null,
       updatedAt: Math.round(mtime),
       deliveredAt: row?.delivered_at ?? null,

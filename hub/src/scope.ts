@@ -80,6 +80,10 @@ export function contextFree(kind: RoleKind): boolean {
   return kind === 'planReviewer';
 }
 
+export function noLessons(kind: RoleKind): boolean {
+  return kind === 'planReviewer' || kind === 'skillReviewer';
+}
+
 export function isDepartmentFloor(kind: FloorKind): boolean {
   return kind === 'redaccion' || kind === 'mantenimiento';
 }

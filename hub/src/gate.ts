@@ -59,14 +59,12 @@ export function planByteLimit(maxBytes: number, floors: number, analysis: boolea
   return Math.round(maxBytes * Math.min(2, 1 + 0.5 * (Math.max(1, floors) - 1)));
 }
 
-export type ReviewGateFacts = { path: string | null; round: number | null; cap: number; maxRounds: number };
+export type ReviewGateFacts = { path: string | null; round: number | null; maxRounds: number };
 
-// The effective cap is maxRounds plus the round of the last SIN ACUERDO: each one opens another budget.
 export function decideReviewGate(f: ReviewGateFacts): GateDecision {
-  if (f.round === null || f.round <= f.cap) return { pass: true, reason: 'ronda dentro del tope' };
-  const spent = f.cap > f.maxRounds ? ` (${f.maxRounds} configuradas más las ${f.cap - f.maxRounds} gastadas antes del último SIN ACUERDO:)` : '';
+  if (f.round === null || f.round <= f.maxRounds) return { pass: true, reason: 'ronda dentro del tope' };
   return {
     pass: false,
-    reason: `Tope de rondas: ${f.path ?? 'el documento'} ya ha agotado sus ${f.cap} rondas de revisión${spent} (review.maxRounds = ${f.maxRounds}); la ronda ${f.round} no se abre. No repitas el REVISAR: escribe a tu jefe que se ha alcanzado el tope y espera su decisión. Solo un SIN ACUERDO: del revisor y la decisión del usuario abren otras ${f.maxRounds} rondas; el usuario también puede subir «Rondas máximas» en Ajustes.`,
+    reason: `Tope de rondas: ${f.path ?? 'el documento'} ya ha agotado sus ${f.maxRounds} rondas de revisión (review.maxRounds); la ronda ${f.round} no se abre. No repitas el REVISAR: escribe a tu jefe que se ha alcanzado el tope y espera su decisión. Un SIN ACUERDO: no abre más rondas: solo el usuario puede hacerlo, subiendo «Rondas máximas» en Ajustes.`,
   };
 }
