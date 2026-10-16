@@ -11,5 +11,6 @@
     "resolveJsonModule": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src", "../hub/src/types.ts"]
+  "include": ["src", "../hub/src/types.ts"],
+  "exclude": ["src/**/*.test.ts"]
 }

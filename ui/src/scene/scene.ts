@@ -30,6 +30,7 @@ import { CameraRig, OVERVIEW } from './camera';
 import { Character } from './characters';
 import {
   CLEAR_H,
+  DONE_HOLD_S,
   HALF_D,
   LEAD_ZONE,
   MEETING_REFRESH_S,
@@ -47,12 +48,14 @@ import {
   computeFloorPlan,
   deskCount,
   deskTarget,
+  exitTarget,
   findMeetingPairs,
   labTarget,
   latestRecipient,
   meetingTarget,
   MEETING_SEATS,
   requiredCols,
+  streetPoint,
   type DeskSlot,
   type FloorPlan,
   type Target,
@@ -60,7 +63,7 @@ import {
 import { applyTheme as applyMaterialTheme, disposeSharedMaterials, floorStyle, hashString } from './materials';
 import { Picker, pulseRings } from './picking';
 
-type Entry = { character: Character; agent: AgentView; slot: DeskSlot | null };
+type Entry = { character: Character; agent: AgentView; slot: DeskSlot | null; scale: number };
 
 type MeetingSeat = { floor: string; seat: number };
 
@@ -120,6 +123,7 @@ class OfficeScene {
   private plans = new Map<string, FloorPlan>();
   private meetings = new Map<string, MeetingSeat>();
   private seenCounter = 0;
+  private primed = false;
   private mainCols = 0;
   private annexCols = 0;
   private floorKeys = '';
@@ -272,7 +276,7 @@ class OfficeScene {
     }
     const order = (key: string): number => this.firstSeen.get(key) ?? 0;
     const byFloor = new Map<string, AgentView[]>();
-    for (const agent of agents) {
+    for (const agent of this.store.officeAgents()) {
       const list = byFloor.get(agent.floor) ?? [];
       list.push(agent);
       byFloor.set(agent.floor, list);
@@ -358,8 +362,9 @@ class OfficeScene {
     for (const agent of agents) {
       const plan = this.plans.get(agent.floor);
       if (!plan) continue;
-      present.add(agent.key);
       let entry = this.entries.get(agent.key);
+      if (!entry && agent.away) continue;
+      present.add(agent.key);
       if (!entry) {
         const character = new Character(
           agent.key,
@@ -368,17 +373,22 @@ class OfficeScene {
           (key) => this.follow(key),
         );
         this.actors.add(character.root);
-        entry = { character, agent, slot: null };
+        const street = this.primed ? streetPoint(this.site.nav) : null;
+        if (street) character.placeAt(street, this.site.nav);
+        entry = { character, agent, slot: null, scale: 1 };
         this.entries.set(agent.key, entry);
       }
       entry.agent = agent;
       entry.character.setLook({ roleKind: agent.roleKind, muted: floorStyle(plan.view).muted });
       entry.slot = plan.assignment.get(agent.key) ?? null;
+      if (entry.slot) entry.scale = entry.slot.scale;
       entry.character.desk = entry.slot ? (this.desks.get(deskKey(agent.floor, entry.slot)) ?? null) : null;
     }
+    this.primed = agents.length > 0;
     for (const [key, entry] of this.entries) {
-      if (present.has(key)) continue;
-      entry.character.dispose();
+      const { character } = entry;
+      if (!character.gone && (present.has(key) || (character.leaving && this.site.nav.floors.has(character.floor)))) continue;
+      character.dispose();
       this.entries.delete(key);
       if (this.cameraRig.following === key) this.cameraRig.stopFollow();
     }
@@ -393,7 +403,7 @@ class OfficeScene {
   }
 
   private canMeet(agent: AgentView): boolean {
-    if (agent.endedAt !== null || !this.entries.has(agent.key)) return false;
+    if (agent.endedAt !== null || agent.away || !this.entries.has(agent.key)) return false;
     const state = this.store.shownState(agent);
     return state !== 'done' && state !== 'failed' && state !== 'testing';
   }
@@ -433,6 +443,10 @@ class OfficeScene {
     const room = this.site.room(agent.floor);
     if (!room) return null;
     const state = this.store.shownState(agent);
+    if (agent.away) {
+      const waving = state === 'done' && !entry.character.leaving && this.store.now() - agent.stateSince < DONE_HOLD_S * 1000;
+      return waving ? null : exitTarget(this.site.nav);
+    }
     const leaving = state === 'done' || state === 'failed' || agent.endedAt !== null;
     if (!leaving && state === 'testing') {
       const index = labUse.get(agent.floor) ?? 0;
@@ -464,10 +478,10 @@ class OfficeScene {
           dt,
           now,
           state,
-          scale: entry.slot?.scale ?? 1,
+          scale: entry.scale,
           selected: key === this.store.selectedKey,
           pending: this.store.questionFor(key) !== undefined,
-          ended: agent.endedAt !== null,
+          ended: agent.endedAt !== null && !agent.away,
           lastTest: agent.lastTest,
           name: agentName(agent),
           following: following === key,
@@ -563,7 +577,8 @@ class OfficeScene {
     _frustum.setFromProjectionMatrix(_matrix);
     entry.character.headPoint(_point);
     if (_frustum.containsPoint(_point) && camera.position.distanceTo(_point) < 45) return;
-    this.focusFloor(entry.character.floor || entry.agent.floor);
+    const floor = entry.character.floor;
+    this.focusFloor(floor && this.site.room(floor) ? floor : entry.agent.floor);
   }
 
   private fitShadows(): void {

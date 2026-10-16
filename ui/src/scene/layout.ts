@@ -2,6 +2,7 @@ import type { AgentView, FloorView, MessageView, RoleKind } from '../types';
 import {
   AISLE_Z,
   CHILD_SCALE,
+  HALF_D,
   LAB_LANE_DX,
   LAB_QUEUE_STEP,
   LAB_STAND_DX,
@@ -45,7 +46,7 @@ export type FloorPlan = {
   assignment: Map<string, DeskSlot>;
 };
 
-export type TargetKind = 'desk' | 'lab' | 'meeting';
+export type TargetKind = 'desk' | 'lab' | 'meeting' | 'exit';
 
 export type Target = {
   id: string;
@@ -63,6 +64,28 @@ export type Waypoint = { floor: string; x: number; z: number; lane: number | nul
 export type FloorNav = { slug: string; building: BuildingId; level: number; width: number; exitX: number };
 
 export type Nav = { floors: Map<string, FloorNav>; mainGround: string | null; annexGround: string | null };
+
+export const STREET = 'calle';
+
+export const STREET_DX = 2.5;
+
+export const STREET_Z = HALF_D + 1.5;
+
+export function streetNav(ground: FloorNav): FloorNav {
+  return { slug: STREET, building: ground.building, level: 0, width: ground.width, exitX: ground.exitX };
+}
+
+export function exitTarget(nav: Nav): Target | null {
+  const street = nav.floors.get(STREET);
+  if (!street) return null;
+  const x = street.exitX + (street.building === 'main' ? STREET_DX : -STREET_DX);
+  return { id: 'exit', kind: 'exit', floor: STREET, x, z: STREET_Z, lane: street.exitX, facing: 0, slot: null };
+}
+
+export function streetPoint(nav: Nav): Waypoint | null {
+  const exit = exitTarget(nav);
+  return exit ? { floor: STREET, x: exit.x, z: exit.z, lane: exit.lane } : null;
+}
 
 export function buildingOf(floor: FloorView): BuildingId {
   return floor.building === 'mantenimiento' || floor.kind === 'mantenimiento' ? 'annex' : 'main';

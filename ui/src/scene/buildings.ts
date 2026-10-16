@@ -25,6 +25,7 @@ import {
   OFFICE_PARTITION_DX,
   PITCH,
   PLINTH_H,
+  SIDEWALK_Y,
   SLAB_T,
   STOREY_H,
   UTIL_ZONE,
@@ -46,7 +47,7 @@ import {
   UNIT_PLANE,
   whiteboard,
 } from './furniture';
-import { buildingOf, type BuildingId, type FloorNav, type Nav } from './layout';
+import { buildingOf, STREET, streetNav, type BuildingId, type FloorNav, type Nav } from './layout';
 import { buildingKit, floorStyle, furnitureKit, hashString, std, type FloorStyle } from './materials';
 
 type Opening = { x0: number; x1: number };
@@ -393,6 +394,7 @@ export class Site {
   private siteMeshes: Mesh[] = [];
   private siteOwned: Owned[] = [];
   private siteSignature = '';
+  private streetOrigin: Vector3 | null = null;
   private readonly ground: Mesh;
 
   constructor() {
@@ -412,6 +414,7 @@ export class Site {
   }
 
   origin(slug: string): Vector3 | null {
+    if (slug === STREET) return this.streetOrigin;
     return this.rooms.get(slug)?.origin ?? null;
   }
 
@@ -459,6 +462,15 @@ export class Site {
     };
     place(main, 'main', mainWidth, 0);
     place(annex, 'annex', annexWidth, this.annexX);
+    const groundSlug: string | null = mainGround ?? annexGround;
+    const ground = groundSlug === null ? undefined : navFloors.get(groundSlug);
+    const groundRoom = groundSlug === null ? undefined : this.rooms.get(groundSlug);
+    if (ground && groundRoom) {
+      navFloors.set(STREET, streetNav(ground));
+      this.streetOrigin = new Vector3(groundRoom.origin.x, SIDEWALK_Y, groundRoom.origin.z);
+    } else {
+      this.streetOrigin = null;
+    }
     this.order = order;
     this.nav = { floors: navFloors, mainGround, annexGround };
 
@@ -520,7 +532,7 @@ export class Site {
     const left = hasMain ? -this.mainWidth / 2 - WALL_T : this.annexX - this.annexWidth / 2 - WALL_T;
     const right = hasAnnex ? this.annexX + this.annexWidth / 2 + WALL_T : this.mainWidth / 2 + LIFT_GAP + LIFT_W;
     if (hasMain || hasAnnex) {
-      b.box(kit.sidewalk, right - left + 8, 0.06, DEPTH + 9, (left + right) / 2, 0.03, 0.5, { cast: false });
+      b.box(kit.sidewalk, right - left + 8, SIDEWALK_Y, DEPTH + 9, (left + right) / 2, SIDEWALK_Y / 2, 0.5, { cast: false });
     }
 
     const roof = (cx: number, width: number, levels: number, title: string, accent: string): void => {

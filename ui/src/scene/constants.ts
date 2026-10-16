@@ -5,6 +5,7 @@ export const WALL_T = 0.2;
 export const DEPTH = 8;
 export const HALF_D = DEPTH / 2;
 export const PLINTH_H = 0.35;
+export const SIDEWALK_Y = 0.06;
 
 export const LEAD_ZONE = 4.2;
 export const UTIL_ZONE = 7.6;
@@ -63,6 +64,7 @@ export const DONE_HOLD_S = 1.6;
 export const FAILED_HOLD_S = 1.0;
 export const ENDED_ALPHA = 0.45;
 export const SPAWN_FADE_S = 0.5;
+export const EXIT_FADE_S = 1;
 
 export const MEETING_REFRESH_S = 0.5;
 export const MEETING_WINDOW_MS = 120_000;

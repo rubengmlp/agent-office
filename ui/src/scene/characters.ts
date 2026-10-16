@@ -6,6 +6,7 @@ import {
   BADGE_VISIBLE_S,
   DONE_HOLD_S,
   ENDED_ALPHA,
+  EXIT_FADE_S,
   FADE_S,
   FAILED_HOLD_S,
   LABEL_FAR,
@@ -139,6 +140,8 @@ export class Character {
   private loadToken = 0;
   private disposed = false;
   private alphaLevel = -1;
+  private exitAt: number | null = null;
+  private left = false;
   private tintLevel = -1;
   private castShadows = true;
   private readonly weights = { typing: 0, mug: 0, sip: 0, folder: 0, gesture: 0, slump: 0, pitch: 0, yaw: 0 };
@@ -171,6 +174,23 @@ export class Character {
 
   get ready(): boolean {
     return this.rig !== null;
+  }
+
+  get leaving(): boolean {
+    return this.target?.kind === 'exit';
+  }
+
+  get gone(): boolean {
+    return this.left;
+  }
+
+  placeAt(point: Waypoint, nav: Nav): void {
+    this.nav = nav;
+    this.at = { ...point };
+    this.path = [];
+    this.transfer = null;
+    this.pendingReplan = false;
+    this.placed = true;
   }
 
   headPoint(target: Vector3): Vector3 {
@@ -635,6 +655,17 @@ export class Character {
   }
 
   private fadeAlpha(input: FrameInput, t: number): number {
+    if (this.leaving) {
+      if (this.moving) {
+        this.exitAt = null;
+        return 1;
+      }
+      if (this.exitAt === null) this.exitAt = t;
+      const alpha = Math.max(0, 1 - (t - this.exitAt) / EXIT_FADE_S);
+      if (alpha <= 0) this.left = true;
+      return alpha;
+    }
+    this.exitAt = null;
     let alpha = 1;
     if (input.state === 'done' || input.state === 'failed') {
       const hold = input.state === 'done' ? DONE_HOLD_S : FAILED_HOLD_S;
