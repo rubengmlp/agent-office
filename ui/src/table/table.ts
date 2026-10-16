@@ -1,3 +1,4 @@
+import type { OfficeApi } from '../api';
 import { orderRows, type Row } from '../agents-order';
 import { stateBadge } from '../badge';
 import { button, el, setStateColor } from '../dom';
@@ -25,6 +26,7 @@ import { documentBadge, openDocument } from '../panel/deliverables';
 import type { Store } from '../store';
 import { relativeTime } from '../time';
 import type { AgentState, AgentView, DocumentKind, DocumentStatus, DocumentView, FloorKind, FloorView, GuardAlert, GuardAlertLevel } from '../types';
+import { mountUsageBlock } from './usage-block';
 
 const COLUMNS: readonly { col: MessageKey; hint: MessageKey }[] = [
   { col: 'table.col.agent', hint: 'table.col.hint.agent' },
@@ -281,14 +283,15 @@ function alertsSection(store: Store, openAlerts: ReadonlySet<number>, now: numbe
   );
 }
 
-export function mountTable(host: HTMLElement, store: Store): void {
+export function mountTable(host: HTMLElement, store: Store, api: OfficeApi | null): void {
   let scheduled = false;
   let scrolledTo: string | null = null;
   const openAlerts = new Set<number>();
   const help = el('details', 'table-help');
   help.open = readHelpOpen();
   const content = el('div', 'table-content');
-  host.replaceChildren(help, content);
+  const usage = api ? mountUsageBlock(store, api, () => host.classList.contains('active')) : null;
+  host.replaceChildren(...(usage ? [usage] : []), help, content);
 
   const render = (): void => {
     const now = store.now();

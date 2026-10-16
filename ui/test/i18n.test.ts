@@ -30,6 +30,7 @@ const SAME_KEYS: MessageKey[] = [
   'topbar.tab.chat',
   'chat.title',
   'chat.global',
+  'usage.spend.total',
   'tokens.row',
   'tokens.unit.k',
   'tokens.unit.m',

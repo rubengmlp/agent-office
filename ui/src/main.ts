@@ -74,7 +74,7 @@ function boot(): void {
   const api = replayUrl || !key ? null : new OfficeApi(key);
   const actions: Actions = api ? liveActions(store, api) : replayActions(store);
 
-  mountTable(tableHost, store);
+  mountTable(tableHost, store, api);
   mountPanel(panelHost, store, actions, api);
   mountPlans(plansHost, store, api);
   chat = mountChat(chatHost, store, api);

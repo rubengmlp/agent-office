@@ -365,6 +365,111 @@ textarea {
   white-space: nowrap;
 }
 
+.usage-spend {
+  margin-bottom: 18px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.usage-spend-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.usage-spend-title {
+  font-size: 15px;
+}
+
+.usage-range {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.usage-range button {
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+.usage-range button[aria-pressed='true'] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.usage-spend-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px 16px;
+}
+
+.usage-spend-top .usage-card {
+  width: 240px;
+  margin-left: auto;
+}
+
+.usage-spend-total {
+  flex: 1 1 280px;
+  margin: 0;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-spend-total-label {
+  font-weight: 600;
+}
+
+.usage-spend-tables {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(440px, 1fr));
+  gap: 14px 18px;
+  margin-top: 12px;
+}
+
+.usage-spend-group {
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.usage-spend-group .hint {
+  margin: 6px 0;
+}
+
+.usage-spend-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-spend-table th,
+.usage-spend-table td {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+.usage-spend-table th {
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.usage-spend-table .num {
+  text-align: right;
+}
+
+.usage-spend-name {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .floor-section {
   margin-bottom: 18px;
   border: 1px solid var(--border);

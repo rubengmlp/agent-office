@@ -18,6 +18,8 @@ import type {
   SettingsResult,
   SettingsUpdate,
   SettingsView,
+  UsageRange,
+  UsageSummary,
 } from './types';
 
 export type ApiResult = { ok: true } | { ok: false; status: number; message: string };
@@ -88,6 +90,10 @@ export class OfficeApi {
 
   report(agentKey: string): Promise<ApiData<ReportView>> {
     return this.get(`/api/reports/${encodeURIComponent(agentKey)}`);
+  }
+
+  usageSummary(range: UsageRange): Promise<ApiData<UsageSummary>> {
+    return this.get(`/api/usage/summary?range=${range}`);
   }
 
   documentContent(path: string): Promise<ApiData<DocumentContent>> {
