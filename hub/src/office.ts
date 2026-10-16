@@ -9,8 +9,8 @@ import { ChatRoom, type ReadChatResult, type UserChatResult } from './chat-room'
 import { ContextDesk } from './context-desk';
 import { deliver } from './courier';
 import { DocumentDesk } from './documents';
-import { FloorInUseError, purgeFloorData } from './floor-data';
-import { FloorResolver, memoryRegistry, type FloorRegistry, type GitRootFn } from './floors';
+import { FloorDirtyError, FloorInUseError, purgeFloorData } from './floor-data';
+import { FloorResolver, isInside, memoryRegistry, realPath, type FloorRegistry, type GitRootFn } from './floors';
 import type { GateDecision } from './gate';
 import { GateDesk } from './gate-desk';
 import { GitQueue, runGit, type GitRunner } from './git';
@@ -46,6 +46,7 @@ import {
 } from './office-state';
 import { isUserPrompt, roleLabel, taskLine } from './office-texts';
 import { OrderDesk } from './order-desk';
+import { OrderStore } from './order-store';
 import { publicDetail, publicSummary, publicText, storedPayload, visibleKind } from './privacy';
 import { detectStack, profileFor, type Profiles } from './profiles';
 import { parseProtocol } from './protocol';
@@ -82,6 +83,7 @@ import type {
   UsageSummary,
 } from './types';
 import { UsageDesk } from './usage';
+import { WorktreeDesk, type RemoveResult, type WorktreeSummary } from './worktrees';
 
 export {
   GHOST_MS,
@@ -169,6 +171,8 @@ export class Office {
   private readonly sync: SyncDesk;
   private readonly usage: UsageDesk;
   private readonly meter: MeterDesk;
+  private readonly store: OrderStore;
+  private readonly worktrees: WorktreeDesk;
   readonly chat: ChatDesk;
 
   constructor(private readonly opts: OfficeOptions) {
@@ -302,6 +306,17 @@ export class Office {
       setPlan: (agent, slug) => this.meter.setPlan(agent, slug),
       openTask: (agent, now) => this.stall.openTask(agent, now),
     });
+    this.store = new OrderStore(opts.db);
+    this.worktrees = new WorktreeDesk({
+      store: this.store,
+      git: this.git,
+      now: this.now,
+      bus: this.bus,
+      config: () => this.config,
+      hubId: opts.hubId,
+      inside: (path) => this.sessionInside(path),
+      changed: (order) => this.bus.emit({ type: 'worktrees', floor: order.floor }),
+    });
     this.book.restoreSessions();
     this.docs.refresh();
   }
@@ -312,6 +327,7 @@ export class Office {
     this.docs.watch();
     this.refreshDocuments();
     this.bus.background(this.sync.cleanup(this.docs.finishedPlanSlugs()));
+    this.bus.background(this.worktrees.cleanup());
   }
 
   stop(): void {
@@ -341,6 +357,8 @@ export class Office {
       alerts: this.guards.alerts(),
       usage: this.usage.view(),
       chat: this.chat.recent(SNAPSHOT_LIMIT),
+      orders: [],
+      finished: [],
     };
   }
 
@@ -619,7 +637,38 @@ export class Office {
     return this.book.floorInUse(slug);
   }
 
-  async forgetFloor(slug: string, path: string): Promise<{ rows: number; worktrees: number }> {
+  listWorktrees(floor?: string): Promise<WorktreeSummary> {
+    return this.worktrees.list(floor);
+  }
+
+  removeWorktree(orderId: number, opts: { deleteBranch: boolean; force: boolean }): Promise<RemoveResult> {
+    return this.worktrees.remove(orderId, opts);
+  }
+
+  keepWorktree(orderId: number): boolean {
+    return this.worktrees.keep(orderId) !== null;
+  }
+
+  // Cleanup of folders nobody owns plus the daily expiry, on demand from the panel.
+  async pruneWorktrees(): Promise<{ removed: number }> {
+    await this.worktrees.cleanup();
+    const { removed } = await this.worktrees.expire();
+    return { removed };
+  }
+
+  expireWorktrees(): Promise<{ removed: number; pending: number; totalKb: number }> {
+    return this.worktrees.expire();
+  }
+
+  private sessionInside(path: string): boolean {
+    const folder = realPath(path);
+    return [...this.book.sessions.values()].some((s) => s.endedAt === null && s.cwd !== null && isInside(realPath(s.cwd), folder));
+  }
+
+  async forgetFloor(slug: string, path: string, force = false): Promise<{ rows: number; worktrees: number }> {
+    const dirty = await this.worktrees.dirtyIn(slug);
+    if (dirty.length > 0 && !force) throw new FloorDirtyError(slug, dirty);
+    await this.worktrees.removeAll(slug, force);
     const worktrees = await this.sync.removeFloor(slug);
     // A session may have opened on the floor while git was working.
     const open = this.floorInUse(slug);

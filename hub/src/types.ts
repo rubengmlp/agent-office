@@ -121,6 +121,9 @@ export type HubTextParams = {
   'hub.act.chatRelease': { who: string; channel: string; files: string };
   'hub.act.chatUser': { channel: string; text: string };
   'hub.act.chatCommand': undefined;
+  'hub.act.worktreesOrphan': { n: number; paths: string };
+  'hub.act.worktreesPending': { n: number; sizeKb: number };
+  'hub.act.worktreesHeavy': { gb: number; max: number };
   'hub.round': { n: number };
   'hub.score': { n: number };
 
@@ -218,6 +221,11 @@ export type HubTextParams = {
   'hub.api.relaunchNoScript': undefined;
   'hub.api.relaunchFailed': undefined;
   'hub.api.panelLinkInvalid': undefined;
+  'hub.api.worktreeNotFound': undefined;
+  'hub.api.worktreeBusy': undefined;
+  'hub.api.worktreeDirty': undefined;
+  'hub.api.branchUnmerged': undefined;
+  'hub.api.worktreeFailed': undefined;
 
   'hub.doc.tooLarge': undefined;
 
@@ -226,6 +234,7 @@ export type HubTextParams = {
   'hub.floors.conflictManaged': { path: string; slug: string };
   'hub.floors.inUse': { slug: string; sessions: string };
   'hub.floors.removing': { slug: string };
+  'hub.floors.dirtyWorktrees': { slug: string; orders: string };
   'hub.floors.added': { slug: string; startCommand: string };
   'hub.floors.notGitRepo': { path: string };
   'hub.floors.insideRepo': { path: string; top: string };
@@ -596,6 +605,124 @@ export type DocumentView = {
   tokens: TokenTotals | null;
 };
 
+export type OrderStatus = 'pendiente' | 'en-curso' | 'revision' | 'hecho' | 'descartado';
+
+// director: an ENCARGO of the director to a lead; plan: a card made when a plan is executed; panel-lead and
+// panel-director: a card made from the panel, briefed straight to the lead or through the director.
+export type OrderSource = 'director' | 'plan' | 'panel-lead' | 'panel-director';
+
+export type WorktreeState = 'creando' | 'preparando' | 'listo' | 'error' | 'retirado';
+
+export type CheckStatus = 'pending' | 'running' | 'passed' | 'failed' | 'timeout' | 'cancelled';
+
+export type CheckRunStatus = 'running' | 'passed' | 'failed' | 'cancelled';
+
+export type CheckTrigger = 'listo' | 'comprobar' | 'panel' | 'hecho';
+
+export type CheckView = {
+  name: string;
+  command: string;
+  status: CheckStatus;
+  exitCode: number | null;
+  durationMs: number | null;
+  outputTail: string | null;
+};
+
+export type CheckRunView = {
+  id: number;
+  orderId: number;
+  sha: string;
+  trigger: CheckTrigger;
+  status: CheckRunStatus;
+  startedAt: number;
+  endedAt: number | null;
+  checks: CheckView[];
+};
+
+export type OrderChecksView = {
+  status: 'none' | 'running' | 'passed' | 'failed';
+  passed: number;
+  total: number;
+  sha: string | null;
+  // Files of the diff that change how the floor is checked; the HECHO waits for a force while there are any.
+  touched: string[];
+  forced: boolean;
+};
+
+export type OrderWorktreeView = { path: string; state: WorktreeState; error: string | null; stale: boolean };
+
+export type OrderView = {
+  id: number;
+  slug: string;
+  floor: string;
+  title: string;
+  description: string;
+  status: OrderStatus;
+  source: OrderSource;
+  planSlug: string | null;
+  parentId: number | null;
+  lead: string | null;
+  branch: string | null;
+  base: string | null;
+  baseSha: string | null;
+  worktree: OrderWorktreeView | null;
+  checks: OrderChecksView | null;
+  review: { state: string };
+  pr: { url: string; state: string | null } | null;
+  mergedAt: number | null;
+  tokens: TokenTotals | null;
+  cycle: number;
+  createdAt: number;
+  updatedAt: number;
+  lastActivity: number | null;
+};
+
+export type CheckpointView = { id: number; sha: string; reason: string; label: string; createdAt: number };
+
+export type SkippedFile = { path: string; size: number; mtime: number };
+
+export type WorktreeView = {
+  orderId: number;
+  slug: string;
+  floor: string;
+  title: string;
+  branch: string;
+  base: string;
+  baseSha: string;
+  path: string;
+  state: WorktreeState;
+  setupError: string | null;
+  ahead: number;
+  behind: number;
+  sizeKb: number | null;
+  sizeAt: number | null;
+  lastActivity: number | null;
+  dirty: boolean;
+  merged: boolean;
+  orderStatus: OrderStatus;
+  // A finished order whose branch was never merged and is past the retention: the user decides.
+  pending: boolean;
+  kept: boolean;
+};
+
+// What the popup of the end of an order or plan shows; it is a snapshot of the facts when the alert was made.
+export type FinishedView = {
+  id: number;
+  ts: number;
+  kind: 'order' | 'plan';
+  slug: string;
+  title: string;
+  floors: string[];
+  branch: string | null;
+  summary: string;
+  cycle: number;
+  manual: boolean;
+  checks: { passed: number; total: number } | null;
+  touched: string[];
+  prUrl: string | null;
+  orderSlugs: string[];
+};
+
 export type GuardAlertLevel = 'alerta' | 'posible';
 
 export type GuardAlert = {
@@ -689,6 +816,8 @@ export type Snapshot = {
   alerts: GuardAlert[];
   usage: UsageView;
   chat: ChatMessageView[];
+  orders: OrderView[];
+  finished: FinishedView[];
 };
 
 export type ServerMessage =
@@ -707,7 +836,12 @@ export type ServerMessage =
   | { type: 'settings'; data: SettingsView }
   | { type: 'usage'; data: UsageView }
   | { type: 'tokens'; data: TokensEvent }
-  | { type: 'chat'; data: ChatMessageView };
+  | { type: 'chat'; data: ChatMessageView }
+  | { type: 'orders'; data: OrderView[] }
+  | { type: 'order'; data: OrderView }
+  | { type: 'checks'; orderId: number; data: CheckRunView }
+  | { type: 'worktrees'; floor: string }
+  | { type: 'finished'; data: FinishedView };
 
 export type ClientMessage =
   | { type: 'auth'; token: string }

@@ -10,6 +10,15 @@ export class FloorInUseError extends Error {
   }
 }
 
+export class FloorDirtyError extends Error {
+  readonly text: HubText;
+
+  constructor(slug: string, readonly slugs: readonly string[]) {
+    super(`La planta ${slug} tiene carpetas de encargos con cambios sin guardar: ${slugs.join(', ')}.`);
+    this.text = { key: 'hub.floors.dirtyWorktrees', params: { slug, orders: slugs.join(', ') } };
+  }
+}
+
 export const FLOOR_TABLES = [
   'events',
   'sessions',

@@ -1,0 +1,421 @@
+import { afterEach, describe, expect, test } from 'bun:test';
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { defaultConfig } from '../src/config';
+import { openDb } from '../src/db';
+import { realPath } from '../src/floors';
+import { runGit } from '../src/git';
+import { OfficeBus } from '../src/office-bus';
+import { OrderStore, type OrderRow } from '../src/order-store';
+import type { ShellResult } from '../src/shell';
+import type { ActivityView, OfficeConfig } from '../src/types';
+import { WorktreeDesk, type WorktreeDeskOpts } from '../src/worktrees';
+import { git, originAndClone, pushCommit, tempDir, useGitIdentity } from './helpers';
+
+useGitIdentity();
+
+type Rig = {
+  desk: WorktreeDesk;
+  store: OrderStore;
+  config: OfficeConfig;
+  repo: string;
+  seed: string;
+  origin: string;
+  root: string;
+  activity: ActivityView[];
+  changed: OrderRow[];
+  clock: { now: number };
+  inside: { paths: string[] };
+};
+
+const cleanups: (() => void)[] = [];
+afterEach(() => {
+  while (cleanups.length > 0) cleanups.pop()?.();
+});
+
+function rig(overrides: Partial<WorktreeDeskOpts> = {}, tweak: (config: OfficeConfig) => void = () => {}): Rig {
+  const { dir, cleanup } = tempDir();
+  cleanups.push(cleanup);
+  const { seed, origin, repo } = originAndClone(dir);
+  const config = defaultConfig();
+  config.floors.mobile = { path: repo, stack: 'generic', managed: true, baseBranch: 'develop' };
+  tweak(config);
+  const db = openDb(':memory:');
+  const store = new OrderStore(db);
+  const bus = new OfficeBus(() => {});
+  const activity: ActivityView[] = [];
+  bus.subscribe((msg) => {
+    if (msg.type === 'activity') activity.push(msg.data);
+  });
+  const changed: OrderRow[] = [];
+  const clock = { now: 1_800_000_000_000 };
+  const inside = { paths: [] as string[] };
+  const desk = new WorktreeDesk({
+    store,
+    git: runGit,
+    now: () => clock.now,
+    bus,
+    config: () => config,
+    hubId: 'hub-test',
+    inside: (path) => inside.paths.includes(path),
+    changed: (order) => changed.push(order),
+    sizeOf: async () => 120,
+    ...overrides,
+  });
+  return { desk, store, config, repo, seed, origin, root: dir, activity, changed, clock, inside };
+}
+
+function order(r: Rig, slug = 'login-a1b2', floor = 'mobile'): OrderRow {
+  return r.store.insert({ slug, floor, title: 'Login', source: 'director', now: r.clock.now });
+}
+
+const created = async (r: Rig, row = order(r)) => {
+  const result = await r.desk.create(row);
+  if (!result.ok) throw new Error(`create failed: ${result.error} ${result.detail}`);
+  await result.ready;
+  return result.order;
+};
+
+describe('create', () => {
+  test('branches from origin/<base> after a fetch, with the marker and the exclude line', async () => {
+    const r = rig();
+    const fresh = pushCommit(r.seed, r.origin, 'nuevo.txt', 'x', 'llega a origin');
+    const made = await created(r);
+    const path = join(realPath(r.repo), '.claude', 'worktrees', 'office-login-a1b2');
+    expect(made).toMatchObject({ branch: 'encargo/login-a1b2', base_ref: 'origin/develop', base_sha: fresh, base_stale: 0, worktree_path: path, worktree_state: 'listo' });
+    expect(git(path, 'rev-parse', 'HEAD')).toBe(fresh);
+    expect(git(path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('encargo/login-a1b2');
+    expect(existsSync(join(path, 'nuevo.txt'))).toBe(true);
+    const adminDir = git(path, 'rev-parse', '--absolute-git-dir');
+    expect(readFileSync(join(adminDir, 'office-hub'), 'utf8').trim()).toBe('hub-test');
+    expect(r.changed.length).toBeGreaterThan(0);
+  });
+
+  test('the exclude line is written once however many folders are created', async () => {
+    const r = rig();
+    await created(r, order(r, 'uno-1111'));
+    await created(r, order(r, 'dos-2222'));
+    const exclude = readFileSync(join(git(r.repo, 'rev-parse', '--absolute-git-dir'), 'info', 'exclude'), 'utf8');
+    expect(exclude.split('\n').filter((line) => line === '/.claude/worktrees/')).toHaveLength(1);
+    expect(git(r.repo, 'status', '--porcelain')).toBe('');
+  });
+
+  test('a failed fetch falls back to the local base and marks it stale', async () => {
+    const r = rig();
+    git(r.repo, 'branch', 'develop-local', 'origin/develop');
+    git(r.repo, 'remote', 'set-url', 'origin', join(r.root, 'does-not-exist.git'));
+    r.config.floors.mobile.baseBranch = 'develop';
+    git(r.repo, 'branch', '-f', 'develop', 'origin/develop');
+    const made = await created(r);
+    expect(made).toMatchObject({ base_ref: 'develop', base_stale: 1 });
+    expect(made.base_sha).toBe(git(r.repo, 'rev-parse', 'develop'));
+  });
+
+  test('a base that does not exist creates nothing', async () => {
+    const r = rig();
+    r.config.floors.mobile.baseBranch = 'no-existe';
+    const result = await r.desk.create(order(r));
+    expect(result).toMatchObject({ ok: false, error: 'base' });
+    expect(git(r.repo, 'branch', '--list', 'encargo/*')).toBe('');
+    expect(existsSync(join(r.repo, '.claude'))).toBe(false);
+    expect(r.store.bySlug('login-a1b2')?.worktree_path).toBeNull();
+  });
+
+  test('an empty repository touches nothing', async () => {
+    const { dir, cleanup } = tempDir();
+    cleanups.push(cleanup);
+    const repo = join(dir, 'vacio');
+    mkdirSync(repo);
+    git(repo, 'init', '-q', '-b', 'develop');
+    const r = rig({}, (config) => {
+      config.floors.mobile.path = repo;
+    });
+    expect(await r.desk.create(order(r))).toMatchObject({ ok: false, error: 'base' });
+    expect(existsSync(join(repo, '.claude'))).toBe(false);
+  });
+
+  test('the cap of active folders per floor stops the next one', async () => {
+    const r = rig({}, (config) => {
+      config.worktrees.maxActivePerFloor = 2;
+    });
+    await created(r, order(r, 'a-1111'));
+    await created(r, order(r, 'b-2222'));
+    expect(await r.desk.create(order(r, 'c-3333'))).toMatchObject({ ok: false, error: 'limit', detail: '2' });
+    const first = r.store.bySlug('a-1111') as OrderRow;
+    r.store.update(first.id, { status: 'hecho' });
+    expect((await r.desk.create(r.store.bySlug('c-3333') as OrderRow)).ok).toBe(true);
+  });
+
+  test('a branch or folder that already exists is refused', async () => {
+    const r = rig();
+    git(r.repo, 'branch', 'encargo/login-a1b2', 'origin/develop');
+    expect(await r.desk.create(order(r))).toMatchObject({ ok: false, error: 'exists' });
+  });
+
+  test('.worktreeinclude copies only literal entries that git ignores', async () => {
+    const r = rig();
+    writeFileSync(join(r.repo, '.gitignore'), '.env\nsecrets/\n');
+    git(r.repo, 'add', '.gitignore');
+    git(r.repo, 'commit', '-q', '-m', 'ignore');
+    git(r.repo, 'push', '-q', 'origin', 'HEAD:develop');
+    writeFileSync(join(r.repo, '.env'), 'TOKEN=1\n');
+    mkdirSync(join(r.repo, 'secrets'));
+    writeFileSync(join(r.repo, 'secrets', 'key.pem'), 'k');
+    writeFileSync(join(r.repo, 'README.md'), '# cambiado\n');
+    writeFileSync(join(r.repo, '.worktreeinclude'), ['# local files', '.env', 'secrets/', 'README.md', '*.pem', '../fuera', '/abs'].join('\n'));
+    const made = await created(r);
+    const path = made.worktree_path as string;
+    expect(readFileSync(join(path, '.env'), 'utf8')).toBe('TOKEN=1\n');
+    expect(readFileSync(join(path, 'secrets', 'key.pem'), 'utf8')).toBe('k');
+    expect(readFileSync(join(path, 'README.md'), 'utf8')).toBe('# app\n');
+  });
+
+  test('linkDirs links a dependency folder of the main copy', async () => {
+    const r = rig({}, (config) => {
+      config.floors.mobile.linkDirs = ['vendor'];
+    });
+    mkdirSync(join(r.repo, 'vendor'));
+    writeFileSync(join(r.repo, 'vendor', 'lib.txt'), 'v');
+    const made = await created(r);
+    const link = join(made.worktree_path as string, 'vendor');
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(readFileSync(join(link, 'lib.txt'), 'utf8')).toBe('v');
+  });
+
+  test('setup runs in the background: preparando, then listo or error with the tail of its output', async () => {
+    let release: (result: ShellResult) => void = () => {};
+    const ran: { command: string; cwd: string }[] = [];
+    const shell = (command: string, opts: { cwd: string }) =>
+      new Promise<ShellResult>((resolve) => {
+        ran.push({ command, cwd: opts.cwd });
+        release = resolve;
+      });
+    const r = rig({ shell }, (config) => {
+      config.floors.mobile.setup = 'make deps';
+    });
+    const result = await r.desk.create(order(r));
+    if (!result.ok) throw new Error('create');
+    expect(result.order.worktree_state).toBe('preparando');
+    expect(ran).toEqual([{ command: 'make deps', cwd: result.order.worktree_path as string }]);
+    release({ code: 0, timedOut: false, cancelled: false, tail: '', durationMs: 1 });
+    expect((await result.ready).worktree_state).toBe('listo');
+
+    const failing = rig(
+      { shell: async () => ({ code: 2, timedOut: false, cancelled: false, tail: 'uno\ndos\nno se pudo resolver', durationMs: 1 }) },
+      (config) => {
+        config.floors.mobile.setup = 'make deps';
+      },
+    );
+    const bad = await failing.desk.create(order(failing));
+    if (!bad.ok) throw new Error('create');
+    const after = await bad.ready;
+    expect(after).toMatchObject({ worktree_state: 'error' });
+    expect(after.setup_error).toContain('no se pudo resolver');
+    expect(failing.store.get(after.id)?.worktree_state).toBe('error');
+  });
+});
+
+describe('byPath', () => {
+  test('finds the order whose folder holds the cwd and nothing else', async () => {
+    const r = rig();
+    const made = await created(r);
+    const path = made.worktree_path as string;
+    expect(r.desk.byPath(path)?.id).toBe(made.id);
+    expect(r.desk.byPath(join(path, 'lib', 'src'))?.id).toBe(made.id);
+    expect(r.desk.byPath(`${path}-otro`)).toBeNull();
+    expect(r.desk.byPath(r.repo)).toBeNull();
+    expect(r.desk.byPath(null)).toBeNull();
+  });
+});
+
+describe('list', () => {
+  test('reports ahead, behind, dirt, size and whether the branch is merged', async () => {
+    const r = rig();
+    const made = await created(r);
+    const path = made.worktree_path as string;
+    writeFileSync(join(path, 'feature.txt'), 'f');
+    git(path, 'add', '.');
+    git(path, 'commit', '-q', '-m', 'trabajo');
+    pushCommit(r.seed, r.origin, 'otro.txt', 'o', 'avanza la base');
+    git(r.repo, 'fetch', '-q', 'origin');
+    writeFileSync(join(path, 'sin-guardar.txt'), 'x');
+    const { worktrees, totalKb } = await r.desk.list('mobile');
+    expect(worktrees).toHaveLength(1);
+    expect(worktrees[0]).toMatchObject({
+      slug: 'login-a1b2',
+      branch: 'encargo/login-a1b2',
+      base: 'origin/develop',
+      ahead: 1,
+      behind: 1,
+      dirty: true,
+      merged: false,
+      sizeKb: 120,
+      state: 'listo',
+      pending: false,
+    });
+    expect(totalKb).toBe(120);
+    expect((await r.desk.list('otra')).worktrees).toEqual([]);
+  });
+
+  test('a branch already in the base is merged, and a hecho one past the retention without a merge waits for a decision', async () => {
+    const r = rig();
+    const merged = await created(r, order(r, 'fusionado-1111'));
+    const open = await created(r, order(r, 'abierto-2222'));
+    writeFileSync(join(open.worktree_path as string, 'f.txt'), 'f');
+    git(open.worktree_path as string, 'add', '.');
+    git(open.worktree_path as string, 'commit', '-q', '-m', 'trabajo');
+    r.store.update(merged.id, { status: 'hecho', updated_at: r.clock.now - 10 * 86_400_000 });
+    r.store.update(open.id, { status: 'hecho', updated_at: r.clock.now - 10 * 86_400_000 });
+    const views = (await r.desk.list('mobile')).worktrees;
+    expect(views.find((v) => v.slug === 'fusionado-1111')).toMatchObject({ merged: true, pending: false });
+    expect(views.find((v) => v.slug === 'abierto-2222')).toMatchObject({ merged: false, pending: true });
+    r.desk.keep(open.id);
+    expect((await r.desk.list('mobile')).worktrees.find((v) => v.slug === 'abierto-2222')).toMatchObject({ pending: false, kept: true });
+  });
+});
+
+describe('remove', () => {
+  test('a merged branch goes with -d and the folder is retired', async () => {
+    const r = rig();
+    const made = await created(r);
+    expect(await r.desk.remove(made.id, { deleteBranch: true, force: false })).toBe('ok');
+    expect(existsSync(made.worktree_path as string)).toBe(false);
+    expect(git(r.repo, 'branch', '--list', 'encargo/*')).toBe('');
+    expect(r.store.get(made.id)).toMatchObject({ worktree_state: 'retirado' });
+    expect(r.desk.byPath(made.worktree_path)).toBeNull();
+    expect(await r.desk.remove(made.id, { deleteBranch: true, force: false })).toBe('not-found');
+  });
+
+  test('an unmerged branch needs force to be deleted, and the folder stays until then', async () => {
+    const r = rig();
+    const made = await created(r);
+    const path = made.worktree_path as string;
+    writeFileSync(join(path, 'f.txt'), 'f');
+    git(path, 'add', '.');
+    git(path, 'commit', '-q', '-m', 'trabajo sin fusionar');
+    expect(await r.desk.remove(made.id, { deleteBranch: true, force: false })).toBe('unmerged');
+    expect(existsSync(path)).toBe(true);
+    expect(await r.desk.remove(made.id, { deleteBranch: false, force: false })).toBe('ok');
+    expect(git(r.repo, 'branch', '--list', 'encargo/*')).toContain('encargo/login-a1b2');
+
+    const other = await created(r, order(r, 'otro-3333'));
+    writeFileSync(join(other.worktree_path as string, 'g.txt'), 'g');
+    git(other.worktree_path as string, 'add', '.');
+    git(other.worktree_path as string, 'commit', '-q', '-m', 'más trabajo');
+    expect(await r.desk.remove(other.id, { deleteBranch: true, force: true })).toBe('ok');
+    expect(git(r.repo, 'branch', '--list', 'encargo/otro-3333')).toBe('');
+  });
+
+  test('a dirty folder needs force, and a folder with a session inside is busy', async () => {
+    const r = rig();
+    const made = await created(r);
+    const path = made.worktree_path as string;
+    writeFileSync(join(path, 'sin-guardar.txt'), 'x');
+    expect(await r.desk.remove(made.id, { deleteBranch: false, force: false })).toBe('dirty');
+    r.inside.paths.push(path);
+    expect(await r.desk.remove(made.id, { deleteBranch: false, force: true })).toBe('busy');
+    expect(existsSync(path)).toBe(true);
+    r.inside.paths.length = 0;
+    expect(await r.desk.remove(made.id, { deleteBranch: false, force: true })).toBe('ok');
+    expect(existsSync(path)).toBe(false);
+  });
+
+  test('a folder somebody deleted by hand is retired without errors', async () => {
+    const r = rig();
+    const made = await created(r);
+    await runGit(r.repo, ['worktree', 'remove', '--force', made.worktree_path as string]);
+    expect(await r.desk.remove(made.id, { deleteBranch: true, force: false })).toBe('ok');
+  });
+
+  test('removeAll retires every folder of a floor and dirtyIn names the ones with unsaved changes', async () => {
+    const r = rig();
+    const a = await created(r, order(r, 'a-1111'));
+    await created(r, order(r, 'b-2222'));
+    writeFileSync(join(a.worktree_path as string, 'x.txt'), 'x');
+    expect(await r.desk.dirtyIn('mobile')).toEqual(['a-1111']);
+    expect(await r.desk.removeAll('mobile', true)).toBe(2);
+    expect(await r.desk.dirtyIn('mobile')).toEqual([]);
+  });
+});
+
+describe('cleanup', () => {
+  test('removes clean folders of this hub that no order owns, and only reports dirty and foreign ones', async () => {
+    const r = rig();
+    const root = join(realPath(r.repo), '.claude', 'worktrees');
+    const make = async (name: string, marker: string | null) => {
+      const path = join(root, name);
+      mkdirSync(root, { recursive: true });
+      git(r.repo, 'worktree', 'add', '-q', '-b', `rama-${name}`, path, 'origin/develop');
+      if (marker) writeFileSync(join(git(path, 'rev-parse', '--absolute-git-dir'), 'office-hub'), `${marker}\n`);
+      return path;
+    };
+    const ownClean = await make('office-huerfano-1', 'hub-test');
+    const ownDirty = await make('office-sucio-2', 'hub-test');
+    writeFileSync(join(ownDirty, 'cambios.txt'), 'x');
+    const foreign = await make('office-ajeno-3', 'otro-hub');
+    const unmarked = await make('office-sin-marca-4', null);
+    const user = join(r.root, 'carpeta-del-usuario');
+    git(r.repo, 'worktree', 'add', '-q', '-b', 'rama-usuario', user, 'origin/develop');
+
+    const owned = await created(r, order(r, 'con-tarjeta-5'));
+    await r.desk.cleanup();
+    expect(existsSync(ownClean)).toBe(false);
+    for (const kept of [ownDirty, foreign, unmarked, user, owned.worktree_path as string]) expect(existsSync(kept)).toBe(true);
+    const note = r.activity.find((a) => typeof a.summary !== 'string' && a.summary.key === 'hub.act.worktreesOrphan');
+    expect(note?.summary).toMatchObject({ params: { n: 3 } });
+    expect(JSON.stringify(note?.summary)).toContain('office-sucio-2');
+  });
+
+  test('a repository without folders of ours is left alone', async () => {
+    const r = rig();
+    await r.desk.cleanup();
+    expect(r.activity).toEqual([]);
+    expect(existsSync(join(r.repo, '.claude'))).toBe(false);
+  });
+});
+
+describe('expire', () => {
+  const DAY = 86_400_000;
+
+  test('retires merged and discarded folders past the retention, keeps dirty ones and counts the unmerged hecho', async () => {
+    const r = rig({}, (config) => {
+      config.worktrees.maxActivePerFloor = 10;
+    });
+    const old = r.clock.now - 10 * DAY;
+    const mergedDone = await created(r, order(r, 'fusionado-1111'));
+    const discarded = await created(r, order(r, 'descartado-2222'));
+    const dirty = await created(r, order(r, 'sucio-3333'));
+    const unmerged = await created(r, order(r, 'sin-fusionar-4444'));
+    const fresh = await created(r, order(r, 'reciente-5555'));
+    writeFileSync(join(dirty.worktree_path as string, 'x.txt'), 'x');
+    writeFileSync(join(unmerged.worktree_path as string, 'f.txt'), 'f');
+    git(unmerged.worktree_path as string, 'add', '.');
+    git(unmerged.worktree_path as string, 'commit', '-q', '-m', 'sin fusionar');
+    r.store.update(mergedDone.id, { status: 'hecho', updated_at: old });
+    r.store.update(discarded.id, { status: 'descartado', updated_at: old });
+    r.store.update(dirty.id, { status: 'descartado', updated_at: old });
+    r.store.update(unmerged.id, { status: 'hecho', updated_at: old });
+    r.store.update(fresh.id, { status: 'hecho', updated_at: r.clock.now - DAY });
+
+    const result = await r.desk.expire();
+    expect(result).toMatchObject({ removed: 2, pending: 1 });
+    expect(existsSync(mergedDone.worktree_path as string)).toBe(false);
+    expect(existsSync(discarded.worktree_path as string)).toBe(false);
+    for (const kept of [dirty, unmerged, fresh]) expect(existsSync(kept.worktree_path as string)).toBe(true);
+    expect(git(r.repo, 'branch', '--list', 'encargo/fusionado-1111')).toBe('');
+    const pending = r.activity.find((a) => typeof a.summary !== 'string' && a.summary.key === 'hub.act.worktreesPending');
+    expect(pending?.summary).toMatchObject({ params: { n: 1, sizeKb: 120 } });
+  });
+
+  test('every folder counts for the total, decided or not, and past the warning it is reported', async () => {
+    const r = rig({ sizeOf: async () => 6 * 1024 * 1024 }, (config) => {
+      config.worktrees.warnTotalGb = 10;
+    });
+    await created(r, order(r, 'a-1111'));
+    await created(r, order(r, 'b-2222'));
+    const result = await r.desk.expire();
+    expect(result.totalKb).toBe(12 * 1024 * 1024);
+    const heavy = r.activity.find((a) => typeof a.summary !== 'string' && a.summary.key === 'hub.act.worktreesHeavy');
+    expect(heavy?.summary).toMatchObject({ params: { gb: 12, max: 10 } });
+  });
+});

@@ -92,6 +92,7 @@ export function main(argv: string[]): void {
       logLine(message);
     });
     office.expireSources().catch((error: unknown) => console.error(`No se pudieron retirar fuentes antiguas: ${(error as Error).message}`));
+    office.expireWorktrees().catch((error: unknown) => console.error(`No se pudieron revisar las carpetas de encargos: ${(error as Error).message}`));
   };
   daily();
   const pruneTimer = setInterval(daily, DAY_MS);

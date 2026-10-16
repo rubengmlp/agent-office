@@ -14,6 +14,7 @@ import { hostAllowed, keyMatches, originAllowed } from './security';
 import type { SettingsService } from './settings';
 import { record, text } from './state-machine';
 import type { ChatKind, ChatPostRequest, ClientMessage, HookMeta, HubText, HubTextKey, PlanDecision, ServerMessage } from './types';
+import type { RemoveResult } from './worktrees';
 
 type WsData = { authed: boolean; timer: ReturnType<typeof setTimeout> | null };
 
@@ -45,6 +46,13 @@ const RELAUNCH_FAILURES: Record<Exclude<RelaunchResult, 'ok'>, { key: HubTextKey
   'no-tmux': { key: 'hub.api.relaunchNoTmux', status: 501 },
   'no-window': { key: 'hub.api.relaunchNoWindow', status: 409 },
   failed: { key: 'hub.api.relaunchFailed', status: 502 },
+};
+const WORKTREE_FAILURES: Record<Exclude<RemoveResult, 'ok'>, { key: HubTextKey; status: 404 | 409 | 500 }> = {
+  'not-found': { key: 'hub.api.worktreeNotFound', status: 404 },
+  busy: { key: 'hub.api.worktreeBusy', status: 409 },
+  dirty: { key: 'hub.api.worktreeDirty', status: 409 },
+  unmerged: { key: 'hub.api.branchUnmerged', status: 409 },
+  failed: { key: 'hub.api.worktreeFailed', status: 500 },
 };
 const PENDING_MESSAGE: HubText = { key: 'hub.api.questionClosed' };
 
@@ -233,8 +241,30 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
   app.delete('/api/floors/:slug', requirePanel, async (c) => {
     if (!opts.floors) return c.json({ ok: false, error: { key: 'hub.api.floorsUnavailable' } }, 503);
     holdRequest(c.req.raw);
-    const result = await opts.floors.remove(c.req.param('slug') ?? '');
+    const result = await opts.floors.remove(c.req.param('slug') ?? '', c.req.query('force') === '1');
     return c.json(result, result.ok ? 200 : result.status);
+  });
+
+  app.get('/api/worktrees', requirePanel, async (c) => c.json(await office.listWorktrees(c.req.query('floor') || undefined)));
+
+  app.post('/api/worktrees/prune', requirePanel, async (c) => {
+    holdRequest(c.req.raw);
+    return c.json(await office.pruneWorktrees());
+  });
+
+  app.post('/api/worktrees/:orderId/keep', requirePanel, (c) => {
+    const id = idOf(c.req.param('orderId'));
+    return id !== null && office.keepWorktree(id) ? c.json({ ok: true }) : c.json({ error: { key: 'hub.api.worktreeNotFound' } }, 404);
+  });
+
+  app.delete('/api/worktrees/:orderId', requirePanel, async (c) => {
+    const id = idOf(c.req.param('orderId'));
+    if (id === null) return c.json({ error: { key: 'hub.api.badId' } }, 400);
+    holdRequest(c.req.raw);
+    const result = await office.removeWorktree(id, { deleteBranch: c.req.query('branch') === '1', force: c.req.query('force') === '1' });
+    if (result === 'ok') return c.json({ ok: true });
+    const failure = WORKTREE_FAILURES[result];
+    return c.json({ error: { key: failure.key } }, failure.status);
   });
 
   app.get('/api/memory/:floor/:role', requirePanel, (c) => {

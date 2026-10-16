@@ -1,7 +1,7 @@
 import { TemplateError } from './agents';
 import { loadConfig, type Paths } from './config';
 import { FloorConflictError, FloorError, checkSlug, planFloor, purgeFloor, writeFloor } from './floor-cli';
-import { FloorInUseError } from './floor-data';
+import { FloorDirtyError, FloorInUseError } from './floor-data';
 import { realPath } from './floors';
 import type { Office } from './office';
 import type { Profiles } from './profiles';
@@ -12,7 +12,7 @@ const MAX_PATH = 1000;
 
 export type FloorAdmin = {
   add(raw: unknown): FloorAddResult;
-  remove(slug: string): Promise<FloorRemoveResult>;
+  remove(slug: string, force?: boolean): Promise<FloorRemoveResult>;
 };
 
 export type FloorOffice = Pick<Office, 'floorInUse' | 'forgetFloor'>;
@@ -81,7 +81,7 @@ export function createFloorAdmin(
       }
     },
 
-    async remove(slug) {
+    async remove(slug, force = false) {
       try {
         checkSlug(slug);
       } catch (error) {
@@ -95,12 +95,12 @@ export function createFloorAdmin(
       // Data first, config last: while the floor is still in config.json, a failure halfway is fixed by repeating the DELETE.
       removing.add(slug);
       try {
-        const { rows, worktrees } = await office.forgetFloor(slug, realPath(floor.path));
+        const { rows, worktrees } = await office.forgetFloor(slug, realPath(floor.path), force);
         const files = purgeFloor(p, profiles(), slug).length;
         reload();
         return { ok: true, slug, removed: { files, rows, worktrees } };
       } catch (error) {
-        if (error instanceof FloorInUseError) return fail(409, error.text);
+        if (error instanceof FloorInUseError || error instanceof FloorDirtyError) return fail(409, error.text);
         if (error instanceof FloorError) return fail(404, error.text ?? error.message);
         return fail(500, (error as Error).message);
       } finally {
