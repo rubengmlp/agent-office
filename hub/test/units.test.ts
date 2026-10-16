@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
-import { readFileSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { CONFIG_VERSION, DEFAULT_ROLES, PROFILES_DIR, createIdIfMissing, createKeyIfMissing, defaultConfig, loadConfig, migrateConfig, normalizeConfig, roleSettingsFor, saveConfig } from '../src/config';
+import { CONFIG_VERSION, DEFAULT_ROLES, PROFILES_DIR, createIdIfMissing, createKeyIfMissing, defaultConfig, loadConfig, migrateConfig, normalizeConfig, roleSettingsFor, rotateKey, saveConfig, writeHeaders } from '../src/config';
 import { configTargets, watchTargets } from '../src/config-watch';
 import { openDb } from '../src/db';
 import { decideGate, decideReadCap, decideReviewGate, planByteLimit, type ReviewGateFacts } from '../src/gate';
@@ -156,6 +156,24 @@ describe('config', () => {
     expect(statSync(p.key).mode & 0o777).toBe(0o600);
     saveConfig(p, loadConfig(p));
     expect(statSync(p.config).mode & 0o777).toBe(0o600);
+    cleanup();
+  });
+
+  test('the headers file carries the key with private permissions on create, rotate and every write', () => {
+    const { dir, cleanup } = tempDir();
+    const p = fakePaths(dir);
+    const { key } = createKeyIfMissing(p);
+    expect(readFileSync(p.headers, 'utf8')).toBe(`X-Office-Key: ${key}\n`);
+    expect(statSync(p.headers).mode & 0o777).toBe(0o600);
+    const rotated = rotateKey(p);
+    expect(rotated).not.toBe(key);
+    expect(readFileSync(p.headers, 'utf8')).toBe(`X-Office-Key: ${rotated}\n`);
+    chmodSync(p.headers, 0o644);
+    writeHeaders(p, rotated);
+    expect(statSync(p.headers).mode & 0o777).toBe(0o600);
+    writeFileSync(p.headers, 'viejo\n');
+    expect(createKeyIfMissing(p)).toEqual({ key: rotated, created: false });
+    expect(readFileSync(p.headers, 'utf8')).toBe(`X-Office-Key: ${rotated}\n`);
     cleanup();
   });
 

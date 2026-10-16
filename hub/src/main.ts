@@ -9,6 +9,7 @@ import {
   loadConfig,
   paths,
   readKey,
+  writeHeaders,
   writePortFile,
   type Paths,
 } from './config';
@@ -40,6 +41,7 @@ export function main(argv: string[]): void {
     console.error('No hay key de Agent Office. Ejecuta primero: bun run setup');
     process.exit(1);
   }
+  writeHeaders(p, key);
   // An install updated without going through setup again has no id yet: without it, it could not mark its snapshots.
   const { id: hubId } = createIdIfMissing(p);
   let config = loadConfig(p);

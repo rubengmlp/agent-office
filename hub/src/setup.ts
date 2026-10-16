@@ -31,7 +31,7 @@ async function setup(argv: string[]): Promise<void> {
   if (argv.includes('--rotate-key')) {
     rotateKey(p);
     console.log(`Key nueva en ${p.key}.`);
-    console.log('Reinicia el hub y recarga la pestaña de la oficina. Los hooks leen la key en cada evento, así que las sesiones abiertas siguen funcionando.');
+    console.log('Reinicia el hub y abre el panel con bun run panel: los enlaces y tokens del panel anteriores dejan de valer. Los hooks leen la key del fichero de cabeceras en cada evento, así que las sesiones abiertas siguen funcionando.');
     return;
   }
   const yes = argv.includes('--yes');

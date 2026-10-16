@@ -32,6 +32,7 @@ export type Paths = {
   agentsDir: string;
   skillsDir: string;
   key: string;
+  headers: string;
   id: string;
   config: string;
   port: string;
@@ -50,6 +51,7 @@ export function paths(env: Record<string, string | undefined> = process.env): Pa
     agentsDir: join(claudeHome, 'agents'),
     skillsDir: join(claudeHome, 'skills'),
     key: join(home, 'key'),
+    headers: join(home, 'headers'),
     id: join(home, 'id'),
     config: join(home, 'config.json'),
     port: join(home, 'port'),
@@ -330,12 +332,21 @@ export function readKey(p: Paths): string | null {
   }
 }
 
+export function writeHeaders(p: Paths, key: string): void {
+  ensureHome(p);
+  writeAtomic(p.headers, `X-Office-Key: ${key}\n`);
+}
+
 export function createKeyIfMissing(p: Paths): { key: string; created: boolean } {
   const existing = readKey(p);
-  if (existing) return { key: existing, created: false };
+  if (existing) {
+    writeHeaders(p, existing);
+    return { key: existing, created: false };
+  }
   ensureHome(p);
   const key = randomBytes(32).toString('hex');
   writeAtomic(p.key, `${key}\n`);
+  writeHeaders(p, key);
   return { key, created: true };
 }
 
@@ -362,6 +373,7 @@ export function rotateKey(p: Paths): string {
   ensureHome(p);
   const key = randomBytes(32).toString('hex');
   writeAtomic(p.key, `${key}\n`);
+  writeHeaders(p, key);
   return key;
 }
 
