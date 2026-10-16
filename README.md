@@ -2,7 +2,9 @@
 
 Oficina visual para los agentes de Claude Code. Cada repositorio es una planta; en ella se ve quién trabaja, quién pregunta, quién está bloqueado y quién pasa los tests. Un director reparte el trabajo entre los jefes de planta, cada jefe dirige su equipo (desarrollador, tester, revisor) y desde el panel puedes contestar preguntas y dar órdenes.
 
-El diseño aprobado está en [docs/plan.md](docs/plan.md) y los resultados de los spikes en [docs/spikes.md](docs/spikes.md).
+Dos departamentos completan la oficina: **Redacción** escribe planes que un revisor nuevo devuelve ronda a ronda hasta aprobarlos, y **Mantenimiento**, en un edificio anexo, crea skills de Claude Code y las instala donde decidas. Cada rol tiene su modelo y su esfuerzo, elegidos en la pestaña Ajustes, y cada agente tiene un informe de lo que ha hecho y una memoria de lecciones que hereda quien ocupe su puesto.
+
+Diseños aprobados: [v1](docs/plan.md) y [v2](docs/plan-v2.md). Resultados de los spikes: [docs/spikes.md](docs/spikes.md). Personajes 3D: [docs/assets.md](docs/assets.md).
 
 ## Requisitos
 
@@ -16,7 +18,7 @@ El diseño aprobado está en [docs/plan.md](docs/plan.md) y los resultados de lo
 bun install
 bun run setup      # key, configuración, plugin y plantas
 bun run build      # compila la interfaz en hub/public
-bun run office     # hub + oficina en el navegador + sesiones del director y los jefes
+bun run office     # hub + oficina en el navegador + sesiones del director, los jefes y los departamentos
 ```
 
 `bun run setup` pregunta antes de cada paso con efecto fuera del repositorio:
@@ -24,6 +26,8 @@ bun run office     # hub + oficina en el navegador + sesiones del director y los
 - Crea `~/.config/agent-office/` con la key (permisos 600), `config.json` y el puerto.
 - Registra este repositorio como marketplace local e instala el plugin `office` a nivel de usuario. Sus hooks se ejecutan en todas tus sesiones de Claude Code; si el hub no está arrancado, salen al momento sin escribir nada. Un marketplace de directorio local lee el plugin en vivo: un cambio en `plugin/` vale en la siguiente sesión o tras `/reload-plugins`.
 - Ofrece convertir `~/Projects/mobile` y `~/Projects/backend` en plantas gestionadas, lo que escribe tres agentes por planta en `~/.claude/agents/`.
+- Crea el repositorio de documentos `~/Projects/office-docs` (`docsRepo` en `config.json`) con `redaccion/planes/` y `taller/skills/`, y un primer commit.
+- Escribe en `~/.claude/agents/office-*.md` todos los agentes de la oficina (director, revisor y departamentos incluidos) con el modelo y el esfuerzo de su rol. Una configuración de v1 se completa con los valores por defecto sin perder sus plantas.
 
 Aparte de las dos entradas que escribe `claude plugin` en `~/.claude/settings.json`, el marketplace en `extraKnownMarketplaces` y el plugin en `enabledPlugins`, no toca tu configuración. Agent teams y la caché de una hora se activan solo en las sesiones que abre `office.sh`.
 
@@ -42,26 +46,67 @@ bun run floor remove mobile                     # vuelve a observada y borra sus
 bun run floor list
 ```
 
-Los perfiles por stack (skill, comandos de test y de revisión) están en `plugin/profiles/` y las plantillas de los agentes en `plugin/templates/`.
+Los perfiles por stack (skill, comandos de test y de revisión) están en `plugin/profiles/` y las plantillas de los agentes en `plugin/templates/`. Cada planta gestionada tiene una rama base (`baseBranch`, por defecto `develop` si existe en `origin`) que es la que lee Redacción.
+
+## Ajustes: modelo y esfuerzo por rol
+
+La pestaña **Ajustes** edita `config.json`: el modelo (`opus`, `sonnet`, `haiku`, `fable`, `inherit` o un id completo) y el esfuerzo (`low` a `max`) de cada rol, los departamentos activos, el número máximo de rondas de revisión, los topes de la memoria y la rama base de cada planta. Al guardar, el hub regenera los agentes de `~/.claude/agents/` y los lanzadores; vale para las sesiones y los equipos nuevos, y las sesiones abiertas siguen igual hasta que las reinicias con `bun run office`.
+
+| Rol | Por defecto |
+|---|---|
+| Director | opus · high |
+| Jefes (plantas y departamentos) | sonnet · medium |
+| Desarrolladores | opus · medium |
+| Testers y revisores de código | sonnet · medium |
+| Redactores | opus · high |
+| Revisores de planes | sonnet · xhigh |
+| Artesanos de skills | sonnet · medium |
+| Revisores de skills | opus · medium |
+
+Los lanzadores pasan además `--model` y `--effort` al director y a los jefes, y los jefes no nombran modelo al lanzar compañeros: manda el agente generado.
+
+## Departamentos
+
+**Redacción** (`lead-redaccion`, en `office-docs/redaccion`):
+
+1. El director o tú le encargáis un plan. El jefe prepara las fuentes con `plugin/scripts/office-sync.sh <slug> <planta>…`: el hub hace `git fetch` de la rama base de cada planta y crea un worktree desacoplado en `redaccion/.fuentes/<slug>/<planta>/`. Nunca hace `pull` ni `checkout` en tu copia de trabajo.
+2. El redactor escribe `redaccion/planes/<slug>.md` y pide `REVISAR:`. Un revisor nuevo por ronda contesta `MEJORAR:` con puntos `bloqueante:` o `menor:`, `APROBADO:` cuando no quedan bloqueantes o `SIN ACUERDO:` en la última ronda.
+3. El hub hace un commit del plan en `office-docs` en cada ronda, con `git commit --only` para no arrastrar lo que tengas preparado.
+4. El `HECHO:` del redactor y el del jefe solo salen si hay un `APROBADO:` de esa ruta posterior al último cambio del fichero. Al entregar, el hub retira los worktrees; tras la aprobación avisa si la rama base ha avanzado.
+
+**Mantenimiento** (`lead-mantenimiento`, en `office-docs/taller`, edificio anexo):
+
+1. El jefe comprueba que el nombre de la skill está libre y lanza un artesano, que la escribe con la skill `skill-creator` en `taller/skills/<nombre>/`.
+2. Mismo bucle de rondas con un revisor de skills, que además lee los scripts incluidos.
+3. Con la aprobación, el jefe te pregunta dónde instalarla (`~/.claude/skills/<nombre>` o `.claude/skills/<nombre>` de una planta) y copia solo esa carpeta.
+
+Los lanzadores de los departamentos comprueban `GET /health` y no abren la sesión sin hub, porque sin hub no hay guardia.
+
+## Memoria e informes
+
+- Un agente que aprende algo envía `LECCIÓN: …` a su jefe. El hub la guarda para la pareja planta y rol, sin duplicados y con tope por sesión, y poda las más antiguas de origen agente; las que añades desde el panel no se podan.
+- Al arrancar, cada agente de la oficina recibe por hook las lecciones de su puesto y una línea de cada uno de los tres últimos informes, como contexto y con un tope de caracteres.
+- El panel muestra el **Informe** del agente seleccionado (ficheros, tests, veredictos, mensajes, preguntas, bloqueos, lecciones y cierre) y la **Memoria** de su puesto, donde puedes añadir y borrar lecciones.
 
 ## Uso
 
-- La oficina vive en <http://127.0.0.1:4747>. Pestañas **Oficina** (PixiJS) y **Tabla**; el panel de la derecha muestra el agente seleccionado.
+- La oficina vive en <http://127.0.0.1:4747>. Pestañas **Oficina**, **Tabla** y **Ajustes**; el panel de la derecha muestra el agente seleccionado. La oficina 3D está en <http://127.0.0.1:4747/?view=3d>; la 2D (PixiJS) sigue siendo la vista por defecto hasta que la 3D esté a la par.
+- **Entregables**: al seleccionar un agente de Redacción o Mantenimiento, el panel lista sus planes o skills con estado, ronda, nota, base y avance de la rama, y los abre en un visor de markdown.
 - **Preguntas**: con la pestaña visible, las `AskUserQuestion` de las sesiones de la oficina se retienen en el panel en vez de salir en la terminal. "Devolver al terminal" las suelta al momento. Con la pestaña oculta o cerrada salen en la terminal como siempre.
 - **Órdenes**: el cuadro de órdenes escribe en el inbox de la sesión elegida (por defecto el director). Llegan con el prefijo `[Agent Office]`.
 - **Puerta de tests**: el jefe de planta avisa al director con un mensaje que empieza por `HECHO:`. Si el desarrollador cambió ficheros y no hay tests en verde de un tester de la planta posteriores, el mensaje no sale y el jefe recibe el motivo. Con herramientas de tareas, completar una tarea pasa por la misma comprobación.
 - **Bloqueos**: un agente que envía `BLOQUEADO: <qué falta> — necesito <qué> de <quién>` se pinta bloqueado hasta que vuelve a trabajar. Una pregunta sin respuesta durante 5 minutos también.
-- **Demo sin sesiones**: <http://127.0.0.1:4747/?replay=/replays/demo.json>.
+- **Demo sin sesiones**: <http://127.0.0.1:4747/?replay=/replays/demo.json> (añade `&view=3d` para la 3D).
 
 ## Arquitectura
 
 ```
-plugin/   plugin "office": hooks (emit.sh, gate.sh), director, revisor, protocolo, perfiles y plantillas
-hub/      Bun + Hono + SQLite: recibe los hooks, calcula el estado de cada agente y lo emite por WebSocket
-ui/       Vite + TypeScript + PixiJS: tabla, oficina, panel y replay
+plugin/   plugin "office": hooks (emit.sh, gate.sh, guard.sh), office-sync.sh, protocolo, perfiles y plantillas de todos los agentes
+hub/      Bun + Hono + SQLite: estado de los agentes, puertas, guardia, memoria, informes, documentos y fuentes de Redacción
+ui/       Vite + TypeScript: tabla, oficina 2D (PixiJS) y 3D (Three.js), panel, ajustes y replay
 ```
 
-Cada hook ejecuta `plugin/hooks/emit.sh`, que hace POST del evento al hub con `curl -m 2` y reenvía en cabeceras el socket y el token de mensajería de la sesión. `AskUserQuestion` usa el mismo script contra `/ask`, que puede esperar hasta 15 minutos. `TaskCompleted` usa `gate.sh`, que sale con código 2 y el motivo cuando el hub bloquea el cierre.
+Cada hook ejecuta `plugin/hooks/emit.sh`, que hace POST del evento al hub con `curl -m 2`, reenvía en cabeceras el socket y el token de mensajería de la sesión e imprime la respuesta del hub cuando la hay (la memoria de `SessionStart` y `SubagentStart`). `AskUserQuestion` usa el mismo script contra `/ask`, que puede esperar hasta 15 minutos. `gate.sh` comprueba los `HECHO:` y `guard.sh` las escrituras de los departamentos; los dos salen con código 2 y el motivo cuando el hub bloquea, y con 0 si el hub no responde.
 
 ### Seguridad
 
@@ -71,14 +116,17 @@ Una orden del panel acaba en una sesión con Bash, así que el hub se trata como
 - Todo POST exige `X-Office-Key`. La key solo viaja dentro del HTML que sirve el propio hub; no hay CORS.
 - El WebSocket comprueba `Origin` y exige la key en el primer mensaje antes de 1 segundo.
 - Key y base de datos con permisos 600. `bun run rotate-key` genera otra; los hooks la leen en cada evento.
+- **Guardia de los departamentos.** Redacción solo escribe en `office-docs/redaccion` (nunca en `.fuentes/`) y Mantenimiento en `office-docs/taller`, salvo el jefe de Mantenimiento al instalar una skill aprobada. Para Edit y Write la regla es exacta. Para Bash es parcial: detecta rutas escritas en el comando, pero no `cd`, variables ni scripts que escriben por su cuenta. Como red de seguridad, el hub guarda una huella de los ficheros que `git status` lista en cada planta gestionada mientras trabaja un agente de departamento y, al acabar su turno, avisa en el panel de los cambios que no puede atribuir a un Edit o Write de la planta: **alerta** si nadie de la planta trabajaba y **posible** si alguien sí.
 
 ### Privacidad
 
-En plantas observadas el hub guarda solo estado, herramienta y ruta; nunca el contenido de las herramientas ni los mensajes. Los eventos se borran a los 14 días (`retentionDays` en `config.json`).
+En plantas observadas el hub guarda solo estado, herramienta y ruta; nunca el contenido de las herramientas ni los mensajes, y no hay memoria ni lecciones. Los eventos se borran a los 14 días (`retentionDays` en `config.json`). Las lecciones, los informes y los veredictos de los documentos se conservan: desde el esquema v2 las migraciones de la base de datos solo añaden tablas o columnas.
 
 ## Probado en vivo
 
-El 2026-10-15, con Claude Code 2.1.292, en una planta de pruebas y en mobile y backend con tareas de solo lectura. Funcionaron la observación de sesiones, el equipo con desarrollador y tester, la puerta con `HECHO:` en ambos sentidos, las preguntas en el panel y su vuelta a la terminal, las órdenes desde el panel, el bloqueo y su respuesta, el encargo del director a una planta, la promoción de una planta en caliente y el hub apagado. Los detalles están en [docs/spikes.md](docs/spikes.md).
+La v2 (Ajustes, memoria, departamentos, guardia y oficina 3D) está pendiente de prueba en vivo.
+
+La v1 se probó el 2026-10-15, con Claude Code 2.1.292, en una planta de pruebas y en mobile y backend con tareas de solo lectura. Funcionaron la observación de sesiones, el equipo con desarrollador y tester, la puerta con `HECHO:` en ambos sentidos, las preguntas en el panel y su vuelta a la terminal, las órdenes desde el panel, el bloqueo y su respuesta, el encargo del director a una planta, la promoción de una planta en caliente y el hub apagado. Los detalles están en [docs/spikes.md](docs/spikes.md).
 
 ## Desarrollo
 

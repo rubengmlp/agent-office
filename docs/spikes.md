@@ -87,3 +87,27 @@ brew upgrade --cask claude-code
 ## Pendiente
 
 - Probar plantas reales (mobile y backend) con tareas que editen, cuando convenga.
+
+# v2: spikes de la fase 0 (2026-10-16)
+
+## 1. Personajes 3D
+
+- El botón de descarga de quaternius.com lleva a Google Drive, que devolvía "cuota superada". Los once personajes de **Ultimate Modular Men** se bajaron como GLB sueltos de poly.pizza, que los publica con licencia CC0, como la página del pack. Están en `ui/public/assets/characters/quaternius/` con su `LICENSE.txt`.
+- Los once comparten un esqueleto `CharacterArmature` de 62 huesos y los mismos 24 clips (`CharacterArmature|Idle`, `Walk`, `Wave`, `Interact`, `HitRecieve`…). No hay clips de sentarse ni de teclear: la oficina usa mesas altas y mueve antebrazos y muñecas por código encima de `Idle` o `Interact`.
+
+## 1b. `skill-creator`
+
+Además de `<nombre>/SKILL.md`, deja una carpeta hermana `<nombre>-workspace/` y una carpeta `evals/` dentro de la skill. `documents.ts` solo cuenta carpetas de `taller/skills/` con `SKILL.md`, la referencia de cambio de una skill no mira `evals/`, `office-docs/.gitignore` ignora las dos y la instalación copia la skill sin `evals/`.
+
+## 3. `git fetch` desde el hub
+
+Un `git fetch origin develop` lanzado por un proceso en segundo plano, como el hub en tmux, funciona sin intervención con el helper `osxkeychain` sobre HTTPS y tarda alrededor de un segundo en mobile. Quedan por medir en vivo el tiempo de `git worktree add --detach` de mobile y la guardia con un redactor real.
+
+## Equipo y tipo de un compañero
+
+El `config.json` del equipo ya lista al compañero con su `agentType` cuando llega su `SubagentStart`. La resolución del rol usa, por orden: el `agent_type` del evento si ya es un tipo `office-…`, el `config.json` del equipo, la llamada `Agent` con el mismo nombre y el prefijo del nombre.
+
+## Pendiente de la v2
+
+- Spike 2 en vivo: dos compañeros lanzados a la vez reciben cada uno su memoria por `additionalContext` y la citan.
+- Spike 4: en `/status`, qué gana cuando el `--model` del lanzador y el `model:` del agente no coinciden, y si `--effort` se aplica. Los lanzadores pasan los mismos valores que el agente generado, así que el choque solo aparece si se editan a mano.
