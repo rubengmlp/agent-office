@@ -73,7 +73,7 @@ const BASE: Activity = {
 };
 
 const UP = new Vector3(0, 1, 0);
-const LABEL_HEIGHT = 2.02;
+const LABEL_HEIGHT = 1.95;
 const HEAD_HEIGHT = 1.62;
 
 const ROLE_SHIRTS: Partial<Record<RoleKind, number>> = {

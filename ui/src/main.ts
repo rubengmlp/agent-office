@@ -4,8 +4,7 @@ import { OfficeApi } from './api';
 import { el } from './dom';
 import { Heartbeat } from './heartbeat';
 import { LiveConnection } from './live';
-import { mountOffice, type OfficeHandle } from './office/office';
-import { mountScene } from './scene/scene';
+import type { OfficeHandle } from './office/office';
 import { mountSettings } from './settings/settings';
 import { mountPanel } from './panel/panel';
 import { loadRecording, mountReplayControls, ReplayPlayer } from './replay';
@@ -66,7 +65,11 @@ function boot(): void {
   mountSettings(settingsHost, store, api);
   mountToasts(toastHost, store);
 
-  (view === '3d' ? mountScene(officeHost, store) : mountOffice(officeHost, store))
+  const mountView: Promise<OfficeHandle> =
+    view === '3d'
+      ? import('./scene/scene').then((module) => module.mountScene(officeHost, store))
+      : import('./office/office').then((module) => module.mountOffice(officeHost, store));
+  mountView
     .then((handle) => {
       office = handle;
       handle.setActive(tab === 'office');

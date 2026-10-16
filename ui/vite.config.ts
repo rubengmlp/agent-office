@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,9 +25,29 @@ function officeKey(): Plugin {
   };
 }
 
+function customModels(): Plugin {
+  return {
+    name: 'office-custom-models',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use('/assets/characters/custom/index.json', (_req, res) => {
+        let names: string[] = [];
+        try {
+          names = readdirSync(join(root, 'public', 'assets', 'characters', 'custom'))
+            .filter((name) => /^[A-Za-z0-9_-]+\.glb$/.test(name))
+            .sort();
+        } catch {}
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Cache-Control', 'no-store');
+        res.end(JSON.stringify(names));
+      });
+    },
+  };
+}
+
 export default defineConfig({
   root,
-  plugins: [officeKey()],
+  plugins: [officeKey(), customModels()],
   build: {
     outDir: '../hub/public',
     emptyOutDir: true,

@@ -916,7 +916,7 @@ textarea {
 
 .settings-view {
   overflow: auto;
-  padding: 16px;
+  padding: 16px 16px 0;
 }
 
 .settings {
@@ -1113,7 +1113,7 @@ input.setting-branch {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px 0;
+  padding: 12px 0 16px;
   border-top: 1px solid var(--border);
   background: var(--bg);
 }

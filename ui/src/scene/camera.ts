@@ -3,6 +3,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 export type FloorButton = { slug: string; label: string; accent: string; annex: boolean };
 
+export const OVERVIEW = '';
+
 export type CameraCallbacks = {
   onFloor(slug: string): void;
   onOverview(): void;
@@ -33,6 +35,7 @@ export class CameraRig {
   private floorsSignature = '';
   private activeSlug: string | null = null;
   private hasView = false;
+  preset: string | null = null;
 
   constructor(
     overlay: HTMLElement,
@@ -94,6 +97,7 @@ export class CameraRig {
     if (!this.hasView && !box.isEmpty()) {
       this.hasView = true;
       this.focusBox(box, { duration: 0 });
+      this.preset = OVERVIEW;
     }
   }
 
@@ -186,6 +190,7 @@ export class CameraRig {
   follow(key: string, name: string): void {
     this.followKey = key;
     this.tween = null;
+    this.preset = null;
     this.followName.textContent = name;
     this.followBox.hidden = false;
   }
@@ -240,5 +245,6 @@ export class CameraRig {
 
   private readonly onStart = (): void => {
     this.tween = null;
+    this.preset = null;
   };
 }

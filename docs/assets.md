@@ -37,7 +37,7 @@ El GLB tiene que traer estos clips, con estos nombres: `idle`, `walk`, `sit`, `t
      idle=Idle.fbx walk=Walking.fbx sit=Sitting.fbx type=Typing.fbx talk=Talking.fbx wave=Waving.fbx think=Thinking.fbx
    ```
 
-5. Recarga la oficina con `?view=3d`.
+5. Ejecuta `bun run build` para copiarlo al hub (con `bun run dev:ui` no hace falta) y recarga la oficina con `?view=3d`. El hub publica la lista de modelos de `custom/` en `/assets/characters/custom/index.json`.
 
 Los personajes y animaciones de Mixamo se pueden usar en tus proyectos, pero no redistribuir como pack. Por eso `custom/` está en `.gitignore`: cada persona descarga los suyos.
 

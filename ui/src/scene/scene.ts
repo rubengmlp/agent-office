@@ -26,7 +26,7 @@ import type { AgentView, FloorView } from '../types';
 import { AssetLibrary, loadManifest } from './assets';
 import { disposeBatchMaterials } from './batch';
 import { Site } from './buildings';
-import { CameraRig } from './camera';
+import { CameraRig, OVERVIEW } from './camera';
 import { Character } from './characters';
 import {
   CLEAR_H,
@@ -171,7 +171,7 @@ class OfficeScene {
 
     this.cameraRig = new CameraRig(this.ui, renderer.domElement, {
       onFloor: (slug) => this.focusFloor(slug),
-      onOverview: () => this.cameraRig.focusBox(this.site.bounds),
+      onOverview: () => this.focusOverview(),
       onStopFollow: () => this.cameraRig.stopFollow(),
     });
     this.picker = new Picker(renderer.domElement, this.cameraRig.camera, () => this.pickTargets(), {
@@ -298,6 +298,7 @@ class OfficeScene {
     if (this.site.update(floors, mainWidth, annexWidth)) {
       this.cameraRig.setBounds(this.site.bounds);
       this.fitShadows();
+      this.reframe();
     }
     this.cameraRig.setFloors(
       this.site.floors.map((room) => ({
@@ -522,6 +523,19 @@ class OfficeScene {
     if (!box) return;
     this.cameraRig.stopFollow();
     this.cameraRig.focusBox(box, { azimuth: 0.16, elevation: 0.16, margin: 1.02 });
+    this.cameraRig.preset = slug;
+  }
+
+  private focusOverview(): void {
+    this.cameraRig.stopFollow();
+    this.cameraRig.focusBox(this.site.bounds);
+    this.cameraRig.preset = OVERVIEW;
+  }
+
+  private reframe(): void {
+    const preset = this.cameraRig.preset;
+    if (preset === OVERVIEW) this.focusOverview();
+    else if (preset !== null && this.site.room(preset)) this.focusFloor(preset);
   }
 
   private floorAt(point: Vector3): string | null {

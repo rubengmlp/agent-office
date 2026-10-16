@@ -174,6 +174,7 @@ export type BuildingKit = {
   sidewalk: MeshStandardMaterial;
   liftPad: MeshStandardMaterial;
   rooftop: MeshStandardMaterial;
+  chrome: MeshStandardMaterial;
 };
 
 let buildingKitCache: BuildingKit | null = null;
@@ -209,6 +210,7 @@ export function buildingKit(): BuildingKit {
     sidewalk: std(0x7d838b, 0.9),
     liftPad: std(0x9aa3ad, 0.35, 0.7),
     rooftop: std(0x8b9098, 0.55, 0.4),
+    chrome: std(0xd7dbe0, 0.22, 0.95),
   };
   return buildingKitCache;
 }

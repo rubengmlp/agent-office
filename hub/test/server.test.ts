@@ -81,6 +81,16 @@ describe('hub server', () => {
     expect((await fetch(`${base}/app.js`)).status).toBe(200);
   });
 
+  test('the custom character index lists only the GLB files of the custom folder', async () => {
+    const custom = join(h.root, 'public', 'assets', 'characters', 'custom');
+    mkdirSync(custom, { recursive: true });
+    writeFileSync(join(custom, 'dev.glb'), 'glb');
+    writeFileSync(join(custom, 'notas.txt'), 'x');
+    const res = await fetch(`${base}/assets/characters/custom/index.json`);
+    expect(res.headers.get('content-type')).toContain('application/json');
+    expect(await res.json()).toEqual(['dev.glb']);
+  });
+
   test('nothing outside the public folder is served', async () => {
     expect((await fetch(`${base}/%2e%2e/%2e%2e/etc/passwd`)).status).toBe(404);
     expect((await fetch(`${base}/missing.js`)).status).toBe(404);

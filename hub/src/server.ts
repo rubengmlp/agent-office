@@ -1,4 +1,4 @@
-import { readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, normalize, resolve, sep } from 'node:path';
 import type { Server, ServerWebSocket } from 'bun';
 import { Hono, type Context, type Next } from 'hono';
@@ -232,8 +232,25 @@ export function startServer(opts: ServerOptions): RunningServer {
   };
 }
 
+export const CUSTOM_MODELS_INDEX = '/assets/characters/custom/index.json';
+
+export function customModels(publicDir: string): string[] {
+  try {
+    return readdirSync(join(publicDir, 'assets', 'characters', 'custom'))
+      .filter((name) => /^[A-Za-z0-9_-]+\.glb$/.test(name))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
 function serveStatic(path: string, opts: ServerOptions): Response {
   if (path === '/' || path === '/index.html') return indexResponse(opts);
+  if (path === CUSTOM_MODELS_INDEX) {
+    return new Response(JSON.stringify(customModels(opts.publicDir)), {
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+    });
+  }
   const root = resolve(opts.publicDir);
   let decoded: string;
   try {

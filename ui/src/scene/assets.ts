@@ -181,14 +181,14 @@ export async function loadManifest(url: string): Promise<Manifest> {
   }
 }
 
-async function exists(url: string): Promise<boolean> {
+async function listCustom(url: string): Promise<Set<string>> {
   try {
-    const response = await fetch(url, { method: 'HEAD', headers: { Accept: 'model/gltf-binary' }, cache: 'no-store' });
-    if (!response.ok) return false;
-    const type = response.headers.get('content-type') ?? '';
-    return !type.includes('text/html');
+    const response = await fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-store' });
+    if (!response.ok || (response.headers.get('content-type') ?? '').includes('text/html')) return new Set();
+    const names: unknown = await response.json();
+    return new Set(Array.isArray(names) ? names.filter((name): name is string => typeof name === 'string') : []);
   } catch {
-    return false;
+    return new Set();
   }
 }
 
@@ -239,6 +239,7 @@ export class AssetLibrary {
   private readonly loader = new GLTFLoader();
   private readonly byUrl = new Map<string, Promise<LoadedModel | null>>();
   private readonly byRole = new Map<RoleKind, Promise<LoadedModel | null>>();
+  private customList: Promise<Set<string>> | null = null;
 
   constructor(
     readonly base: string,
@@ -273,11 +274,17 @@ export class AssetLibrary {
     }
     this.byUrl.clear();
     this.byRole.clear();
+    this.customList = null;
+  }
+
+  private customNames(): Promise<Set<string>> {
+    this.customList ??= listCustom(`${this.base}${this.manifest.custom.dir}index.json`);
+    return this.customList;
   }
 
   private async resolve(kind: RoleKind): Promise<LoadedModel | null> {
     const customUrl = `${this.base}${this.manifest.custom.dir}${kind}.glb`;
-    if (await exists(customUrl)) {
+    if ((await this.customNames()).has(`${kind}.glb`)) {
       const custom = await this.load(customUrl, true);
       if (custom) return custom;
     }
