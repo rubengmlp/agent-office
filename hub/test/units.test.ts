@@ -396,6 +396,10 @@ describe('launch scripts', () => {
     const floors = directorFloorsText(config, loadProfiles(PROFILES_DIR));
     expect(floors).toContain('`mobile`: Flutter, repositorio /m, rama base `develop`. Jefe de planta: sesión `lead-mobile`.');
     expect(floors).not.toContain('old');
+    expect(floors).not.toContain('carpetas por encargo');
+    const marked = directorFloorsText(testConfig({ floors: { mobile: { ...floor('/m'), delivery: true }, web: floor('/w', true, 'node') } }), loadProfiles(PROFILES_DIR));
+    expect(marked).toContain('`mobile` (carpetas por encargo): Flutter, repositorio /m');
+    expect(marked).toContain('`web`: Node');
     expect(floors).toContain('Redacción: sesión `lead-redaccion`');
     expect(floors).not.toContain('Mantenimiento: sesión');
     cleanup();

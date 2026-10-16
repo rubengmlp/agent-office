@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { managedFloors } from './agents';
+import { DELIVERY_MARK, managedFloors } from './agents';
 import { PLUGIN_DIR, REPO_ROOT, SCRIPTS_DIR, WORKSPACE_DIR, docsRepoPath, permissionModeFor, roleSettingsFor, writeAtomic, type Paths } from './config';
 import { MANTENIMIENTO, REDACCION, REDACCION_DIR, TALLER_DIR, realPath } from './floors';
-import { profileFor, type Profiles } from './profiles';
+import { deliveryOf, profileFor, type Profiles } from './profiles';
 import type { OfficeConfig, PermissionMode, RoleSettings } from './types';
 
 export type SessionSpec = {
@@ -141,7 +141,7 @@ export function directorFloorsText(config: OfficeConfig, profiles: Profiles): st
   for (const [slug, floor] of floors) {
     const profile = profileFor(profiles, floor.stack);
     lines.push(
-      `- \`${slug}\`: ${profile.label}, repositorio ${floor.path}, rama base \`${floor.baseBranch}\`. Jefe de planta: sesión \`lead-${slug}\`.`,
+      `- \`${slug}\`${deliveryOf(floor) ? DELIVERY_MARK : ''}: ${profile.label}, repositorio ${floor.path}, rama base \`${floor.baseBranch}\`. Jefe de planta: sesión \`lead-${slug}\`.`,
     );
   }
   lines.push('', '## Departamentos', '');

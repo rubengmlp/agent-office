@@ -50,6 +50,16 @@ describe('board routes', () => {
     }
   });
 
+  test('a new order for a floor without delivery is a 409 with deliveryOff', async () => {
+    rig = deliveryRig({ delivery: false });
+    const call = api(rig);
+    expect(await call('POST', '/api/board/orders', { floor: 'mobile', title: 'Arreglar el logout', via: 'lead' })).toMatchObject({
+      status: 409,
+      body: { error: { key: 'hub.api.deliveryOff', params: { floor: 'mobile' } } },
+    });
+    expect((await call('GET', '/api/board')).body.orders).toEqual([]);
+  });
+
   test('create, list, move, finish alert, seen and discard', async () => {
     rig = deliveryRig();
     const call = api(rig);

@@ -193,6 +193,7 @@ export type HubTextParams = {
   'hub.settings.badFloorEffort': { id: string; slug: string };
   'hub.settings.badChecks': { slug: string };
   'hub.settings.badSetup': { slug: string };
+  'hub.settings.badDelivery': { slug: string };
   'hub.settings.badGateMode': { slug: string };
   'hub.settings.badLinkDirs': { slug: string };
   'hub.settings.badCheckFiles': { slug: string };
@@ -249,6 +250,7 @@ export type HubTextParams = {
   'hub.api.noChecks': undefined;
   'hub.api.boardFields': undefined;
   'hub.api.floorNotManaged': undefined;
+  'hub.api.deliveryOff': { floor: string };
   'hub.api.leadClosed': undefined;
   'hub.api.orderNotFound': undefined;
   'hub.api.alertNotFound': undefined;
@@ -328,6 +330,8 @@ export type FloorConfig = {
   checks?: CheckSpec[];
   setup?: string | null;
   linkDirs?: string[];
+  // Opt-in: the floor works with a card, a branch and a folder per order. Absent or false is the flow before the Tablero.
+  delivery?: boolean;
   gateMode?: GateMode;
   review?: ReviewMode;
   reviewLargeLines?: number;
@@ -469,6 +473,8 @@ export type FloorView = {
   stack: Stack;
   kind: FloorKind;
   building: Building;
+  // A managed floor that works with a folder per order: the only ones the Tablero takes new orders for.
+  delivery?: boolean;
 };
 
 export type AskOption = { label: string; description?: string };
@@ -797,6 +803,7 @@ export type SettingsFloor = {
   checks: { mode: 'default' | 'custom'; list: CheckSpec[] };
   setup: { mode: 'default' | 'none' | 'custom'; command: string | null };
   linkDirs: string[];
+  delivery: boolean;
   gateMode: GateMode | null;
   effectiveGateMode: GateMode;
   checkFiles: string[];
@@ -808,6 +815,7 @@ export type SettingsFloorUpdate = {
   checks?: { mode: 'default' } | { mode: 'custom'; list: CheckSpec[] };
   setup?: { mode: 'default' } | { mode: 'none' } | { mode: 'custom'; command: string };
   linkDirs?: string[];
+  delivery?: boolean;
   gateMode?: GateMode | null;
   checkFiles?: string[];
 };

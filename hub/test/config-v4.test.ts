@@ -46,6 +46,7 @@ describe('config v4', () => {
           review: 'large',
           reviewLargeLines: 500,
           checkFiles: ['build.yaml'],
+          delivery: true,
         },
         backend: { path: '/b', stack: 'laravel', checks: [{ name: 'Bad Name', command: 'x' }], gateMode: 'nope', linkDirs: ['../x'], reviewLargeLines: 1 },
       },
@@ -58,8 +59,12 @@ describe('config v4', () => {
       review: 'large',
       reviewLargeLines: 500,
       checkFiles: ['build.yaml'],
+      delivery: true,
     });
     expect(c.floors.backend).toEqual({ path: '/b', stack: 'laravel', managed: true, baseBranch: 'develop' });
+    const off = normalizeConfig({ floors: { a: { path: '/a', delivery: false }, b: { path: '/b', delivery: 'yes' } } });
+    expect(off.floors.a).toEqual({ path: '/a', stack: 'generic', managed: true, baseBranch: 'develop' });
+    expect(off.floors.b).toEqual({ path: '/b', stack: 'generic', managed: true, baseBranch: 'develop' });
   });
 
   test('validChecks enforces the name, the command and the count', () => {

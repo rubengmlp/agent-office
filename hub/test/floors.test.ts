@@ -58,6 +58,13 @@ describe('floors', () => {
     expect(views.map((v) => v.slug)).toEqual([DIRECCION, 'app', 'plain']);
   });
 
+  test('the view of a floor says whether it works with a folder per order', () => {
+    const config = testConfig({ floors: { app: { ...floor(mobile), delivery: true }, other: floor(plain) } });
+    const views = new FloorResolver(() => config, workspace, memoryRegistry()).views();
+    expect(views.find((v) => v.slug === 'app')?.delivery).toBe(true);
+    expect(views.find((v) => v.slug === 'other')?.delivery).toBeUndefined();
+  });
+
   test('department folders of the documents repository resolve before the git root', () => {
     const docs = join(root, 'office-docs');
     const fuentes = join(docs, 'redaccion', '.fuentes', 'plan-a', 'mobile');

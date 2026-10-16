@@ -10,7 +10,7 @@ import { folderFailedText, folderText } from './office-texts';
 import type { OrderRow, OrderStore } from './order-store';
 import { BOARD_COLUMNS, doneSummary, leavesDone, manualTarget, nextStatus, orderSlug, randomSuffix, splitBrief } from './orders';
 import { keyMatches } from './security';
-import { gateModeOf, setupOf } from './profiles';
+import { deliveryOf, gateModeOf, setupOf } from './profiles';
 import { BRIEF_PREFIX, parseProtocol } from './protocol';
 import { validRef } from './repo-ops';
 import type { SessionBook } from './session-book';
@@ -165,12 +165,18 @@ export class BoardDesk {
     return this.opts.config().floors[floor]?.managed === true;
   }
 
+  // A managed floor that works with a card, a branch and a folder per order. The rest keep the flow before the Tablero.
+  private delivers(floor: string): boolean {
+    const config = this.opts.config().floors[floor];
+    return config?.managed === true && deliveryOf(config);
+  }
+
   // The ENCARGO of the director to lead-<floor>, once the budget gate let it through.
   briefAccepted(to: string, body: string, planSlug: string | null): OrderRow | null {
     const name = to.split('@')[0] ?? '';
     if (!name.startsWith('lead-') || !BRIEF_PREFIX.test(body)) return null;
     const floor = name.slice('lead-'.length);
-    if (!this.managed(floor)) return null;
+    if (!this.delivers(floor)) return null;
     const { title, description } = splitBrief(body, BRIEF_PREFIX);
     const lead = this.leadOf(floor);
     const adopted = this.adoptable(floor, planSlug);
@@ -204,7 +210,7 @@ export class BoardDesk {
 
   planExecuting(plan: { slug: string; title: string; floors: readonly string[] }): void {
     for (const floor of new Set(plan.floors)) {
-      if (!this.managed(floor)) continue;
+      if (!this.delivers(floor)) continue;
       if (this.opts.store.byPlan(plan.slug).some((row) => row.floor === floor && row.status !== 'descartado')) continue;
       const row = this.opts.store.insert({
         slug: this.freshSlug(plan.title),
@@ -226,6 +232,7 @@ export class BoardDesk {
       return { ok: false, status: 400, error: { key: 'hub.api.boardFields' } };
     }
     if (!this.managed(raw.floor)) return { ok: false, status: 404, error: { key: 'hub.api.floorNotManaged' } };
+    if (!this.delivers(raw.floor)) return { ok: false, status: 409, error: { key: 'hub.api.deliveryOff', params: { floor: raw.floor } } };
     const lead = this.leadOf(raw.floor);
     const director = this.opts.book.directorSession();
     if (raw.via === 'lead' && !lead) return { ok: false, status: 409, error: { key: 'hub.api.leadClosed' } };
@@ -363,7 +370,7 @@ export class BoardDesk {
   private doneBlock(row: OrderRow): { reason: HubText; touched: boolean } | null {
     const checks = this.opts.checks;
     const floor = this.opts.config().floors[row.floor];
-    if (!checks || !floor || gateModeOf(floor) === 'tester') return null;
+    if (!checks || !floor || !deliveryOf(floor) || gateModeOf(floor) === 'tester') return null;
     const reading = checks.gateReading(row);
     if (!reading.hasChecks) return null;
     if (reading.touched.length > 0 && reading.forcedSha !== reading.head) {
@@ -402,7 +409,7 @@ export class BoardDesk {
   // The gate of a lead's HECHO when the floor works with orders; an accepted one finishes the card.
   doneGate(args: { body: string; floor: string; cwd: string | null; legacy: () => GateDecision }): GateDecision | null {
     const floor = this.opts.config().floors[args.floor];
-    if (!floor?.managed) return null;
+    if (!floor?.managed || !deliveryOf(floor)) return null;
     const found = this.resolveDone(args.floor, args.body, args.cwd);
     if (!found) return null;
     if ('block' in found) return found.block;
@@ -435,7 +442,7 @@ export class BoardDesk {
     if (!cwd || !this.opts.checks) return;
     const row = this.opts.byPath(realPath(cwd));
     const config = this.opts.config().floors[floor];
-    if (!row || row.floor !== floor || !config || gateModeOf(config) === 'tester') return;
+    if (!row || row.floor !== floor || !config || !deliveryOf(config) || gateModeOf(config) === 'tester') return;
     if (row.status === 'hecho' || row.status === 'descartado') return;
     this.opts.checks.scheduleListo(row);
   }

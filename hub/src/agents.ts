@@ -2,7 +2,8 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { SCRIPTS_DIR, TEMPLATES_DIR, docsRepoPath, roleSettingsFor, writeAtomic, type Paths } from './config';
 import { kilobytes, planByteLimit } from './gate';
-import { checksOf, gateModeOf, profileFor, testCommandFor, type CompiledProfile, type Profiles } from './profiles';
+import { deliveryTextVars } from './delivery-text';
+import { checksOf, deliveryOf, gateModeOf, profileFor, testCommandFor, type CompiledProfile, type Profiles } from './profiles';
 import type { FloorConfig, GateMode, OfficeConfig, RoleId } from './types';
 
 export class TemplateError extends Error {}
@@ -59,13 +60,16 @@ export function managedFloors(config: OfficeConfig): [string, FloorConfig][] {
     .sort(([a], [b]) => a.localeCompare(b));
 }
 
+// What the lists of floors say after the floors that work with a folder per order.
+export const DELIVERY_MARK = ' (carpetas por encargo)';
+
 export function floorsList(config: OfficeConfig, profiles: Profiles): string {
   const floors = managedFloors(config);
   if (floors.length === 0) return '- Todavía no hay plantas gestionadas.';
   return floors
     .map(([slug, floor]) => {
       const label = profileFor(profiles, floor.stack).label;
-      return `- \`${slug}\`: ${label}, repositorio ${floor.path}, rama base \`${floor.baseBranch}\`.`;
+      return `- \`${slug}\`${deliveryOf(floor) ? DELIVERY_MARK : ''}: ${label}, repositorio ${floor.path}, rama base \`${floor.baseBranch}\`.`;
     })
     .join('\n');
 }
@@ -133,8 +137,8 @@ export function floorAgentDocs(
   const testCommand = testCommandFor(floor.path, profile);
   return FLOOR_ROLES.map((role) => {
     const name = floorAgentName(role, slug);
-    const vars = {
-      ...commonVars(p, config, profiles, role, slug),
+    const common = commonVars(p, config, profiles, role, slug);
+    const own = {
       slug,
       path: floor.path,
       label: profile.label,
@@ -142,6 +146,11 @@ export function floorAgentDocs(
       testerRule: testerRule(gateModeOf(settings), testCommand),
       checksList: checksList(settings),
       skillLine: skillLine(profile),
+    };
+    const vars = {
+      ...common,
+      ...own,
+      ...deliveryTextVars(deliveryOf(settings), { ...own, chatScript: CHAT_SCRIPT, encargoScript: ENCARGO_SCRIPT }),
     };
     const content = render(readTemplate(templatesDir, role), vars);
     return { name, roleId: role, floorRole: role, template: role, file: agentPath(p, name), content };

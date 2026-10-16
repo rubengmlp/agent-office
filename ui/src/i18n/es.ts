@@ -740,6 +740,7 @@ export const es = {
   'board.filter.label': 'Planta',
   'board.filter.all': 'Todas',
   'board.new': 'Nuevo encargo',
+  'board.new.none': 'Ninguna planta trabaja con carpetas por encargo: actívalo en Ajustes → Proyectos.',
   'board.empty':
     'Todavía no hay encargos. Aparecen cuando el director encarga algo a un jefe, cuando ejecutas un plan o desde «Nuevo encargo».',
   'board.offline': 'El Tablero necesita la conexión con el hub.',
@@ -854,6 +855,7 @@ export const es = {
   'hub.settings.badChecks':
     'Las comprobaciones de {slug} no valen: hasta 8, cada una con un nombre de letras minúsculas, números y guiones (20 como mucho) y un comando de una línea de 300 caracteres como mucho',
   'hub.settings.badSetup': 'El comando de preparación de {slug} no vale: una línea de 300 caracteres como mucho',
+  'hub.settings.badDelivery': 'El interruptor de carpetas por encargo de {slug} no es válido: verdadero o falso',
   'hub.settings.badGateMode': 'La puerta de {slug} no es válida: comprobaciones, comprobaciones y tester, o solo tester',
   'hub.settings.badLinkDirs': 'Las carpetas enlazadas de {slug} no valen: hasta 8 rutas relativas dentro del repositorio',
   'hub.settings.badCheckFiles': 'Los ficheros que definen los checks de {slug} no valen: hasta 20 patrones, un glob o fichero#clave',
@@ -877,6 +879,11 @@ export const es = {
   'settings.field.checkpointMaxFileKb': 'Tamaño máximo de un fichero en un punto de control (KB)',
   'settings.field.hint.checkpointMaxFileKb':
     'Los ficheros más grandes no se guardan en los commits del encargo; se avisa y no bloquean el HECHO mientras no cambien.',
+  'settings.delivery.enable': 'Carpetas y comprobaciones por encargo',
+  'settings.delivery.enable.hint':
+    'Cada encargo a esta planta crea una tarjeta en el Tablero, una rama y una carpeta propia, y el HECHO pasa por las comprobaciones. Desactivado, la planta trabaja como antes del Tablero.',
+  'settings.delivery.enable.saving': 'Guardando…',
+  'settings.delivery.off': 'Activa las carpetas por encargo para configurar aquí las comprobaciones, la preparación de la carpeta y la puerta del HECHO de esta planta.',
   'settings.delivery.title': 'Entrega: comprobaciones, preparación y puerta',
   'settings.delivery.checks': 'Comprobaciones',
   'settings.delivery.checks.hint': 'Los comandos que el hub ejecuta en la carpeta del encargo antes de dar por bueno un HECHO. Hasta 8.',
@@ -1052,6 +1059,7 @@ export const es = {
   'hub.api.branchUnmerged': 'La rama no está fusionada: fuerza el borrado si quieres perder sus commits',
   'hub.api.worktreeFailed': 'Git no pudo retirar la carpeta',
   'hub.api.boardFields': 'Faltan datos del encargo: planta, título (hasta 120 caracteres) y vía',
+  'hub.api.deliveryOff': 'La planta {floor} no trabaja con carpetas por encargo: actívalo en Ajustes → Proyectos.',
   'hub.api.floorNotManaged': 'Esa planta no existe o no está gestionada',
   'hub.api.leadClosed': 'El jefe de esa planta no tiene una sesión abierta',
   'hub.api.orderNotFound': 'No existe ese encargo',

@@ -1,7 +1,7 @@
 import { realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { docsRepoPath } from './config';
-import { detectStack } from './profiles';
+import { deliveryOf, detectStack } from './profiles';
 import type { FloorKind, FloorView, OfficeConfig, Stack } from './types';
 
 export const DIRECCION = 'direccion';
@@ -154,7 +154,7 @@ export class FloorResolver {
     const floors = this.config().floors;
     const configuredPaths = new Set<string>();
     for (const [slug, f] of Object.entries(floors)) {
-      out.push({ slug, label: slug, path: f.path, stack: f.stack, kind: f.managed ? 'managed' : 'observed', building: 'principal' });
+      out.push({ slug, label: slug, path: f.path, stack: f.stack, kind: f.managed ? 'managed' : 'observed', building: 'principal', ...(f.managed && deliveryOf(f) ? { delivery: true } : {}) });
       configuredPaths.add(realPath(f.path));
     }
     for (const r of this.registry.all()) {

@@ -22,7 +22,7 @@ import {
 } from './config';
 import { ensureDocsRepo } from './docs-repo';
 import { regenerateAgents } from './floor-cli';
-import { checkFilesOf, checksOf, defaultChecks, gateModeOf, setupOf, type Profiles } from './profiles';
+import { checkFilesOf, checksOf, defaultChecks, deliveryOf, gateModeOf, setupOf, type Profiles } from './profiles';
 import { record } from './state-machine';
 import type { FloorConfig, HubText, OfficeConfig, RoleId, RoleSettings, SettingsFloor, SettingsResult, SettingsTarget, SettingsView } from './types';
 
@@ -60,6 +60,7 @@ function settingsFloor(slug: string, floor: FloorConfig, profiles?: Profiles): S
     checks: { mode: hasChecks ? 'custom' : 'default', list: hasChecks ? structuredClone(floor.checks ?? []) : defaultChecks(floor.path, floor.stack) },
     setup: floor.setup === undefined ? { mode: 'default', command: setupOf(floor) } : floor.setup === null ? { mode: 'none', command: null } : { mode: 'custom', command: floor.setup },
     linkDirs: [...(floor.linkDirs ?? [])],
+    delivery: deliveryOf(floor),
     gateMode: floor.gateMode ?? null,
     effectiveGateMode: gateModeOf(floor),
     checkFiles: [...(floor.checkFiles ?? [])],
@@ -221,6 +222,11 @@ export function applySettings(config: OfficeConfig, raw: unknown): { config: Off
       if (!dirs) errors.push({ key: 'hub.settings.badLinkDirs', params: { slug } });
       else if (dirs.length === 0) delete floor.linkDirs;
       else floor.linkDirs = dirs;
+    }
+    if (change.delivery !== undefined) {
+      if (typeof change.delivery !== 'boolean') errors.push({ key: 'hub.settings.badDelivery', params: { slug } });
+      else if (change.delivery) floor.delivery = true;
+      else delete floor.delivery;
     }
     if (change.gateMode !== undefined) {
       if (change.gateMode === null) delete floor.gateMode;

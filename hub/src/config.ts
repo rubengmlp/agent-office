@@ -332,6 +332,7 @@ function normalizeFloors(raw: unknown): Record<string, FloorConfig> {
     if (f.setup !== undefined && validSetup(f.setup)) floor.setup = f.setup;
     const linkDirs = f.linkDirs === undefined ? null : validLinkDirs(f.linkDirs);
     if (linkDirs) floor.linkDirs = linkDirs;
+    if (f.delivery === true) floor.delivery = true;
     if (validGateMode(f.gateMode)) floor.gateMode = f.gateMode;
     if (validReviewMode(f.review)) floor.review = f.review;
     if (validInt(f.reviewLargeLines, LIMITS.reviewLargeLines)) floor.reviewLargeLines = f.reviewLargeLines;

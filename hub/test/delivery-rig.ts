@@ -39,6 +39,8 @@ export type RigOptions = {
   office?: Partial<OfficeOptions>;
   lead?: boolean;
   director?: boolean;
+  // The floor works with a folder per order unless a test says it does not.
+  delivery?: boolean;
 };
 
 // A managed floor over a real clone with an origin, a lead and a director that can be written to, and the
@@ -56,7 +58,7 @@ export function deliveryRig(options: RigOptions = {}): Rig {
   });
   const { seed, origin, repo } = originAndClone(h.root, 'mobile');
   const real = realPath(repo);
-  h.config.floors.mobile = { path: real, stack: options.stack ?? 'generic', managed: true, baseBranch: 'develop' };
+  h.config.floors.mobile = { path: real, stack: options.stack ?? 'generic', managed: true, baseBranch: 'develop', ...(options.delivery === false ? {} : { delivery: true }) };
   h.config.departments = { redaccion: true, mantenimiento: false };
   options.configure?.(h.config, real);
   const docs = realPath(join(h.root, 'docs'));

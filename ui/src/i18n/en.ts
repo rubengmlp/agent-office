@@ -741,6 +741,7 @@ export const en: Messages = {
   'board.filter.label': 'Floor',
   'board.filter.all': 'All',
   'board.new': 'New order',
+  'board.new.none': 'No floor works with folders per order: turn it on in Settings → Projects.',
   'board.empty': 'No orders yet. They show up when the director briefs a lead, when you execute a plan or from "New order".',
   'board.offline': 'The board needs the connection to the hub.',
   'board.replay': 'In the replay the board is read-only.',
@@ -854,6 +855,7 @@ export const en: Messages = {
   'hub.settings.badChecks':
     'The checks of {slug} are not valid: up to 8, each with a name of lowercase letters, digits and dashes (20 at most) and a one-line command of 300 characters at most',
   'hub.settings.badSetup': 'The setup command of {slug} is not valid: one line of 300 characters at most',
+  'hub.settings.badDelivery': 'The folders-per-order switch of {slug} is not valid: true or false',
   'hub.settings.badGateMode': 'The gate of {slug} is not valid: checks, checks and tester, or tester only',
   'hub.settings.badLinkDirs': 'The linked folders of {slug} are not valid: up to 8 relative paths inside the repository',
   'hub.settings.badCheckFiles': 'The files that define the checks of {slug} are not valid: up to 20 patterns, a glob or file#key',
@@ -877,6 +879,11 @@ export const en: Messages = {
   'settings.field.checkpointMaxFileKb': 'Largest file in a checkpoint (KB)',
   'settings.field.hint.checkpointMaxFileKb':
     'Larger files are not saved in the commits of the order; you are told and they do not block the HECHO while they stay as they are.',
+  'settings.delivery.enable': 'Folders and checks per order',
+  'settings.delivery.enable.hint':
+    'Each order to this floor creates a card on the Board, a branch and a folder of its own, and the HECHO goes through the checks. Off, the floor works as it did before the Board.',
+  'settings.delivery.enable.saving': 'Saving…',
+  'settings.delivery.off': 'Turn on folders per order to configure the checks, the folder setup and the HECHO gate of this floor here.',
   'settings.delivery.title': 'Delivery: checks, setup and gate',
   'settings.delivery.checks': 'Checks',
   'settings.delivery.checks.hint': 'The commands the hub runs in the folder of the order before a HECHO is accepted. Up to 8.',
@@ -1050,6 +1057,7 @@ export const en: Messages = {
   'hub.api.branchUnmerged': 'The branch is not merged: force the removal if you want to lose its commits',
   'hub.api.worktreeFailed': 'Git could not remove the folder',
   'hub.api.boardFields': 'The order is missing fields: floor, title (up to 120 characters) and way',
+  'hub.api.deliveryOff': 'The floor {floor} does not work with folders per order: turn it on in Settings → Projects.',
   'hub.api.floorNotManaged': 'That floor does not exist or is not managed',
   'hub.api.leadClosed': 'The lead of that floor has no open session',
   'hub.api.orderNotFound': 'That order does not exist',

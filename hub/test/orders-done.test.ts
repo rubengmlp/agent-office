@@ -162,6 +162,42 @@ describe('the HECHO of a lead with checks', () => {
   });
 });
 
+describe('a floor without delivery', () => {
+  test('never resolves an order: the HECHO goes through the tester gate even with a card left from before', async () => {
+    rig = deliveryRig({ configure: checksConfig(['uno', 'exit 0']), office: { listoDelayMs: 0 } });
+    const card = await newOrder(rig);
+    const folder = card.worktree?.path ?? '';
+    rig.h.office.ingest(ev(LEAD, folder, 'PreToolUse', { tool_name: 'Read', tool_input: { file_path: join(folder, 'README.md') } }));
+    rig.h.config.floors.mobile!.delivery = false;
+    rig.h.office.ingest(ev(LEAD, rig.repo, 'PostToolUse', { agent_id: DEV, agent_type: 'office-dev-mobile', tool_name: 'Write', tool_input: { file_path: join(rig.repo, 'lib', 'a.dart') } }));
+    for (const cwd of [folder, rig.repo]) {
+      const decision = done(rig, 'HECHO: encargo/' + card.slug + ' — algo', cwd);
+      expect(decision.pass).toBe(false);
+      expect(decision.reason).toContain('Falta tester');
+    }
+    await rig.h.office.idle();
+    expect(orderOf(rig, card.slug).status).toBe('en-curso');
+    expect(orderOf(rig, card.slug).checks?.status).toBe('none');
+    expect(leadMessages(rig).filter((t) => t.includes('COMPROBACIONES'))).toEqual([]);
+  });
+
+  test('a listo runs no checks and a manual move to hecho asks for nothing', async () => {
+    rig = deliveryRig({ configure: checksConfig(['uno', 'exit 1']), office: { listoDelayMs: 0 } });
+    const card = await newOrder(rig);
+    const folder = card.worktree?.path ?? '';
+    rig.h.config.floors.mobile!.delivery = false;
+    write(folder, 'lib/a.dart', 'a');
+    rig.h.office.postChat(
+      { channel: 'mobile', kind: 'listo', text: '', files: ['lib/a.dart'], cwd: join(folder, 'lib') },
+      { socket: null, token: 'lead-token', role: 'office-lead-mobile', name: 'lead-mobile' },
+    );
+    await Bun.sleep(60);
+    await rig.h.office.idle();
+    expect(orderOf(rig, card.slug).checks?.status).toBe('none');
+    expect(rig.h.office.moveOrder(card.id, 'hecho')).toMatchObject({ ok: true });
+  });
+});
+
 describe('gate modes', () => {
   test('tester: the old gate decides and an accepted HECHO still finishes the card', async () => {
     rig = deliveryRig({ configure: (config) => (config.floors.mobile!.gateMode = 'tester') });

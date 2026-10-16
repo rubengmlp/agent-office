@@ -130,6 +130,11 @@ export function setupOf(floor: Pick<FloorConfig, 'path' | 'stack' | 'setup'>): s
   return floor.setup === undefined ? defaultSetup(floor.path, floor.stack) : floor.setup;
 }
 
+// Whether the floor works with a card, a branch and a folder per order. Off unless the floor says so.
+export function deliveryOf(floor: Pick<FloorConfig, 'delivery'> | undefined): boolean {
+  return floor?.delivery === true;
+}
+
 // 'checks' when the floor has something to run, else the tester alone as before the Tablero.
 export function gateModeOf(floor: Pick<FloorConfig, 'path' | 'stack' | 'checks' | 'gateMode'>): GateMode {
   if (floor.gateMode) return floor.gateMode;

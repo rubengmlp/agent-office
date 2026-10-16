@@ -263,6 +263,7 @@ describe('delivery settings of a floor', () => {
       checks: { mode: 'default', list: [{ name: 'analyze', command: 'flutter analyze' }, { name: 'test', command: 'flutter test' }] },
       setup: { mode: 'default', command: 'flutter pub get' },
       linkDirs: [],
+      delivery: false,
       gateMode: null,
       effectiveGateMode: 'checks',
       checkFiles: [],
@@ -300,6 +301,42 @@ describe('delivery settings of a floor', () => {
     const cleared = apply({ floors: { mobile: { checks: { mode: 'default' }, setup: { mode: 'default' }, linkDirs: [], gateMode: null, checkFiles: [] } } }, set.config);
     expect(cleared.config.floors.mobile).toEqual(floor('/m'));
     expect(apply({ floors: { mobile: { gateMode: null } } }).changed).toBe(false);
+  });
+
+  test('the delivery switch is off by default, is set and cleared, and only takes a boolean', () => {
+    expect(settingsView(config(), loadProfiles(PROFILES_DIR)).floors.find((f) => f.slug === 'mobile')?.delivery).toBe(false);
+    const on = apply({ floors: { mobile: { delivery: true } } });
+    expect(on.changed).toBe(true);
+    expect(on.config.floors.mobile?.delivery).toBe(true);
+    expect(settingsView(on.config, loadProfiles(PROFILES_DIR)).floors.find((f) => f.slug === 'mobile')?.delivery).toBe(true);
+    expect(apply({ floors: { mobile: { delivery: true } } }, on.config).changed).toBe(false);
+    const off = apply({ floors: { mobile: { delivery: false } } }, on.config);
+    expect(off.changed).toBe(true);
+    expect(off.config.floors.mobile).toEqual(floor('/m'));
+    expect(apply({ floors: { mobile: { delivery: false } } }).changed).toBe(false);
+    for (const value of ['true', 1, null]) {
+      const result = applySettings(config(), { floors: { mobile: { delivery: value } } });
+      expect('error' in result && result.error.map((e) => (typeof e === 'string' ? e : e.key))).toEqual(['hub.settings.badDelivery']);
+    }
+  });
+
+  test('saving the switch writes the agents of that floor again with the other flow', () => {
+    const { dir, cleanup } = tempDir();
+    const p = fakePaths(dir);
+    saveConfig(p, testConfig({ docsRepo: join(dir, 'docs') }));
+    writeFloor(p, profiles, planFloor(p, profiles, makeRepo(dir, 'mobile', { 'pubspec.yaml': 'name: app\n' })));
+    const service = createSettings(p, () => profiles, () => {});
+    const lead = () => readFileSync(agentPath(p, 'office-lead-mobile'), 'utf8');
+    expect(lead()).not.toContain('CARPETA');
+    expect(service.update({ floors: { mobile: { delivery: true } } })).toMatchObject({ ok: true });
+    expect(loadConfig(p).floors.mobile?.delivery).toBe(true);
+    expect(lead()).toContain('CARPETA');
+    expect(readFileSync(agentPath(p, 'office-tester-mobile'), 'utf8')).toContain('EnterWorktree');
+    expect(service.update({ floors: { mobile: { delivery: false } } })).toMatchObject({ ok: true });
+    expect(loadConfig(p).floors.mobile?.delivery).toBeUndefined();
+    expect(lead()).not.toContain('CARPETA');
+    expect(readFileSync(agentPath(p, 'office-tester-mobile'), 'utf8')).not.toContain('EnterWorktree');
+    cleanup();
   });
 
   test('bad values are refused with the floor named and nothing is applied', () => {

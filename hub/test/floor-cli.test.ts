@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { cpSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { TemplateError, agentPath } from '../src/agents';
+import { TemplateError, agentPath, floorsList } from '../src/agents';
 import { DEFAULT_ROLES, PROFILES_DIR, TEMPLATES_DIR, loadConfig, saveConfig, type Paths } from '../src/config';
 import {
   FloorConflictError,
@@ -20,6 +20,14 @@ import { detectStack, loadProfiles } from '../src/profiles';
 import { fakePaths, floor, makeRepo, tempDir, testConfig } from './helpers';
 
 const profiles = loadProfiles(PROFILES_DIR);
+
+// Turns the folders and checks per order on for floors already written, and writes their agents again.
+function deliveryOn(p: Paths, ...slugs: string[]): void {
+  const config = loadConfig(p);
+  for (const slug of slugs) config.floors[slug] = { ...config.floors[slug]!, delivery: true };
+  saveConfig(p, config);
+  regenerateAgents(p, profiles);
+}
 
 describe('floor CLI', () => {
   let ctx: { dir: string; cleanup: () => void };
@@ -78,6 +86,8 @@ describe('floor CLI', () => {
 
     const npm = makeRepo(ctx.dir, 'web', { 'package.json': JSON.stringify({ scripts: { test: 'vitest run' } }) });
     writeFloor(p, profiles, planFloor(p, profiles, npm));
+    expect(readFileSync(agentFile(p, 'lead', 'web'), 'utf8')).toContain('El comando de tests de esta planta es: npm test (el script test');
+    deliveryOn(p, 'web');
     expect(readFileSync(agentFile(p, 'lead', 'web'), 'utf8')).toContain('el comando de tests base de esta planta es: npm test (el script test');
 
     const bare = makeRepo(ctx.dir, 'scripts-node', { 'package.json': '{}' });
@@ -88,6 +98,7 @@ describe('floor CLI', () => {
   test('the agents of a floor carry the delivery cycle: folder, checks, the encargo script and the tester rule of its gate mode', () => {
     const repo = makeRepo(ctx.dir, 'mobile', { 'pubspec.yaml': 'name: app\n' });
     writeFloor(p, profiles, planFloor(p, profiles, repo));
+    deliveryOn(p, 'mobile');
     const script = join(TEMPLATES_DIR, '..', 'scripts', 'office-encargo.sh');
     const lead = readFileSync(agentFile(p, 'lead', 'mobile'), 'utf8');
     expect(lead).toContain(`\`${script} carpeta\``);
@@ -110,16 +121,58 @@ describe('floor CLI', () => {
     expect(readFileSync(agentFile(p, 'dev', 'mobile'), 'utf8')).toContain('No hagas commits');
     const director = readFileSync(agentPath(p, 'office-director'), 'utf8');
     expect(director).toContain('ENCARGO: <título corto> — <qué conseguir> — criterios: … — fuera: …');
-    expect(director).toContain('Cada encargo es una rama y una tarjeta en el Tablero');
+    expect(director).toContain('(carpetas por encargo)');
+    expect(director).toContain('cada encargo es una rama y una tarjeta en el Tablero');
     expect(director).toContain('nunca fusionas nada');
+  });
+
+  test('a floor without delivery keeps the flow before the Tablero: no folder, no CARPETA, no EnterWorktree', () => {
+    const repo = makeRepo(ctx.dir, 'mobile', { 'pubspec.yaml': 'name: app\n' });
+    writeFloor(p, profiles, planFloor(p, profiles, repo));
+    expect(loadConfig(p).floors.mobile?.delivery).toBeUndefined();
+    const lead = readFileSync(agentFile(p, 'lead', 'mobile'), 'utf8');
+    expect(lead).toContain('exige un tester antes de cerrar cada tarea');
+    expect(lead).toContain('salvo el script del chat');
+    expect(lead).toContain('Cuando el desarrollador termine, pide al tester que pruebe exactamente lo que cambió. El comando de tests de esta planta es: flutter test');
+    expect(lead).toContain('HECHO: <qué se hizo> — validado por <tester y comando> — pendiente: <qué queda>');
+    expect(lead).toContain('Hace falta el tester.');
+    for (const gone of ['CARPETA', 'EnterWorktree', 'Carpeta de cada encargo', 'office-encargo', 'COMPROBACIONES', 'encargo/<slug>', 'listo']) {
+      expect(lead).not.toContain(gone);
+    }
+    const dev = readFileSync(agentFile(p, 'dev', 'mobile'), 'utf8');
+    expect(dev).toContain('No hagas commits salvo que la tarea lo pida.');
+    for (const gone of ['EnterWorktree', 'Tu carpeta de trabajo', 'worktrees', '`listo` (más abajo)']) expect(dev).not.toContain(gone);
+    const tester = readFileSync(agentFile(p, 'tester', 'mobile'), 'utf8');
+    expect(tester).toContain('tools: Read, Grep, Glob, Bash, SendMessage\n');
+    for (const gone of ['EnterWorktree', 'Tu carpeta de trabajo', 'worktrees']) expect(tester).not.toContain(gone);
+    for (const text of [lead, dev, tester]) expect(text).not.toContain('{{');
+  });
+
+  test('turning delivery on and off again renders each floor with its own text, and the lists mark the delivery floors', () => {
+    writeFloor(p, profiles, planFloor(p, profiles, makeRepo(ctx.dir, 'mobile', { 'pubspec.yaml': 'name: app\n' })));
+    writeFloor(p, profiles, planFloor(p, profiles, makeRepo(ctx.dir, 'web', { 'package.json': '{}' })));
+    deliveryOn(p, 'web');
+    expect(readFileSync(agentFile(p, 'lead', 'web'), 'utf8')).toContain('## Carpeta de cada encargo');
+    expect(readFileSync(agentFile(p, 'tester', 'web'), 'utf8')).toContain('EnterWorktree');
+    expect(readFileSync(agentFile(p, 'lead', 'mobile'), 'utf8')).not.toContain('CARPETA');
+    expect(readFileSync(agentFile(p, 'tester', 'mobile'), 'utf8')).not.toContain('EnterWorktree');
+    const list = floorsList(loadConfig(p), profiles);
+    expect(list).toContain('- `web` (carpetas por encargo): ');
+    expect(list).toContain('- `mobile`: ');
+    const config = loadConfig(p);
+    delete config.floors.web!.delivery;
+    saveConfig(p, config);
+    regenerateAgents(p, profiles);
+    expect(readFileSync(agentFile(p, 'lead', 'web'), 'utf8')).not.toContain('CARPETA');
+    expect(floorsList(loadConfig(p), profiles)).not.toContain('(carpetas por encargo)');
   });
 
   test('the tester rule follows the gate mode of the floor and a floor without checks keeps the tester', () => {
     const repo = makeRepo(ctx.dir, 'mobile', { 'pubspec.yaml': '' });
     writeFloor(p, profiles, planFloor(p, profiles, repo));
     const config = loadConfig(p);
-    config.floors.mobile = { ...config.floors.mobile!, gateMode: 'checks+tester' };
-    config.floors.backend = { path: makeRepo(ctx.dir, 'backend', { 'artisan': '', 'composer.json': '{}' }), stack: 'laravel', managed: true, baseBranch: 'develop', checks: [] };
+    config.floors.mobile = { ...config.floors.mobile!, gateMode: 'checks+tester', delivery: true };
+    config.floors.backend = { path: makeRepo(ctx.dir, 'backend', { 'artisan': '', 'composer.json': '{}' }), stack: 'laravel', managed: true, baseBranch: 'develop', checks: [], delivery: true };
     saveConfig(p, config);
     regenerateAgents(p, profiles);
     const both = readFileSync(agentFile(p, 'lead', 'mobile'), 'utf8');

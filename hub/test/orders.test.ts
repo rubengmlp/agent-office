@@ -290,6 +290,59 @@ describe('a new order from the panel', () => {
   });
 });
 
+describe('a floor without delivery', () => {
+  const noFolders = (r: Rig) => {
+    expect(existsSync(join(r.repo, '.claude', 'worktrees'))).toBe(false);
+    expect(git(r.repo, 'branch', '--list', 'encargo/*')).toBe('');
+    expect(r.sent.filter((m) => m.text.includes('CARPETA'))).toEqual([]);
+  };
+
+  test('an ENCARGO passes the gate and makes no card, no branch and no folder', async () => {
+    rig = deliveryRig({ delivery: false });
+    expect(brief(rig, 'ENCARGO: Pantalla de login — criterios: que compile — fuera: nada').pass).toBe(true);
+    await rig.h.office.idle();
+    expect(boardOrders(rig)).toEqual([]);
+    noFolders(rig);
+  });
+
+  test('a new order from the panel is refused with deliveryOff, by either way, and leaves nothing behind', async () => {
+    rig = deliveryRig({ delivery: false });
+    for (const via of ['lead', 'director'] as const) {
+      expect(await rig.h.office.createOrder({ floor: 'mobile', title: 'Arreglar el logout', via })).toMatchObject({ ok: false, status: 409, error: { key: 'hub.api.deliveryOff', params: { floor: 'mobile' } } });
+    }
+    await rig.h.office.idle();
+    expect(boardOrders(rig)).toEqual([]);
+    expect(rig.sent).toEqual([]);
+    noFolders(rig);
+  });
+
+  test('executing a plan makes cards only for the floors with delivery', async () => {
+    rig = deliveryRig({
+      configure: (config, repo) => {
+        config.floors.web = { path: repo, stack: 'node', managed: true, baseBranch: 'develop' };
+      },
+    });
+    seedPlan(rig, ['mobile', 'web']);
+    expect(await rig.h.office.decidePlan(PLAN, 'ejecutar')).toBe('ok');
+    expect(boardOrders(rig).map((o) => o.floor)).toEqual(['mobile']);
+    rig.h.cleanup();
+    rig = deliveryRig({ delivery: false });
+    seedPlan(rig, ['mobile']);
+    expect(await rig.h.office.decidePlan(PLAN, 'ejecutar')).toBe('ok');
+    expect(boardOrders(rig)).toEqual([]);
+  });
+
+  test('switching delivery off keeps the cards and folders that exist and makes no new ones', async () => {
+    rig = deliveryRig();
+    const card = await newOrder(rig);
+    rig.h.config.floors.mobile!.delivery = false;
+    expect(brief(rig, 'ENCARGO: Otra cosa — criterios: x').pass).toBe(true);
+    await rig.h.office.idle();
+    expect(boardOrders(rig).map((o) => o.slug)).toEqual([card.slug]);
+    expect(orderOf(rig, card.slug).worktree).toMatchObject({ state: 'listo' });
+  });
+});
+
 function finished(rig: Rig): FinishedView[] {
   return rig.h.office.snapshot().finished;
 }
