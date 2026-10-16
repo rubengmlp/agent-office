@@ -1372,7 +1372,7 @@ export class Office {
     if (this.messages.length > MAX_MESSAGES) this.messages.splice(0, this.messages.length - MAX_MESSAGES);
     this.emit({ type: 'message', data: view });
     const recipient = toKey ? this.agents.get(toKey) : undefined;
-    if (recipient && recipient !== from) this.messageReceived(recipient, body, now);
+    if (recipient && recipient !== from) this.messageReceived(recipient, assigns(from, recipient) ? body : null, now);
     if (recipient && recipient !== from && recipient.awaitingAnswer) this.answerReceived(recipient, now);
     if (body) this.handleProtocol({ to: message.to, toKey, text: body }, from, session, now);
   }
@@ -1722,6 +1722,10 @@ export function executeOrderText(doc: Pick<DocumentView, 'path' | 'title' | 'rou
     `Léelo en \`${docsRepo}/${doc.path}\`, divídelo por planta según sus Pasos y manda a cada jefe${leads} su parte con la ruta del plan; ya lo conocen por el aviso PLAN de Redacción.`,
     'Avísame cuando terminen todas.',
   ].join(' ');
+}
+
+function assigns(from: AgentRuntime, to: AgentRuntime): boolean {
+  return from.parentKey !== to.key && roleKind(to.role) !== 'director';
 }
 
 export function taskLine(body: string | null): string | null {

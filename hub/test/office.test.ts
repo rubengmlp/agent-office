@@ -563,6 +563,8 @@ describe('what each agent is on', () => {
     send(`Ahora el registro ${'x'.repeat(200)}`);
     expect(agent('dev-1')?.task?.length).toBe(120);
     expect(agent('dev-1')?.task).toStartWith('Ahora el registro');
+    h.office.ingest(ev(LEAD, repo, 'PreToolUse', { agent_id: 'dev-1', tool_name: 'SendMessage', tool_input: { to: 'team-lead', message: 'Listo el login' } }));
+    expect(h.office.snapshot().messages.at(-1)?.toKey).toBe(LEAD);
     expect(agent(LEAD)?.task).toBeNull();
 
     expect(await h.office.order(LEAD, 'Prioriza el login\ny luego el perfil')).toBe('ok');
