@@ -401,13 +401,15 @@ export class Store {
 }
 
 export function withDefaults(agent: AgentView): AgentView {
-  const partial: Partial<Pick<AgentView, 'file' | 'task' | 'away' | 'tokens'>> = agent;
+  const partial: Partial<Pick<AgentView, 'file' | 'task' | 'away' | 'tokens' | 'waiting' | 'stalledSince'>> = agent;
   return {
     ...agent,
     file: partial.file ?? null,
     task: partial.task ?? null,
     away: partial.away ?? agent.endedAt !== null,
     tokens: partial.tokens ?? null,
+    waiting: partial.waiting ?? null,
+    stalledSince: partial.stalledSince ?? null,
   };
 }
 

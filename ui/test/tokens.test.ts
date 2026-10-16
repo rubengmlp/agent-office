@@ -41,6 +41,13 @@ describe('withDefaults', () => {
     expect(withDefaults(old).tokens).toBeNull();
     expect(withDefaults({ ...old, tokens: TOTALS }).tokens).toEqual(TOTALS);
   });
+
+  test('an agent from an older hub is neither waiting nor stalled', () => {
+    const old = { key: 'a', endedAt: null } as unknown as AgentView;
+    expect(withDefaults(old).waiting).toBeNull();
+    expect(withDefaults(old).stalledSince).toBeNull();
+    expect(withDefaults({ ...old, stalledSince: 5 }).stalledSince).toBe(5);
+  });
 });
 
 describe('Store', () => {
