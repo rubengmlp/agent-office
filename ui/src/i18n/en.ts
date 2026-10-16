@@ -387,6 +387,7 @@ export const en: Messages = {
   'scene.stopFollow': 'Stop following (Esc)',
 
   'notify.permission.title': 'Pending permission · {agent}',
+  'notify.permission.tool': 'Permission for {tool} · {agent}',
   'notify.question.title': 'Question from {agent}',
   'notify.blocked.title': 'Blocked: {agent}',
   'notify.done.title': 'Delivery from {agent}',

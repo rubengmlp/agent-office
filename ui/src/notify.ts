@@ -11,8 +11,7 @@ export const NOTIFY_EVENTS: readonly NotifyEvent[] = ['permission', 'question', 
 export type NotifyPrefs = { enabled: boolean; events: Record<NotifyEvent, boolean> };
 
 const PREFS_KEY = 'agent-office.notify';
-const SEEN_LIMIT = 500;
-const DETAIL_CHARS = 80;
+export const SEEN_LIMIT = 500;
 // Protocol prefixes, as in the hub state machine (which cannot load in the browser). Not translated.
 const BLOCK_PREFIX = /^\s*BLOQUEADO\s*:/i;
 const DONE_PREFIX = /^\s*HECHO\s*:/i;
@@ -44,10 +43,6 @@ function readPrefs(): NotifyPrefs {
     // Blocked or broken storage: notifications stay off.
   }
   return prefs;
-}
-
-function short(text: string): string {
-  return text.length > DETAIL_CHARS ? `${text.slice(0, DETAIL_CHARS - 1)}…` : text;
 }
 
 export class Notifier {
@@ -93,9 +88,12 @@ export class Notifier {
       case 'question':
         this.question(message.data);
         break;
-      case 'question-closed':
-        this.shown.get(`question:${message.id}`)?.close();
+      case 'question-closed': {
+        const tag = `question:${message.id}`;
+        this.shown.get(tag)?.close();
+        this.shown.delete(tag);
         break;
+      }
       case 'message':
         this.message(message.data);
         break;
@@ -119,10 +117,14 @@ export class Notifier {
     };
   }
 
+  // Bodies stay generic on purpose: the command of a permission, the question and the text of a BLOQUEADO or a
+  // HECHO may carry secrets or private details, and the Notification Center shows them even on a locked screen.
+  // The panel shows them in full.
   private question(question: QuestionView): void {
     const agent = this.name(question.agentKey);
     if (question.kind === 'permission') {
-      this.show('permission', `question:${question.id}`, t('notify.permission.title', { agent }), short(question.detail ?? ''), this.select(question.agentKey));
+      const title = question.tool ? t('notify.permission.tool', { agent, tool: question.tool }) : t('notify.permission.title', { agent });
+      this.show('permission', `question:${question.id}`, title, t('notify.openPanel'), this.select(question.agentKey));
     } else {
       this.show('question', `question:${question.id}`, t('notify.question.title', { agent }), t('notify.openPanel'), this.select(question.agentKey));
     }
@@ -184,6 +186,7 @@ export class Notifier {
     if (document.visibilityState === 'visible' && document.hasFocus()) return;
     const notification = new Notification(title, { body, tag });
     this.shown.set(tag, notification);
+    if (this.shown.size > SEEN_LIMIT) this.shown.delete(this.shown.keys().next().value as string);
     notification.onclick = () => {
       window.focus();
       onClick();

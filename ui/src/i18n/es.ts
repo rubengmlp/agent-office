@@ -386,6 +386,7 @@ export const es = {
   'scene.stopFollow': 'Dejar de seguir (Esc)',
 
   'notify.permission.title': 'Permiso pendiente · {agent}',
+  'notify.permission.tool': 'Permiso para {tool} · {agent}',
   'notify.question.title': 'Pregunta de {agent}',
   'notify.blocked.title': 'Bloqueado: {agent}',
   'notify.done.title': 'Entrega de {agent}',
