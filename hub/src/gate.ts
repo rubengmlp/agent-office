@@ -53,3 +53,15 @@ export function decideDocumentGate(f: DocumentGateFacts): GateDecision {
   }
   return { pass: true, reason: 'aprobado después del último cambio' };
 }
+
+export type ReviewGateFacts = { path: string | null; round: number | null; cap: number; maxRounds: number };
+
+// The effective cap is maxRounds plus the round of the last SIN ACUERDO: each one opens another budget.
+export function decideReviewGate(f: ReviewGateFacts): GateDecision {
+  if (f.round === null || f.round <= f.cap) return { pass: true, reason: 'ronda dentro del tope' };
+  const spent = f.cap > f.maxRounds ? ` (${f.maxRounds} configuradas más las ${f.cap - f.maxRounds} gastadas antes del último SIN ACUERDO:)` : '';
+  return {
+    pass: false,
+    reason: `Tope de rondas: ${f.path ?? 'el documento'} ya ha agotado sus ${f.cap} rondas de revisión${spent} (review.maxRounds = ${f.maxRounds}); la ronda ${f.round} no se abre. No repitas el REVISAR: escribe a tu jefe que se ha alcanzado el tope y espera su decisión. Solo un SIN ACUERDO: del revisor y la decisión del usuario abren otras ${f.maxRounds} rondas; el usuario también puede subir «Rondas máximas» en Ajustes.`,
+  };
+}

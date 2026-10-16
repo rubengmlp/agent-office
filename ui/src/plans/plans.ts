@@ -1,7 +1,7 @@
 import type { OfficeApi } from '../api';
 import { button, el } from '../dom';
 import { currentLang, plural, t, type MessageKey } from '../i18n';
-import { scoreText } from '../labels';
+import { hasMaxRounds, scoreText } from '../labels';
 import { canDiscard, discardDocument, documentBadge, downloadDocument, openDocument } from '../panel/deliverables';
 import type { Store } from '../store';
 import type { DocumentStatus, DocumentView, PlanDecision } from '../types';
@@ -37,7 +37,7 @@ function floorsText(doc: DocumentView): string {
 
 function roundText(doc: DocumentView): string | null {
   if (doc.round === 0) return null;
-  const round = plural('plans.rounds', doc.round);
+  const round = hasMaxRounds(doc) ? plural('plans.roundsOfMax', doc.round, { max: doc.maxRounds }) : plural('plans.rounds', doc.round);
   return doc.score === null ? round : `${round} · ${scoreText(doc.score)}`;
 }
 

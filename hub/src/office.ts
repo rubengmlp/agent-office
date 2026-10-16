@@ -20,7 +20,7 @@ import {
   type GitRootFn,
   type ResolvedFloor,
 } from './floors';
-import { decideDocumentGate, decideGate, type GateDecision } from './gate';
+import { decideDocumentGate, decideGate, decideReviewGate, type GateDecision } from './gate';
 import { GitQueue, runGit, type GitRunner } from './git';
 import { GUARDED_TOOLS, GuardWatch, guardDecision, tokenize, zonesFor, type GuardContext, type GuardFinding } from './guard';
 import { captureLesson, cleanLesson, deleteLesson, isRoleId, listLessons, memoryContext } from './memory';
@@ -313,6 +313,7 @@ export class Office {
       base: (slug) => this.sync.base(slug),
       ahead: (slug) => this.sync.ahead(slug),
       onChange: (docs) => this.emit({ type: 'documents', data: docs }),
+      maxRounds: () => this.config.review.maxRounds,
     });
     this.watch = new GuardWatch({
       git: this.git,
@@ -587,10 +588,16 @@ export class Office {
   gateMessage(e: HookEvent): GateDecision {
     if (!isHookEvent(e) || e.tool_name !== 'SendMessage') return { pass: true, reason: 'no es un mensaje' };
     const body = text(record(e.tool_input).message) ?? '';
-    if (!DONE_PREFIX.test(body)) return { pass: true, reason: 'no es un aviso de fin' };
+    const parsed = parseProtocol(body);
+    const review = parsed?.kind === 'review' ? parsed : null;
+    if (!review && !DONE_PREFIX.test(body)) return { pass: true, reason: 'no es un aviso de fin' };
     const now = this.now();
     const session = this.touchSession(e, EMPTY_META, now);
     const senderRole = this.roleForEvent(e, session);
+    if (review) {
+      if (isDepartmentFloor(session.floorKind) && isAuthorRole(senderRole)) return this.gateReview(e, review, session, now);
+      return { pass: true, reason: 'solo cuenta el REVISAR de un redactor o artesano' };
+    }
     if (isDepartmentFloor(session.floorKind) && departmentOf(senderRole)) {
       return this.gateDocument(e, body, senderRole, session, now);
     }
@@ -1144,6 +1151,26 @@ export class Office {
     return canonicalRole(resolved);
   }
 
+  // REVISAR: over the effective round cap. Only a block is recorded: a REVISAR: that passes already shows in the
+  // activity when ingest processes it.
+  private gateReview(e: HookEvent, review: { target: string | null; round: number | null }, session: SessionRuntime, now: number): GateDecision {
+    const ref = docRef(review.target, this.docsRoot(), text(e.cwd) ?? session.cwd);
+    if (!ref) return { pass: true, reason: 'sin documento: handleProtocol tampoco lo cuenta' };
+    const cap = this.docs.roundCap(ref);
+    const decision = decideReviewGate({ path: ref.path, round: review.round, cap, maxRounds: this.config.review.maxRounds });
+    if (decision.pass || review.round === null) return decision;
+    this.sql.insertGate.run(now, teamOfSession(session.sessionId), ref.path, 'block', decision.reason);
+    this.pushActivity({
+      ts: now,
+      agentKey: e.agent_id ?? session.sessionId,
+      event: 'GateMessage',
+      tool: 'SendMessage',
+      state: null,
+      summary: { key: 'hub.act.reviewBlockedOverMax', params: { path: ref.path, round: review.round, max: cap } },
+    });
+    return decision;
+  }
+
   private gateDocument(e: HookEvent, body: string, role: string | null, session: SessionRuntime, now: number): GateDecision {
     const parsed = parseProtocol(body);
     const ref = docRef(parsed?.target ?? null, this.docsRoot(), text(e.cwd) ?? session.cwd);
@@ -1210,6 +1237,19 @@ export class Office {
     }
     const round = parsed.round;
     if (parsed.kind === 'review' && isAuthorRole(from.role)) {
+      // gate.sh blocks it, but emit.sh runs in the same PreToolUse: no round opens over the cap.
+      const cap = this.docs.roundCap(ref);
+      if (round !== null && round > cap) {
+        this.pushActivity({
+          ts: now,
+          agentKey: from.key,
+          event: 'Review',
+          tool: 'SendMessage',
+          state: null,
+          summary: { key: 'hub.act.reviewIgnoredOverMax', params: { path: ref.path, round, max: cap } },
+        });
+        return;
+      }
       this.docs.markRequested(ref, round, now);
       this.commitRound(ref, round);
       this.refreshDocuments();
@@ -1237,7 +1277,9 @@ export class Office {
       });
       return;
     }
-    this.sql.insertVerdict.run(now, from.key, from.role, session.floor, verdict, verdict === 'approved' ? 1 : 0, null, ref.path, round, parsed.score);
+    // A SIN ACUERDO: without a round counts at the round the document had, so the cap still renews.
+    const stored = verdict === 'no-agreement' ? (round ?? this.docs.find(ref.path)?.round ?? null) : round;
+    this.sql.insertVerdict.run(now, from.key, from.role, session.floor, verdict, verdict === 'approved' ? 1 : 0, null, ref.path, stored, parsed.score);
     this.docs.markRound(ref, round, now);
     if (verdict === 'approved') {
       this.commitRound(ref, round);

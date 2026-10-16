@@ -134,10 +134,16 @@ export function scoreText(score: number): string {
   return t('docStatus.score', { score });
 }
 
-export function documentStatusText(doc: Pick<DocumentView, 'status' | 'round' | 'score'>): string {
+// An old recording or an older hub may bring no maxRounds: then the round goes alone.
+export function hasMaxRounds(doc: Pick<DocumentView, 'maxRounds'>): boolean {
+  return typeof doc.maxRounds === 'number';
+}
+
+export function documentStatusText(doc: Pick<DocumentView, 'status' | 'round' | 'score' | 'maxRounds'>): string {
   switch (doc.status) {
     case 'revision':
-      return doc.round > 0 ? t('docStatus.reviewRound', { n: doc.round }) : documentStatusLabel('revision');
+      if (doc.round <= 0) return documentStatusLabel('revision');
+      return hasMaxRounds(doc) ? t('docStatus.reviewRoundOfMax', { n: doc.round, max: doc.maxRounds }) : t('docStatus.reviewRound', { n: doc.round });
     case 'aprobado':
       return doc.score === null ? documentStatusLabel('aprobado') : t('docStatus.approvedScore', { score: doc.score });
     default:

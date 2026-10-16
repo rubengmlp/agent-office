@@ -14,6 +14,7 @@ import {
   floorKindHint,
   floorKindLabel,
   floorLabel,
+  hasMaxRounds,
   roleLabel,
   scoreText,
   stackLabel,
@@ -171,7 +172,8 @@ function documentRow(doc: DocumentView): HTMLElement {
   open.title = doc.path;
   const badge = documentBadge(doc, documentStatusLabel(doc.status));
   badge.title = documentStatusHint(doc.status);
-  const round = el('span', 'doc-row-round muted', doc.round > 0 ? t('table.round', { n: doc.round }) : '—');
+  const roundLabel = hasMaxRounds(doc) ? t('table.roundOfMax', { n: doc.round, max: doc.maxRounds }) : t('table.round', { n: doc.round });
+  const round = el('span', 'doc-row-round muted', doc.round > 0 ? roundLabel : '—');
   round.title = t('table.round.hint');
   const score = el('span', 'doc-row-score muted', doc.score !== null ? scoreText(doc.score) : '—');
   score.title = t('table.score.hint');

@@ -99,6 +99,8 @@ export type HubTextParams = {
   'hub.act.verdictIgnored': { who: string; path: string };
   'hub.act.retiredIgnored': { who: string };
   'hub.act.lessonIgnoredReviewer': undefined;
+  'hub.act.reviewBlockedOverMax': { path: string; round: number; max: number };
+  'hub.act.reviewIgnoredOverMax': { path: string; round: number; max: number };
   'hub.act.chatPost': { who: string; channel: string; text: string };
   'hub.act.chatClaim': { who: string; channel: string; files: string };
   'hub.act.chatRelease': { who: string; channel: string; files: string };
@@ -509,6 +511,8 @@ export type DocumentView = {
   title: string;
   status: DocumentStatus;
   round: number;
+  // Effective round cap: review.maxRounds plus the round of the last SIN ACUERDO:.
+  maxRounds: number;
   score: number | null;
   updatedAt: number;
   deliveredAt: number | null;
