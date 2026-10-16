@@ -190,6 +190,8 @@ export type HubTextParams = {
   'hub.api.planNotFound': undefined;
   'hub.api.decisionFields': undefined;
   'hub.api.planBadState': undefined;
+  'hub.api.bodyTooLarge': undefined;
+  'hub.api.internalError': undefined;
   'hub.api.directorClosed': undefined;
   'hub.api.directorUnreachable': undefined;
   'hub.api.floorRequired': undefined;

@@ -2,10 +2,12 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, normalize, resolve, sep } from 'node:path';
 import type { Server, ServerWebSocket } from 'bun';
 import { Hono, type Context, type Next } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { clampWait, errorTextFor } from './chat';
 import type { FloorAdmin } from './floor-admin';
 import { hookResponse, runHook } from './hook';
 import { isRoleId } from './memory';
+import type { Log } from './log';
 import { isHookEvent, type Office, type RelaunchResult } from './office';
 import { claimLaunchToken, mintPanelToken, verifyPanelToken } from './panel-auth';
 import { hostAllowed, keyMatches, originAllowed } from './security';
@@ -23,11 +25,16 @@ export type ServerOptions = {
   dev?: boolean;
   settings?: SettingsService;
   floors?: FloorAdmin;
+  log?: Log;
 };
 
 export type RunningServer = { server: Server<WsData>; stop: () => void };
 
 export const AUTH_TIMEOUT_MS = 1000;
+export const MAX_BODY_BYTES = 8 * 1024 * 1024;
+export const MAX_API_BODY_BYTES = 1024 * 1024;
+export const MAX_WS_PAYLOAD = 16 * 1024;
+const HOOK_ROUTE = /^\/(events|hook|ask|permission|gate[a-z-]*|guard|usage|chat)(\/|$)/;
 const PLAN_DECISIONS: readonly PlanDecision[] = ['ejecutar', 'aparcar', 'cerrar'];
 const MAX_ORDER_LENGTH = 4000;
 const RELAUNCH_FAILURES: Record<Exclude<RelaunchResult, 'ok'>, { key: HubTextKey; status: 403 | 404 | 409 | 501 | 502 }> = {
@@ -52,6 +59,22 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
   app.use('*', async (c, next) => {
     if (!hostAllowed(c.req.header('host'), port)) return c.text('forbidden', 403);
     await next();
+  });
+
+  // The scripts of the agents and the chat may carry whole files; the rest of the panel's API is small forms.
+  const tooLarge = (c: Context) => c.json({ error: { key: 'hub.api.bodyTooLarge' } }, 413);
+  const hookLimit = bodyLimit({ maxSize: MAX_BODY_BYTES, onError: tooLarge });
+  const apiLimit = bodyLimit({ maxSize: MAX_API_BODY_BYTES, onError: tooLarge });
+  app.use('*', async (c, next) => {
+    const path = c.req.path;
+    if (HOOK_ROUTE.test(path) || path.startsWith('/api/chat/')) return hookLimit(c, next);
+    if (path.startsWith('/api/')) return apiLimit(c, next);
+    await next();
+  });
+
+  app.onError((error, c) => {
+    opts.log?.(`${c.req.method} ${c.req.path}: ${error.stack ?? error.message}`);
+    return c.json({ error: { key: 'hub.api.internalError' } }, 500);
   });
 
   const requireKey = async (c: Context, next: Next) => {
@@ -307,6 +330,7 @@ export function startServer(opts: ServerOptions): RunningServer {
     hostname: '127.0.0.1',
     port: opts.port,
     idleTimeout: 30,
+    maxRequestBodySize: MAX_BODY_BYTES,
     fetch(req, srv) {
       if (new URL(req.url).pathname === '/live') {
         const allowed =
@@ -320,6 +344,7 @@ export function startServer(opts: ServerOptions): RunningServer {
     },
     websocket: {
       data: {} as WsData,
+      maxPayloadLength: MAX_WS_PAYLOAD,
       open(ws) {
         ws.data.timer = setTimeout(() => {
           if (!ws.data.authed) ws.close(4401, 'auth');
@@ -351,8 +376,13 @@ export function startServer(opts: ServerOptions): RunningServer {
   running = server;
 
   const unsubscribe = opts.office.subscribe((msg) => {
-    const payload = JSON.stringify(msg);
-    for (const ws of clients) ws.send(payload);
+    broadcast(clients, JSON.stringify(msg), (ws) => {
+      if (clients.delete(ws)) opts.office.panelDisconnected();
+      opts.log?.('un panel dejó de recibir mensajes y se desconectó');
+      try {
+        ws.close(1011, 'send failed');
+      } catch {}
+    });
   });
 
   return {
@@ -362,6 +392,19 @@ export function startServer(opts: ServerOptions): RunningServer {
       server.stop(true);
     },
   };
+}
+
+type Sender = { send(payload: string): number | void };
+
+// One client that cannot take the message must not leave the others without it: each send is its own try.
+export function broadcast<C extends Sender>(clients: Iterable<C>, payload: string, drop: (client: C) => void): void {
+  for (const client of [...clients]) {
+    try {
+      if (client.send(payload) === 0) drop(client);
+    } catch {
+      drop(client);
+    }
+  }
 }
 
 export const CUSTOM_MODELS_INDEX = '/assets/characters/custom/index.json';

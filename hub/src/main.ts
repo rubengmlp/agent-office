@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   PROFILES_DIR,
@@ -16,26 +16,23 @@ import {
 import { configTargets, watchTargets } from './config-watch';
 import { dbRegistry, openDb } from './db';
 import { createFloorAdmin } from './floor-admin';
+import { createLog } from './log';
 import { Office } from './office';
 import { newNonce } from './panel-auth';
 import { panelUrl } from './panel-url';
 import { loadProfiles } from './profiles';
-import { prune } from './prune';
+import { pruneInChunks } from './prune';
 import { startRecording } from './recorder';
 import { startServer } from './server';
 import { createSettings } from './settings';
+import { shutdownSequence } from './shutdown';
 
 const DAY_MS = 86_400_000;
 const TICK_MS = 5000;
 
-function logLine(p: Paths, text: string): void {
-  try {
-    appendFileSync(join(p.home, 'hub.log'), `${new Date().toISOString()} ${text}\n`, { mode: 0o600 });
-  } catch {}
-}
-
 export function main(argv: string[]): void {
   const p = paths();
+  const logLine = createLog(p.home);
   const key = readKey(p);
   if (!key) {
     console.error('No hay key de Agent Office. Ejecuta primero: bun run setup');
@@ -57,6 +54,10 @@ export function main(argv: string[]): void {
     launch: { agentsDir: p.agentsDir, sessionsDir: p.sessionsDir, directorFloors: p.directorFloors },
     registry: dbRegistry(db),
     rawDir: process.env.AGENT_OFFICE_RAW === '1' ? RAW_FIXTURES_DIR : null,
+    log: (text) => {
+      console.error(`Agent Office: ${text}`);
+      logLine(text);
+    },
   });
   const recorder = process.env.AGENT_OFFICE_RECORD ? startRecording(office, process.env.AGENT_OFFICE_RECORD) : null;
   const reload = () => {
@@ -67,7 +68,7 @@ export function main(argv: string[]): void {
     } catch (error) {
       const message = `No se pudo recargar la configuración: ${(error as Error).message}`;
       console.error(message);
-      logLine(p, message);
+      logLine(message);
     }
   };
   const settings = createSettings(p, () => loadProfiles(PROFILES_DIR), reload);
@@ -80,11 +81,16 @@ export function main(argv: string[]): void {
     dev: process.env.AGENT_OFFICE_DEV === '1',
     settings,
     floors,
+    log: logLine,
   });
   const stopWatching = watchTargets(configTargets(p.home, PROFILES_DIR), reload);
   office.start();
   const daily = () => {
-    prune(db, Date.now(), config.retentionDays);
+    pruneInChunks(db, Date.now(), config.retentionDays).catch((error: unknown) => {
+      const message = `no se pudo aplicar la retención: ${(error as Error).message}`;
+      console.error(`Agent Office: ${message}`);
+      logLine(message);
+    });
     office.expireSources().catch((error: unknown) => console.error(`No se pudieron retirar fuentes antiguas: ${(error as Error).message}`));
   };
   daily();
@@ -93,7 +99,7 @@ export function main(argv: string[]): void {
 
   const url = `http://127.0.0.1:${config.port}`;
   console.log(`Agent Office escuchando en ${url}`);
-  logLine(p, `hub arrancado en ${url} (pid ${process.pid})`);
+  logLine(`hub arrancado en ${url} (pid ${process.pid})`);
   if (!existsSync(join(PUBLIC_DIR, 'index.html'))) console.log('La interfaz no está compilada: bun run build');
   if (process.env.AGENT_OFFICE_RECORD) console.log(`Grabando en ${process.env.AGENT_OFFICE_RECORD}`);
   if (argv.includes('--open')) openSessions(p, panelUrl(config.port, key, Date.now(), newNonce()));
@@ -102,25 +108,30 @@ export function main(argv: string[]): void {
   process.on('uncaughtException', (error) => {
     const message = `error no capturado: ${error.stack ?? String(error)}`;
     console.error(`Agent Office: ${message}`);
-    logLine(p, message);
+    logLine(message);
   });
   process.on('unhandledRejection', (reason) => {
     const message = `promesa rechazada sin capturar: ${reason instanceof Error ? (reason.stack ?? reason.message) : String(reason)}`;
     console.error(`Agent Office: ${message}`);
-    logLine(p, message);
+    logLine(message);
   });
 
+  let closing = false;
   const shutdown = (signal: string) => {
+    if (closing) {
+      console.log(`Agent Office: ${signal} otra vez, salgo sin esperar`);
+      process.exit(1);
+    }
+    closing = true;
     console.log(`Agent Office: ${signal} recibido, cerrando el hub`);
-    logLine(p, `${signal} recibido, hub cerrado`);
     clearInterval(pruneTimer);
     clearInterval(tickTimer);
     stopWatching();
-    office.stop();
     recorder?.stop();
-    stop();
-    db.close();
-    process.exit(0);
+    shutdownSequence({ stopServer: stop, office, db })
+      .then(({ timedOut }) => logLine(`${signal} recibido, hub cerrado${timedOut ? ' (había tareas sin terminar)' : ''}`))
+      .catch((error: unknown) => logLine(`error al cerrar: ${(error as Error).message}`))
+      .finally(() => process.exit(0));
   };
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(signal, () => shutdown(signal));
 }

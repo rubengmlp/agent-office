@@ -775,6 +775,8 @@ export const en: Messages = {
   'hub.api.planNotFound': 'Plan not found',
   'hub.api.decisionFields': 'path and decision (ejecutar, aparcar or cerrar) are required',
   'hub.api.planBadState': 'The plan does not accept that decision in its current state',
+  'hub.api.bodyTooLarge': 'The request is too large',
+  'hub.api.internalError': 'Internal hub error; see hub.log',
   'hub.api.directorClosed': 'The director is not open',
   'hub.api.directorUnreachable': 'The order could not be delivered to the director',
   'hub.api.floorRequired': 'floor is required',

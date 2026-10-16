@@ -774,6 +774,8 @@ export const es = {
   'hub.api.planNotFound': 'Plan no encontrado',
   'hub.api.decisionFields': 'path y decision (ejecutar, aparcar o cerrar) son obligatorios',
   'hub.api.planBadState': 'El plan no admite esa decisión en su estado actual',
+  'hub.api.bodyTooLarge': 'La petición es demasiado grande',
+  'hub.api.internalError': 'Error interno del hub; mira hub.log',
   'hub.api.directorClosed': 'El director no está abierto',
   'hub.api.directorUnreachable': 'No se pudo entregar la orden al director',
   'hub.api.floorRequired': 'floor es obligatorio',

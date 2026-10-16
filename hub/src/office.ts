@@ -24,6 +24,7 @@ import {
 import { decideDocumentGate, decideGate, decideReadCap, decideReviewGate, kilobytes, planByteLimit, type GateDecision, type ReviewGateFacts } from './gate';
 import { GitQueue, runGit, type GitRunner } from './git';
 import { GUARDED_TOOLS, GuardWatch, fingerprint, gitIgnored, guardDecision, shellWrites, tokenize, zonesFor, type GuardContext, type GuardFinding } from './guard';
+import type { Log } from './log';
 import { captureLesson, cleanLesson, deleteLesson, isRoleId, listLessons, memoryContext } from './memory';
 import { isPrivate, publicDetail, publicSummary, publicText, storedPayload, visibleKind } from './privacy';
 import { detectStack, profileFor, type Profiles } from './profiles';
@@ -214,6 +215,8 @@ export type OfficeOptions = {
   tmux?: TmuxFn;
   // Id of this hub, written in the marker of its snapshots in redaccion/.fuentes.
   hubId: string;
+  // Where background failures and broken listeners are written; console.error when absent.
+  log?: Log;
 };
 
 const MAX_ACTIVITY = 300;
@@ -333,6 +336,7 @@ export class Office {
   private readonly briefAllowance = new Map<string, number>();
   private readonly sessionFlags = new Map<string, string>();
   private readonly tmux: TmuxFn;
+  private readonly log: Log;
   private readonly hashes = new Map<string, { mtime: number; size: number; hash: string | null }>();
   private lastLaunchCheck = 0;
 
@@ -342,6 +346,7 @@ export class Office {
     this.now = opts.now ?? Date.now;
     this.deliverFn = opts.deliverFn ?? deliver;
     this.tmux = opts.tmux ?? runTmux;
+    this.log = opts.log ?? ((text) => console.error(`Agent Office: ${text}`));
     this.git = opts.git ?? runGit;
     this.floors = new FloorResolver(
       () => this.config,
@@ -1412,7 +1417,7 @@ export class Office {
 
   private background(task: Promise<unknown>): void {
     const tracked = task.catch((error: unknown) => {
-      console.error(`Agent Office: tarea en segundo plano fallida: ${(error as Error).message}`);
+      this.log(`tarea en segundo plano fallida: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
     });
     this.pending.add(tracked);
     void tracked.finally(() => this.pending.delete(tracked));
@@ -2580,8 +2585,8 @@ export class Office {
     for (const listener of this.listeners) {
       try {
         listener(msg);
-      } catch {
-        this.listeners.delete(listener);
+      } catch (error) {
+        this.log(`un oyente falló con ${msg.type}: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
       }
     }
   }
