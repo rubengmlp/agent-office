@@ -634,22 +634,21 @@ describe('delivered plans', () => {
   const DIRECTOR = 'ffffffff-0000-4000-8000-000000000003';
   const sent: { socket: string; payload: string }[] = [];
 
-  async function deliveredPlan(): Promise<string> {
+  async function deliveredPlan(floors: string[] = ['mobile']): Promise<string> {
     sent.length = 0;
     office(undefined, {
       deliverFn: async (socket, payload) => {
         sent.push({ socket, payload });
       },
     });
-    const mobile = originAndClone(h.root, 'mobile');
-    h.config.floors.mobile = floor(mobile.repo);
+    for (const name of floors) h.config.floors[name] = floor(originAndClone(h.root, name).repo);
     const cwd = join(docs, 'redaccion');
     h.office.ingest(ev(LEAD, cwd, 'SessionStart', {}), leadMeta);
     spawn(LEAD, cwd, 'redactor-login', 'office-redactor', 'c1');
     start(LEAD, cwd, 'ared-1', 'redactor-login');
     spawn(LEAD, cwd, 'revisor-planes-login-r1', 'office-revisor-planes', 'c2');
     start(LEAD, cwd, 'arev-1', 'revisor-planes-login-r1');
-    expect((await h.office.syncSources({ slug: 'login', floors: ['mobile'] })).ok).toBe(true);
+    expect((await h.office.syncSources({ slug: 'login', floors })).ok).toBe(true);
     writeFileSync(join(docs, PLAN), '# Login con Apple\n\n## Pasos\n1. migración\n');
     touch(join(docs, PLAN), -60_000);
     say(LEAD, cwd, 'ared-1', 'redactor-login', 'team-lead', `REVISAR: ${PLAN} ronda 1`);
@@ -728,6 +727,24 @@ describe('delivered plans', () => {
     expect(doc(PLAN)).toMatchObject({ status: 'cerrado', base: [{ floor: 'mobile' }] });
     expect(await h.office.decidePlan(PLAN, 'ejecutar')).toBe('invalid-state');
     expect(await h.office.discardDocument(PLAN)).toBe('closed');
+  });
+
+  test('executing a plan of four floors lets the director brief four leads, and a user instruction resets it', async () => {
+    await deliveredPlan(['mobile', 'backend', 'web', 'admin']);
+    director(join(h.root, 'director.sock'));
+    expect(doc(PLAN)?.base).toHaveLength(4);
+    const brief = (lead: string) =>
+      h.office.gateMessage(ev(DIRECTOR, h.workspace, 'PreToolUse', { tool_name: 'SendMessage', tool_input: { to: lead, message: `ENCARGO: parte de ${lead}` } }));
+    h.clock.advance(1000);
+    expect(await h.office.decidePlan(PLAN, 'ejecutar')).toBe('ok');
+    h.clock.advance(1000);
+    for (const lead of ['lead-mobile', 'lead-backend', 'lead-web', 'lead-admin']) expect(brief(lead).pass).toBe(true);
+    expect(brief('lead-mobile').pass).toBe(false);
+    h.clock.advance(1000);
+    expect(await h.office.order(DIRECTOR, 'Otra cosa')).toBe('ok');
+    h.clock.advance(1000);
+    for (const lead of ['lead-mobile', 'lead-backend', 'lead-web']) expect(brief(lead).pass).toBe(true);
+    expect(brief('lead-admin').pass).toBe(false);
   });
 
   test('the document type comes from the line after the title: accents, case and English accepted, implementation by default', () => {
