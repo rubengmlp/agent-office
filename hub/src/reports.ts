@@ -105,6 +105,10 @@ export function buildReport(db: Database, s: ReportSubject, nameOf: (key: string
 }
 
 export function saveReport(db: Database, report: ReportView, now: number): void {
+  db.transaction(() => storeReport(db, report, now))();
+}
+
+function storeReport(db: Database, report: ReportView, now: number): void {
   const data = JSON.stringify({ ...report, live: false, tokens: null });
   db.query(
     `INSERT INTO reports (agent_key, floor, role_id, name, started_at, ended_at, summary, data, updated_at)

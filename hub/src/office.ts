@@ -152,6 +152,7 @@ type SessionRuntime = {
   rulesHash: string | null;
   launchHash: string | null;
   needsRelaunch: boolean;
+  persistedAt: number;
 };
 
 type SessionRow = {
@@ -240,6 +241,9 @@ const GIT_ROOT_LABEL = '. (git)';
 const METER_SWEEP_MS = 60_000;
 const RULES_MAX_CHARS = 12_000;
 const LAUNCH_CHECK_MS = 30_000;
+export const PERSIST_EVERY_MS = 60_000;
+export const SNAPSHOT_CLOSED_DOCS = 100;
+const CLOSED_DOCS: ReadonlySet<DocumentStatus> = new Set<DocumentStatus>(['cerrado', 'descartado']);
 const SAFE_NAME = /^[a-z0-9][a-z0-9-]*$/;
 const SAFE_ID = /^[A-Za-z0-9_-]+$/;
 const RULES_NOTE = 'Las reglas de tu puesto cambiaron. Estas son las nuevas y mandan sobre las que recibiste al arrancar:';
@@ -251,6 +255,11 @@ const VERDICT_DETAILS: Record<Exclude<VerdictKind, 'tests'>, HubText> = {
   'no-agreement': { key: 'hub.detail.verdictNoAgreement' },
 };
 export const DISCARDED_MARK = '> **Descartado**';
+
+export function recentDocuments(docs: DocumentView[], closedLimit = SNAPSHOT_CLOSED_DOCS): DocumentView[] {
+  let closed = 0;
+  return docs.filter((doc) => !CLOSED_DOCS.has(doc.status) || ++closed <= closedLimit);
+}
 
 export const ROLE_LABELS: Record<RoleId, string> = {
   director: 'director',
@@ -424,6 +433,8 @@ export class Office {
   }
 
   start(): void {
+    // A question still pending in the database lost the request that held it when the hub went down.
+    this.sql.releaseStalePending.run(this.now());
     this.docs.watch();
     this.refreshDocuments();
     this.background(this.sync.cleanup(this.docs.finishedPlanSlugs()));
@@ -452,7 +463,7 @@ export class Office {
       questions: this.desk.list(),
       messages: this.messages.slice(-100),
       activity: this.activity.slice(-MAX_ACTIVITY),
-      documents: this.withPlanTokens(this.docs.list()),
+      documents: this.withPlanTokens(recentDocuments(this.docs.list())),
       alerts: this.alerts(),
       usage: this.usage.view(),
       chat: this.chat.recent(SNAPSHOT_LIMIT),
@@ -468,8 +479,13 @@ export class Office {
     return this.usage.ingest(raw);
   }
 
+  // One transaction per event: the writes of a hook (event, agent, edit, verdict, report) commit together, once.
   ingest(e: HookEvent, meta: HookMeta = EMPTY_META): string | null {
     if (!isHookEvent(e)) return null;
+    return this.opts.db.transaction(() => this.ingestEvent(e, meta))();
+  }
+
+  private ingestEvent(e: HookEvent, meta: HookMeta): string | null {
     const now = this.now();
     this.dumpRaw(e, now);
     const session = this.touchSession(e, meta, now);
@@ -1603,7 +1619,7 @@ export class Office {
     if (!roleId || !remembers(session.floorKind) || !inOfficeScope({ floorKind: session.floorKind, sessionRole: agent.role, leadRole: null })) {
       return null;
     }
-    const lessons = listLessons(this.opts.db, agent.floor, roleId);
+    const lessons = listLessons(this.opts.db, agent.floor, roleId, { userFirst: true });
     const reports = savedReports(this.opts.db, agent.floor, roleId, 3, agent.key).map((r) => ({
       date: isoDate(r.endedAt ?? r.startedAt),
       name: r.name,
@@ -2081,6 +2097,7 @@ export class Office {
         rulesHash: null,
         launchHash: null,
         needsRelaunch: false,
+        persistedAt: now,
       };
       this.sessions.set(e.session_id, session);
       changed = true;
@@ -2116,9 +2133,10 @@ export class Office {
       changed = true;
     }
     session.updatedAt = now;
-    if (changed) {
+    // updated_at decides which sessions come back after a restart: a quiet one is written at most once a minute.
+    if (changed || now - session.persistedAt >= PERSIST_EVERY_MS) {
       this.persistSession(session);
-      this.emitSession(session);
+      if (changed) this.emitSession(session);
     }
     return session;
   }
@@ -2569,6 +2587,7 @@ export class Office {
   }
 
   private persistSession(s: SessionRuntime): void {
+    s.persistedAt = this.now();
     this.sql.upsertSession.run(s.sessionId, s.cwd, s.floor, s.role, s.name, s.socket, s.token, s.team, s.startedAt, s.updatedAt, s.endedAt);
   }
 
@@ -2639,6 +2658,7 @@ export class Office {
         rulesHash: row.rules_hash,
         launchHash: row.launch_hash,
         needsRelaunch: false,
+        persistedAt: row.updated_at,
       };
       this.sessions.set(row.session_id, session);
       if (this.opts.launch && (row.rules_hash === null || row.launch_hash === null)) {
@@ -3004,6 +3024,7 @@ function prepare(db: Database) {
       'INSERT OR REPLACE INTO questions (id, session_id, agent_key, floor, payload, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
     ),
     closeQuestion: db.query('UPDATE questions SET status = ?, resolved_at = ? WHERE id = ?'),
+    releaseStalePending: db.query("UPDATE questions SET status = 'released', resolved_at = ? WHERE status = 'pending'"),
     insertAlert: db.query('INSERT INTO alerts (ts, level, floor, agent_key, files) VALUES (?, ?, ?, ?, ?)'),
     recentAlerts: db.query<AlertRow, [number]>('SELECT id, ts, level, floor, agent_key, files FROM alerts ORDER BY ts DESC, id DESC LIMIT ?'),
   };

@@ -51,6 +51,10 @@ export function cleanLesson(text: string): string | null {
 }
 
 export function captureLesson(db: Database, input: LessonInput, limits: MemoryConfig): CaptureResult {
+  return db.transaction(() => capture(db, input, limits))();
+}
+
+function capture(db: Database, input: LessonInput, limits: MemoryConfig): CaptureResult {
   const text = cleanLesson(input.text);
   if (!text) return { status: 'invalid' };
   if (input.origin === 'agent' && input.agentKey) {
@@ -81,9 +85,11 @@ export function pruneLessons(db: Database, floor: string, role: RoleId, maxLesso
     .run(floor, role, excess).changes;
 }
 
-export function listLessons(db: Database, floor: string, role: RoleId): LessonView[] {
+// userFirst puts the lessons the user wrote ahead of the agents' ones: the context block cuts from the end.
+export function listLessons(db: Database, floor: string, role: RoleId, opts: { userFirst?: boolean } = {}): LessonView[] {
+  const order = opts.userFirst ? "(origin = 'user') DESC, created_at DESC, id DESC" : 'created_at DESC, id DESC';
   return db
-    .query<LessonRow, [string, string]>('SELECT * FROM lessons WHERE floor = ? AND role = ? ORDER BY created_at DESC, id DESC')
+    .query<LessonRow, [string, string]>(`SELECT * FROM lessons WHERE floor = ? AND role = ? ORDER BY ${order}`)
     .all(floor, role)
     .map(toView);
 }
@@ -113,7 +119,7 @@ export type ContextInput = {
 export function memoryContext(input: ContextInput): string | null {
   const sections: { title: string; lines: string[] }[] = [
     {
-      title: 'Lecciones registradas en sesiones anteriores, de la más reciente a la más antigua:',
+      title: 'Lecciones registradas en sesiones anteriores, las del usuario primero:',
       lines: input.lessons.map((l) => `- ${l.text}`),
     },
     {

@@ -153,8 +153,11 @@ describe('synthetic events from the docs', () => {
     expect(c.detail).toEqual({ key: 'hub.detail.asks', params: { question: '¿El login con Apple va antes que el de Google?' } });
     expect(c.message).toEqual({ to: 'team-lead', text: expect.stringContaining('PREGUNTA:') });
     const prose = classify({ ...base, hook_event_name: 'PreToolUse', tool_name: 'SendMessage', tool_input: { to: 'team-lead', message: 'Pregunta: ¿sigo?' } }, flutter);
-    expect(prose.state).toBe('talking');
-    expect(prose.question).toBeNull();
+    expect(prose.state).toBe('asking');
+    expect(prose.question).toBe('¿sigo?');
+    const plain = classify({ ...base, hook_event_name: 'PreToolUse', tool_name: 'SendMessage', tool_input: { to: 'team-lead', message: 'Preguntar al usuario si seguimos' } }, flutter);
+    expect(plain.state).toBe('talking');
+    expect(plain.question).toBeNull();
   });
 
   test('edits are recorded after the tool ran', () => {

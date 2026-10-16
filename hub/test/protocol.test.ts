@@ -50,14 +50,16 @@ describe('protocol messages', () => {
     expect(taskLine('PARTIR: redaccion/planes/login.md — fases: backend | mobile')).toBeNull();
   });
 
-  test('PLAN carries the plan path, PREGUNTA has no target and both are case sensitive', () => {
+  test('PLAN carries the plan path, PREGUNTA has no target and both ignore case', () => {
     expect(parseProtocol('PLAN: redaccion/planes/login.md — resumen en cinco líneas — léelo y espera la orden')).toMatchObject({
       kind: 'plan',
       target: 'redaccion/planes/login.md',
     });
     expect(parseProtocol('PREGUNTA: ¿Apple o Google primero? — opciones: Apple | Google')).toMatchObject({ kind: 'question', target: null });
-    expect(parseProtocol('Plan: primero el login y después el registro')).toBeNull();
-    expect(parseProtocol('pregunta: ¿seguro?')).toBeNull();
+    expect(parseProtocol('plan: redaccion/planes/login.md — resumen')).toMatchObject({ kind: 'plan', target: 'redaccion/planes/login.md' });
+    expect(parseProtocol('pregunta: ¿seguro?')).toMatchObject({ kind: 'question', target: null });
+    expect(parseProtocol('Pregunta: ¿seguro?')).toMatchObject({ kind: 'question' });
+    expect(parseProtocol('Planifico primero el login')).toBeNull();
   });
 
   test('document paths are normalised to the documents repository', () => {

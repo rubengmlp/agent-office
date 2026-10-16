@@ -62,7 +62,7 @@ export const READ_TOOLS = new Set([
 export const SPAWN_TOOLS = new Set(['Agent', 'Task']);
 export const BLOCK_PREFIX = /^\s*BLOQUEADO\s*:/i;
 export const DONE_PREFIX = /^\s*HECHO\s*:/i;
-export const QUESTION_PREFIX = /^\s*PREGUNTA\s*:/;
+export const QUESTION_PREFIX = /^\s*PREGUNTA\s*:/i;
 export const NEVER_FAILS = /\|\|\s*(?:true\b|:(?=\s|$|[;&)])|exit\s+0\b)|;\s*true\s*$/;
 export const TEST_FAILED: readonly RegExp[] = [
   /^\s*[1-9]\d* fail\s*$/m,

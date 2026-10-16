@@ -23,8 +23,8 @@ const PREFIXES: readonly [ProtocolKind, RegExp][] = [
   ['done', /^\s*HECHO\s*:\s*/i],
   ['lesson', /^\s*LECCI[OÓ]N\s*:\s*/i],
   ['blocked', /^\s*BLOQUEADO\s*:\s*/i],
-  ['plan', /^\s*PLAN\s*:\s*/],
-  ['question', /^\s*PREGUNTA\s*:\s*/],
+  ['plan', /^\s*PLAN\s*:\s*/i],
+  ['question', /^\s*PREGUNTA\s*:\s*/i],
   ['split', /^\s*PARTIR\s*:\s*/i],
   ['waiting', /^\s*ESPERO\s*:\s*/i],
 ];

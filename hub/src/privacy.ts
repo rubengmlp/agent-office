@@ -11,10 +11,21 @@ export function visibleKind(kind: FloorKind, inOffice: boolean): FloorKind {
   return inOffice ? kind : 'observed';
 }
 
+export const MAX_STORED_RESPONSE = 8 * 1024;
+
+// A tool response (a whole file, a long build log) is the bulk of the events table: past the cap only its head is kept.
+export function cappedResponse(response: unknown): unknown {
+  if (response === undefined || response === null) return response;
+  const raw = typeof response === 'string' ? response : (JSON.stringify(response) ?? '');
+  const bytes = Buffer.byteLength(raw);
+  if (bytes <= MAX_STORED_RESPONSE) return response;
+  return { truncated: true, bytes, head: Buffer.from(raw).subarray(0, MAX_STORED_RESPONSE).toString('utf8').replace(/\uFFFD+$/, '') };
+}
+
 export function storedPayload(e: HookEvent, kind: FloorKind): string | null {
   if (isPrivate(kind)) return null;
-  const { transcript_path: _transcript, agent_transcript_path: _agentTranscript, ...rest } = e;
-  return JSON.stringify(rest);
+  const { transcript_path: _transcript, agent_transcript_path: _agentTranscript, tool_response: response, ...rest } = e;
+  return JSON.stringify(response === undefined ? rest : { ...rest, tool_response: cappedResponse(response) });
 }
 
 export function publicDetail(c: Classified, kind: FloorKind): HubText {

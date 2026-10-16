@@ -293,6 +293,7 @@ export function openDb(file: string, migrations: readonly Migration[] = MIGRATIO
       chmodSync(file, 0o600);
     } catch {}
     db.run('PRAGMA journal_mode = WAL');
+    db.run('PRAGMA synchronous = NORMAL');
   }
   db.run('PRAGMA busy_timeout = 2000');
   migrate(db, migrations);

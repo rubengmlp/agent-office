@@ -25,7 +25,9 @@ export type PlanSubject = { name: string | null; roleId: RoleId | null; floorKin
 export const MAX_LINE = 4 * 1024 * 1024;
 export const MAX_LINE_READ = 16 * 1024 * 1024;
 export const MAX_FILE = 200 * 1024 * 1024;
-export const READ_BUDGET = 64 * 1024 * 1024;
+export const READ_BUDGET = 2 * 1024 * 1024;
+export const READ_CHUNK = 1024 * 1024;
+const MIN_CHUNK = 64 * 1024;
 export const SWEEP_BUDGET = 16 * 1024 * 1024;
 const SWEEP_MISS_MS = 60_000;
 const LF = 0x0a;
@@ -262,6 +264,8 @@ export class TokenMeter {
         this.scheduled.delete(agent.key);
         try {
           this.readNow(agent);
+          // A long transcript is read in slices: the next one goes behind whatever else is waiting in the loop.
+          if (this.behind(agent.key)) void this.schedule(agent);
         } finally {
           resolve();
         }
@@ -303,7 +307,7 @@ export class TokenMeter {
         this.more.add(agent.key);
         break;
       }
-      const result = this.readChunk(file, cursor, size);
+      const result = this.readChunk(file, cursor, size, budget - spent);
       if (result.consumed === 0) break;
       spent += result.consumed;
       cursor = { ...cursor, offset: cursor.offset + result.consumed, lastMsgId: result.lastMsgId, lastOut: result.lastOut, skipped: cursor.skipped + result.skipped };
@@ -361,18 +365,19 @@ export class TokenMeter {
     };
   }
 
-  private readChunk(file: string, cursor: TokenCursor, size: number): ChunkResult {
+  private readChunk(file: string, cursor: TokenCursor, size: number, room: number): ChunkResult {
     const left = size - cursor.offset;
-    let buf = readRange(file, cursor.offset, Math.min(left, MAX_LINE));
-    let result = parseChunk(buf, cursor, this.opts.now());
-    if (result.consumed === 0 && left > buf.length) {
-      buf = readRange(file, cursor.offset, Math.min(left, MAX_LINE_READ));
-      result = parseChunk(buf, cursor, this.opts.now());
-      if (result.consumed === 0 && buf.length >= MAX_LINE_READ) {
-        return { consumed: buf.length, deltas: [], lastMsgId: cursor.lastMsgId, lastOut: cursor.lastOut, skipped: 1 };
-      }
+    let result: ChunkResult | null = null;
+    let length = 0;
+    for (const limit of [Math.max(1, Math.min(READ_CHUNK, room)), MIN_CHUNK, MAX_LINE, MAX_LINE_READ]) {
+      length = Math.min(left, limit);
+      result = parseChunk(readRange(file, cursor.offset, length), cursor, this.opts.now());
+      if (result.consumed > 0 || left <= length) break;
     }
-    return result;
+    if (result && result.consumed === 0 && length >= MAX_LINE_READ) {
+      return { consumed: length, deltas: [], lastMsgId: cursor.lastMsgId, lastOut: cursor.lastOut, skipped: 1 };
+    }
+    return result as ChunkResult;
   }
 
   private addRow(subject: Subject, delta: TokenDelta): void {
