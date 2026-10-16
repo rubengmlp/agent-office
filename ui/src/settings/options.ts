@@ -9,7 +9,16 @@ export const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._[\]-]{0,79}$/;
 
 export const BRANCH_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/;
 
-export type NumberKey = 'maxRounds' | 'maxLessons' | 'maxLessonsPerSession' | 'maxContextChars' | 'leaveAfterMinutes';
+export type NumberKey =
+  | 'maxRounds'
+  | 'maxPlanBytes'
+  | 'maxReviewerReads'
+  | 'maxLessons'
+  | 'maxLessonsPerSession'
+  | 'maxContextChars'
+  | 'leaveAfterMinutes'
+  | 'maxBriefsPerOrder'
+  | 'stalledAfterMinutes';
 
 export type NumberField = {
   key: NumberKey;
@@ -81,6 +90,8 @@ export const DEPARTMENT_ROWS: readonly { key: keyof DepartmentsConfig; labelKey:
 
 export const REVIEW_FIELDS: readonly NumberField[] = [
   { key: 'maxRounds', labelKey: 'settings.field.maxRounds', hintKey: 'settings.field.hint.maxRounds', min: 1, max: 10 },
+  { key: 'maxPlanBytes', labelKey: 'settings.field.maxPlanBytes', hintKey: 'settings.field.hint.maxPlanBytes', min: 0, max: 200000 },
+  { key: 'maxReviewerReads', labelKey: 'settings.field.maxReviewerReads', hintKey: 'settings.field.hint.maxReviewerReads', min: 0, max: 500 },
 ];
 
 export const MEMORY_FIELDS: readonly NumberField[] = [
@@ -108,6 +119,20 @@ export const OFFICE_FIELDS: readonly NumberField[] = [
     hintKey: 'settings.field.hint.leaveAfterMinutes',
     min: 1,
     max: 60,
+  },
+  {
+    key: 'maxBriefsPerOrder',
+    labelKey: 'settings.field.maxBriefsPerOrder',
+    hintKey: 'settings.field.hint.maxBriefsPerOrder',
+    min: 0,
+    max: 20,
+  },
+  {
+    key: 'stalledAfterMinutes',
+    labelKey: 'settings.field.stalledAfterMinutes',
+    hintKey: 'settings.field.hint.stalledAfterMinutes',
+    min: 0,
+    max: 240,
   },
 ];
 

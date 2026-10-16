@@ -31,8 +31,8 @@ describe('config', () => {
     expect(c.roles.dev).toEqual({ model: 'haiku', effort: 'max' });
     expect(c.roles.tester).toEqual(DEFAULT_ROLES.tester);
     expect(c.roles.director).toEqual({ model: 'fable', effort: 'xhigh' });
-    expect(c.review.maxRounds).toBe(4);
-    expect(c.memory).toEqual({ maxLessons: 10, maxLessonsPerSession: 3, maxContextChars: 4000 });
+    expect(c.review.maxRounds).toBe(2);
+    expect(c.memory).toEqual({ maxLessons: 10, maxLessonsPerSession: 3, maxContextChars: 2500 });
     expect(c.departments).toEqual({ redaccion: false, mantenimiento: true });
     expect(c.docsRepo).toBe('~/Projects/office-docs');
   });
@@ -73,35 +73,78 @@ describe('config', () => {
     expect(c.roles).toEqual(DEFAULT_ROLES);
   });
 
-  test('the plan reviewer defaults to opus with medium effort and the saved v1 default moves there once', () => {
-    expect(DEFAULT_ROLES['revisor-planes']).toEqual({ model: 'opus', effort: 'medium' });
+  test('the v1 plan reviewer default goes through v2 to the v3 default once', () => {
     expect(defaultConfig().configVersion).toBe(CONFIG_VERSION);
+    expect(CONFIG_VERSION).toBe(3);
     const legacy = { roles: { 'revisor-planes': { model: 'sonnet', effort: 'xhigh' }, dev: { model: 'haiku', effort: 'low' } } };
     const v1 = normalizeConfig(legacy);
     expect(v1.configVersion).toBe(1);
     expect(v1.roles['revisor-planes']).toEqual({ model: 'sonnet', effort: 'xhigh' });
     const migrated = migrateConfig(v1);
     expect(migrated.changed).toBe(true);
-    expect(migrated.config.configVersion).toBe(2);
-    expect(migrated.config.roles['revisor-planes']).toEqual({ model: 'opus', effort: 'medium' });
+    expect(migrated.config.configVersion).toBe(3);
+    expect(migrated.config.roles['revisor-planes']).toEqual({ model: 'sonnet', effort: 'medium' });
     expect(migrated.config.roles.dev).toEqual({ model: 'haiku', effort: 'low' });
     const chosen = migrateConfig(normalizeConfig({ roles: { 'revisor-planes': { model: 'sonnet', effort: 'high' } } }));
     expect(chosen.config.roles['revisor-planes']).toEqual({ model: 'sonnet', effort: 'high' });
-    expect(chosen.config.configVersion).toBe(2);
-    const v2 = migrateConfig(normalizeConfig({ ...legacy, configVersion: 2 }));
-    expect(v2).toMatchObject({ changed: false, config: { roles: { 'revisor-planes': { model: 'sonnet', effort: 'xhigh' } } } });
+    const v3 = migrateConfig(normalizeConfig({ ...legacy, configVersion: 3 }));
+    expect(v3).toMatchObject({ changed: false, config: { roles: { 'revisor-planes': { model: 'sonnet', effort: 'xhigh' } } } });
 
     const { dir, cleanup } = tempDir();
     const p = fakePaths(dir);
     writeFileSync(p.config, JSON.stringify(legacy));
-    expect(loadConfig(p).roles['revisor-planes']).toEqual({ model: 'opus', effort: 'medium' });
+    expect(loadConfig(p).roles['revisor-planes']).toEqual({ model: 'sonnet', effort: 'medium' });
     const saved = JSON.parse(readFileSync(p.config, 'utf8'));
-    expect(saved.configVersion).toBe(2);
-    expect(saved.roles['revisor-planes']).toEqual({ model: 'opus', effort: 'medium' });
+    expect(saved.configVersion).toBe(3);
+    expect(saved.roles['revisor-planes']).toEqual({ model: 'sonnet', effort: 'medium' });
     saved.roles['revisor-planes'] = { model: 'sonnet', effort: 'xhigh' };
     writeFileSync(p.config, JSON.stringify(saved));
     expect(loadConfig(p).roles['revisor-planes']).toEqual({ model: 'sonnet', effort: 'xhigh' });
     cleanup();
+  });
+
+  test('the v3 migration moves only the values still at their old default', () => {
+    expect(DEFAULT_ROLES.redactor).toEqual({ model: 'opus', effort: 'high' });
+    expect(DEFAULT_ROLES['revisor-planes']).toEqual({ model: 'sonnet', effort: 'medium' });
+    const old = {
+      configVersion: 2,
+      roles: { redactor: { model: 'fable', effort: 'xhigh' }, 'revisor-planes': { model: 'opus', effort: 'medium' } },
+      review: { maxRounds: 4 },
+      memory: { maxLessons: 30, maxLessonsPerSession: 3, maxContextChars: 4000 },
+    };
+    const migrated = migrateConfig(normalizeConfig(old));
+    expect(migrated.changed).toBe(true);
+    expect(migrated.config.configVersion).toBe(3);
+    expect(migrated.config.review).toEqual({ maxRounds: 2, maxPlanBytes: 20000, maxReviewerReads: 30 });
+    expect(migrated.config.memory.maxContextChars).toBe(2500);
+    expect(migrated.config.roles.redactor).toEqual({ model: 'opus', effort: 'high' });
+    expect(migrated.config.roles['revisor-planes']).toEqual({ model: 'sonnet', effort: 'medium' });
+    expect(migrated.config.limits).toEqual({ maxBriefsPerOrder: 3, stalledAfterMinutes: 10 });
+
+    const chosen = migrateConfig(
+      normalizeConfig({
+        configVersion: 2,
+        roles: { redactor: { model: 'fable', effort: 'high' }, 'revisor-planes': { model: 'opus', effort: 'high' } },
+        review: { maxRounds: 3 },
+        memory: { maxContextChars: 6000 },
+      }),
+    );
+    expect(chosen.config.review.maxRounds).toBe(3);
+    expect(chosen.config.memory.maxContextChars).toBe(6000);
+    expect(chosen.config.roles.redactor).toEqual({ model: 'fable', effort: 'high' });
+    expect(chosen.config.roles['revisor-planes']).toEqual({ model: 'opus', effort: 'high' });
+
+    const current = migrateConfig(normalizeConfig({ ...old, configVersion: 3 }));
+    expect(current.changed).toBe(false);
+    expect(current.config.review.maxRounds).toBe(4);
+    expect(current.config.roles.redactor).toEqual({ model: 'fable', effort: 'xhigh' });
+  });
+
+  test('the new limits are normalized within their ranges, 0 included', () => {
+    const c = normalizeConfig({ review: { maxPlanBytes: 0, maxReviewerReads: 501 }, limits: { maxBriefsPerOrder: 0, stalledAfterMinutes: -1 } });
+    expect(c.review).toEqual({ maxRounds: 2, maxPlanBytes: 0, maxReviewerReads: 30 });
+    expect(c.limits).toEqual({ maxBriefsPerOrder: 0, stalledAfterMinutes: 10 });
+    expect(normalizeConfig({ limits: 'no' }).limits).toEqual({ maxBriefsPerOrder: 3, stalledAfterMinutes: 10 });
   });
 
   test('the key is created once with private permissions', () => {

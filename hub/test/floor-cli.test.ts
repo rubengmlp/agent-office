@@ -203,7 +203,7 @@ describe('floor CLI', () => {
     expect(readFileSync(agentFile(p, 'lead', 'backend'), 'utf8')).toContain('model: sonnet\neffort: medium');
     expect(readFileSync(agentPath(p, 'office-revisor-planes'), 'utf8')).toContain('model: sonnet\neffort: low');
     expect(readFileSync(agentPath(p, 'office-lead-redaccion'), 'utf8')).toContain('model: haiku\neffort: medium');
-    expect(readFileSync(agentPath(p, 'office-redactor'), 'utf8')).toContain('model: fable\neffort: xhigh');
+    expect(readFileSync(agentPath(p, 'office-redactor'), 'utf8')).toContain('model: opus\neffort: high');
     expect(readFileSync(agentPath(p, 'office-lead-mantenimiento'), 'utf8')).toContain('model: sonnet\neffort: medium');
     expect(readFileSync(agentPath(p, 'office-director'), 'utf8')).toContain('model: fable\neffort: xhigh');
   });

@@ -53,6 +53,7 @@ export function settingsView(config: OfficeConfig): SettingsView {
     departments: { ...config.departments },
     review: { ...config.review },
     memory: { ...config.memory },
+    limits: { ...config.limits },
     docsRepo: config.docsRepo,
     port: config.port,
     permissionModes,
@@ -142,15 +143,24 @@ export function applySettings(config: OfficeConfig, raw: unknown): { config: Off
     else errors.push({ key: 'hub.settings.badDepartment', params: { key } });
   }
   const review = record(update.review);
-  if (review.maxRounds !== undefined) {
-    if (validInt(review.maxRounds, LIMITS.maxRounds)) next.review.maxRounds = review.maxRounds;
-    else errors.push({ key: 'hub.settings.badRange', params: { key: 'maxRounds', min: LIMITS.maxRounds.min, max: LIMITS.maxRounds.max } });
+  for (const key of ['maxRounds', 'maxPlanBytes', 'maxReviewerReads'] as const) {
+    const value = review[key];
+    if (value === undefined) continue;
+    if (validInt(value, LIMITS[key])) next.review[key] = value;
+    else errors.push({ key: 'hub.settings.badRange', params: { key, min: LIMITS[key].min, max: LIMITS[key].max } });
   }
   const memory = record(update.memory);
   for (const key of ['maxLessons', 'maxLessonsPerSession', 'maxContextChars'] as const) {
     const value = memory[key];
     if (value === undefined) continue;
     if (validInt(value, LIMITS[key])) next.memory[key] = value;
+    else errors.push({ key: 'hub.settings.badRange', params: { key, min: LIMITS[key].min, max: LIMITS[key].max } });
+  }
+  const limits = record(update.limits);
+  for (const key of ['maxBriefsPerOrder', 'stalledAfterMinutes'] as const) {
+    const value = limits[key];
+    if (value === undefined) continue;
+    if (validInt(value, LIMITS[key])) next.limits[key] = value;
     else errors.push({ key: 'hub.settings.badRange', params: { key, min: LIMITS[key].min, max: LIMITS[key].max } });
   }
   const floors = record(update.floors);

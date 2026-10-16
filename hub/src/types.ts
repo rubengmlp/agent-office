@@ -246,7 +246,9 @@ export type FloorConfig = { path: string; stack: Stack; managed: boolean; baseBr
 
 export type DepartmentsConfig = { redaccion: boolean; mantenimiento: boolean };
 
-export type ReviewConfig = { maxRounds: number };
+export type ReviewConfig = { maxRounds: number; maxPlanBytes: number; maxReviewerReads: number };
+
+export type LimitsConfig = { maxBriefsPerOrder: number; stalledAfterMinutes: number };
 
 export type MemoryConfig = { maxLessons: number; maxLessonsPerSession: number; maxContextChars: number };
 
@@ -261,6 +263,7 @@ export type OfficeConfig = {
   departments: DepartmentsConfig;
   review: ReviewConfig;
   memory: MemoryConfig;
+  limits: LimitsConfig;
   permissionModes: Record<string, PermissionMode>;
   blockedAfterMinutes: number;
   leaveAfterMinutes: number;
@@ -516,7 +519,6 @@ export type DocumentView = {
   docType: DocumentType;
   status: DocumentStatus;
   round: number;
-  // Effective round cap: review.maxRounds plus the round of the last SIN ACUERDO:.
   maxRounds: number;
   score: number | null;
   updatedAt: number;
@@ -547,6 +549,7 @@ export type SettingsView = {
   departments: DepartmentsConfig;
   review: ReviewConfig;
   memory: MemoryConfig;
+  limits: LimitsConfig;
   docsRepo: string;
   port: number;
   permissionModes: Record<string, PermissionMode>;
@@ -560,6 +563,7 @@ export type SettingsUpdate = {
   departments?: Partial<DepartmentsConfig>;
   review?: Partial<ReviewConfig>;
   memory?: Partial<MemoryConfig>;
+  limits?: Partial<LimitsConfig>;
   floors?: Record<string, { baseBranch?: string }>;
   permissionModes?: Record<string, PermissionMode>;
   leaveAfterMinutes?: number;

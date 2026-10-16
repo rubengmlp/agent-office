@@ -83,6 +83,27 @@ describe('settings', () => {
     expect(view.port).toBe(4747);
   });
 
+  test('plan length, reviewer reads and the limits are shown and changed within their ranges, 0 turning them off', () => {
+    const config = testConfig();
+    const view = settingsView(config);
+    expect(view.review).toEqual({ maxRounds: 2, maxPlanBytes: 20000, maxReviewerReads: 30 });
+    expect(view.limits).toEqual({ maxBriefsPerOrder: 3, stalledAfterMinutes: 10 });
+    const result = applySettings(config, { review: { maxPlanBytes: 0, maxReviewerReads: 500 }, limits: { maxBriefsPerOrder: 0, stalledAfterMinutes: 240 } });
+    if ('error' in result) throw new Error(JSON.stringify(result.error));
+    expect(result.config.review).toEqual({ maxRounds: 2, maxPlanBytes: 0, maxReviewerReads: 500 });
+    expect(result.config.limits).toEqual({ maxBriefsPerOrder: 0, stalledAfterMinutes: 240 });
+    const rejected = applySettings(config, {
+      review: { maxPlanBytes: 200001, maxReviewerReads: -1 },
+      limits: { maxBriefsPerOrder: 21, stalledAfterMinutes: 1.5 },
+    });
+    expect('error' in rejected ? rejected.error : []).toEqual([
+      { key: 'hub.settings.badRange', params: { key: 'maxPlanBytes', min: 0, max: 200000 } },
+      { key: 'hub.settings.badRange', params: { key: 'maxReviewerReads', min: 0, max: 500 } },
+      { key: 'hub.settings.badRange', params: { key: 'maxBriefsPerOrder', min: 0, max: 20 } },
+      { key: 'hub.settings.badRange', params: { key: 'stalledAfterMinutes', min: 0, max: 240 } },
+    ]);
+  });
+
   test('the view lists the targets with their roles and only the overrides', () => {
     const config = testConfig({
       departments: { redaccion: true, mantenimiento: true },

@@ -54,6 +54,11 @@ export function decideDocumentGate(f: DocumentGateFacts): GateDecision {
   return { pass: true, reason: 'aprobado después del último cambio' };
 }
 
+export function planByteLimit(maxBytes: number, floors: number, analysis: boolean): number {
+  if (analysis) return maxBytes * 2;
+  return Math.round(maxBytes * Math.min(2, 1 + 0.5 * (Math.max(1, floors) - 1)));
+}
+
 export type ReviewGateFacts = { path: string | null; round: number | null; cap: number; maxRounds: number };
 
 // The effective cap is maxRounds plus the round of the last SIN ACUERDO: each one opens another budget.

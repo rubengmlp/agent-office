@@ -7,6 +7,7 @@ import type {
   Effort,
   FloorConfig,
   FloorRoles,
+  LimitsConfig,
   MemoryConfig,
   OfficeConfig,
   PermissionMode,
@@ -81,8 +82,8 @@ export const DEFAULT_ROLES: Record<RoleId, RoleSettings> = {
   dev: { model: 'opus', effort: 'high' },
   tester: { model: 'sonnet', effort: 'medium' },
   reviewer: { model: 'opus', effort: 'high' },
-  redactor: { model: 'fable', effort: 'xhigh' },
-  'revisor-planes': { model: 'opus', effort: 'medium' },
+  redactor: { model: 'opus', effort: 'high' },
+  'revisor-planes': { model: 'sonnet', effort: 'medium' },
   artesano: { model: 'sonnet', effort: 'medium' },
   'revisor-skills': { model: 'opus', effort: 'high' },
 };
@@ -95,7 +96,7 @@ export const TARGET_ROLES: Record<'managed' | 'redaccion' | 'mantenimiento', rea
 
 export const DEFAULT_BASE_BRANCH = 'develop';
 
-export const CONFIG_VERSION = 2;
+export const CONFIG_VERSION = 3;
 
 export const PERMISSION_MODES: readonly PermissionMode[] = ['auto', 'manual', 'acceptEdits', 'plan', 'dontAsk'];
 
@@ -103,10 +104,14 @@ export const DEFAULT_PERMISSION_MODE: PermissionMode = 'auto';
 
 export const LIMITS = {
   maxRounds: { min: 1, max: 10 },
+  maxPlanBytes: { min: 0, max: 200000 },
+  maxReviewerReads: { min: 0, max: 500 },
   maxLessons: { min: 1, max: 200 },
   maxLessonsPerSession: { min: 0, max: 20 },
   maxContextChars: { min: 500, max: 20000 },
   leaveAfterMinutes: { min: 1, max: 60 },
+  maxBriefsPerOrder: { min: 0, max: 20 },
+  stalledAfterMinutes: { min: 0, max: 240 },
 } as const;
 
 export const DEFAULT_CONFIG: OfficeConfig = {
@@ -116,8 +121,9 @@ export const DEFAULT_CONFIG: OfficeConfig = {
   floorRoles: {},
   docsRepo: '~/Projects/office-docs',
   departments: { redaccion: true, mantenimiento: true },
-  review: { maxRounds: 4 },
-  memory: { maxLessons: 30, maxLessonsPerSession: 3, maxContextChars: 4000 },
+  review: { maxRounds: 2, maxPlanBytes: 20000, maxReviewerReads: 30 },
+  memory: { maxLessons: 30, maxLessonsPerSession: 3, maxContextChars: 2500 },
+  limits: { maxBriefsPerOrder: 3, stalledAfterMinutes: 10 },
   permissionModes: {},
   blockedAfterMinutes: 5,
   leaveAfterMinutes: 5,
@@ -244,16 +250,25 @@ export function normalizeConfig(raw: unknown): OfficeConfig {
   const departments = obj(src.departments);
   const review = obj(src.review);
   const memory = obj(src.memory);
+  const limits = obj(src.limits);
   const d = DEFAULT_CONFIG;
   const normalizedDepartments: DepartmentsConfig = {
     redaccion: flag(departments.redaccion, d.departments.redaccion),
     mantenimiento: flag(departments.mantenimiento, d.departments.mantenimiento),
   };
-  const normalizedReview: ReviewConfig = { maxRounds: int(review.maxRounds, LIMITS.maxRounds, d.review.maxRounds) };
+  const normalizedReview: ReviewConfig = {
+    maxRounds: int(review.maxRounds, LIMITS.maxRounds, d.review.maxRounds),
+    maxPlanBytes: int(review.maxPlanBytes, LIMITS.maxPlanBytes, d.review.maxPlanBytes),
+    maxReviewerReads: int(review.maxReviewerReads, LIMITS.maxReviewerReads, d.review.maxReviewerReads),
+  };
   const normalizedMemory: MemoryConfig = {
     maxLessons: int(memory.maxLessons, LIMITS.maxLessons, d.memory.maxLessons),
     maxLessonsPerSession: int(memory.maxLessonsPerSession, LIMITS.maxLessonsPerSession, d.memory.maxLessonsPerSession),
     maxContextChars: int(memory.maxContextChars, LIMITS.maxContextChars, d.memory.maxContextChars),
+  };
+  const normalizedLimits: LimitsConfig = {
+    maxBriefsPerOrder: int(limits.maxBriefsPerOrder, LIMITS.maxBriefsPerOrder, d.limits.maxBriefsPerOrder),
+    stalledAfterMinutes: int(limits.stalledAfterMinutes, LIMITS.stalledAfterMinutes, d.limits.stalledAfterMinutes),
   };
   const permissionModes: Record<string, PermissionMode> = {};
   for (const [slug, mode] of Object.entries(obj(src.permissionModes))) {
@@ -268,6 +283,7 @@ export function normalizeConfig(raw: unknown): OfficeConfig {
     departments: normalizedDepartments,
     review: normalizedReview,
     memory: normalizedMemory,
+    limits: normalizedLimits,
     permissionModes,
     blockedAfterMinutes: positive(src.blockedAfterMinutes, d.blockedAfterMinutes),
     leaveAfterMinutes: int(src.leaveAfterMinutes, LIMITS.leaveAfterMinutes, d.leaveAfterMinutes),
@@ -279,9 +295,15 @@ export function normalizeConfig(raw: unknown): OfficeConfig {
 export function migrateConfig(config: OfficeConfig): { config: OfficeConfig; changed: boolean } {
   if (config.configVersion >= CONFIG_VERSION) return { config, changed: false };
   const next = structuredClone(config);
-  const reviewer = next.roles['revisor-planes'];
-  if (config.configVersion < 2 && reviewer.model === 'sonnet' && reviewer.effort === 'xhigh') {
-    next.roles['revisor-planes'] = { ...DEFAULT_ROLES['revisor-planes'] };
+  const isRole = (id: RoleId, model: string, effort: Effort) => next.roles[id].model === model && next.roles[id].effort === effort;
+  if (config.configVersion < 2 && isRole('revisor-planes', 'sonnet', 'xhigh')) {
+    next.roles['revisor-planes'] = { model: 'opus', effort: 'medium' };
+  }
+  if (config.configVersion < 3) {
+    if (next.review.maxRounds === 4) next.review.maxRounds = DEFAULT_CONFIG.review.maxRounds;
+    if (next.memory.maxContextChars === 4000) next.memory.maxContextChars = DEFAULT_CONFIG.memory.maxContextChars;
+    if (isRole('revisor-planes', 'opus', 'medium')) next.roles['revisor-planes'] = { ...DEFAULT_ROLES['revisor-planes'] };
+    if (isRole('redactor', 'fable', 'xhigh')) next.roles.redactor = { ...DEFAULT_ROLES.redactor };
   }
   next.configVersion = CONFIG_VERSION;
   return { config: next, changed: true };

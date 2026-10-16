@@ -2,6 +2,7 @@ import { t } from '../i18n';
 import type {
   DepartmentsConfig,
   Effort,
+  LimitsConfig,
   MemoryConfig,
   PermissionMode,
   ReviewConfig,
@@ -69,10 +70,14 @@ export function managedFloors(view: SettingsView): ManagedFloor[] {
 function numbersOf(view: SettingsView): Record<NumberKey, number> {
   return {
     maxRounds: view.review.maxRounds,
+    maxPlanBytes: view.review.maxPlanBytes,
+    maxReviewerReads: view.review.maxReviewerReads,
     maxLessons: view.memory.maxLessons,
     maxLessonsPerSession: view.memory.maxLessonsPerSession,
     maxContextChars: view.memory.maxContextChars,
     leaveAfterMinutes: view.leaveAfterMinutes,
+    maxBriefsPerOrder: view.limits.maxBriefsPerOrder,
+    stalledAfterMinutes: view.limits.stalledAfterMinutes,
   };
 }
 
@@ -234,6 +239,8 @@ export function diffDraft(baseline: SettingsView, draft: SettingsDraft): Setting
 
   const review: Partial<ReviewConfig> = {};
   if (changed.maxRounds !== undefined) review.maxRounds = changed.maxRounds;
+  if (changed.maxPlanBytes !== undefined) review.maxPlanBytes = changed.maxPlanBytes;
+  if (changed.maxReviewerReads !== undefined) review.maxReviewerReads = changed.maxReviewerReads;
   if (Object.keys(review).length > 0) update.review = review;
 
   const memory: Partial<MemoryConfig> = {};
@@ -241,6 +248,11 @@ export function diffDraft(baseline: SettingsView, draft: SettingsDraft): Setting
   if (changed.maxLessonsPerSession !== undefined) memory.maxLessonsPerSession = changed.maxLessonsPerSession;
   if (changed.maxContextChars !== undefined) memory.maxContextChars = changed.maxContextChars;
   if (Object.keys(memory).length > 0) update.memory = memory;
+
+  const limits: Partial<LimitsConfig> = {};
+  if (changed.maxBriefsPerOrder !== undefined) limits.maxBriefsPerOrder = changed.maxBriefsPerOrder;
+  if (changed.stalledAfterMinutes !== undefined) limits.stalledAfterMinutes = changed.stalledAfterMinutes;
+  if (Object.keys(limits).length > 0) update.limits = limits;
 
   if (changed.leaveAfterMinutes !== undefined) update.leaveAfterMinutes = changed.leaveAfterMinutes;
 
@@ -289,6 +301,7 @@ export function applyUpdate(view: SettingsView, update: SettingsUpdate): Setting
     departments: { ...view.departments, ...update.departments },
     review: { ...view.review, ...update.review },
     memory: { ...view.memory, ...update.memory },
+    limits: { ...view.limits, ...update.limits },
     permissionModes: { ...view.permissionModes, ...update.permissionModes },
     leaveAfterMinutes: update.leaveAfterMinutes ?? view.leaveAfterMinutes,
     floors: view.floors.map((floor) => {

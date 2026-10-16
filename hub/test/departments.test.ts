@@ -39,7 +39,7 @@ function office(git?: GitRunner, extra: Partial<OfficeOptions> = {}): void {
     ...extra,
     configure: (config) => {
       config.departments = { redaccion: true, mantenimiento: true };
-      config.review = { maxRounds: 3 };
+      config.review = { ...config.review, maxRounds: 3 };
     },
   });
   docs = realPath(join(h.root, 'docs'));
