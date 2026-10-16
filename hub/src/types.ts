@@ -265,9 +265,38 @@ export type Profile = {
   testRegex: string;
   checkRegex: string;
   testCommand: string;
+  // Files whose change alters how the floor is checked: a glob, or file#key for "only if that key changes".
+  checkFiles: string[];
 };
 
-export type FloorConfig = { path: string; stack: Stack; managed: boolean; baseBranch: string };
+export type CheckSpec = { name: string; command: string };
+
+// checks: the hub runs the checks and the tester is optional; checks+tester: both; tester: as before the Tablero.
+export type GateMode = 'checks' | 'checks+tester' | 'tester';
+
+export type ReviewMode = 'always' | 'large' | 'off';
+
+// Every optional field has a default that keeps the floor as it was: undefined means "the profile's", and for
+// checks and setup an empty list or null means "none".
+export type FloorConfig = {
+  path: string;
+  stack: Stack;
+  managed: boolean;
+  baseBranch: string;
+  checks?: CheckSpec[];
+  setup?: string | null;
+  linkDirs?: string[];
+  gateMode?: GateMode;
+  review?: ReviewMode;
+  reviewLargeLines?: number;
+  checkFiles?: string[];
+};
+
+export type ChecksConfig = { timeoutMinutes: number; maxParallel: number; tailBytes: number };
+
+export type WorktreesConfig = { retentionDays: number; maxActivePerFloor: number; warnTotalGb: number };
+
+export type CheckpointsConfig = { maxFileKb: number; skipGlobs: string[] };
 
 export type DepartmentsConfig = { redaccion: boolean; mantenimiento: boolean };
 
@@ -290,6 +319,9 @@ export type OfficeConfig = {
   memory: MemoryConfig;
   limits: LimitsConfig;
   permissionModes: Record<string, PermissionMode>;
+  checksConfig: ChecksConfig;
+  worktrees: WorktreesConfig;
+  checkpoints: CheckpointsConfig;
   blockedAfterMinutes: number;
   leaveAfterMinutes: number;
   retentionDays: number;

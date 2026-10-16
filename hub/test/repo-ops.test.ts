@@ -1,0 +1,186 @@
+import { afterEach, describe, expect, test } from 'bun:test';
+import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { globMatches, matchesAny } from '../src/glob';
+import { runGit } from '../src/git';
+import {
+  RepoOpError,
+  ghOps,
+  gitOps,
+  numstatPath,
+  orderBranch,
+  repoPath,
+  run,
+  runGh,
+  validOrderBranch,
+  validSha,
+  validSlug,
+  zList,
+} from '../src/repo-ops';
+import { git, makeRepo, tempDir, useGitIdentity } from './helpers';
+
+useGitIdentity();
+
+const cleanups: (() => void)[] = [];
+afterEach(() => {
+  while (cleanups.length > 0) cleanups.pop()?.();
+});
+
+function temp(): string {
+  const { dir, cleanup } = tempDir();
+  cleanups.push(cleanup);
+  return dir;
+}
+
+describe('validators', () => {
+  test('slugs, shas and order branches', () => {
+    expect(validSlug('login-a1b2')).toBe(true);
+    expect(validSlug('-login')).toBe(false);
+    expect(validSlug('Login')).toBe(false);
+    expect(validSlug('a/b')).toBe(false);
+    expect(validSlug('x'.repeat(62))).toBe(false);
+    expect(validSha('abc1234')).toBe(true);
+    expect(validSha('abc123')).toBe(false);
+    expect(validSha('--output=x')).toBe(false);
+    expect(validSha('A'.repeat(40))).toBe(false);
+    expect(validOrderBranch('encargo/login-a1b2')).toBe(true);
+    expect(validOrderBranch('develop')).toBe(false);
+    expect(validOrderBranch('feature/encargo/x')).toBe(false);
+    expect(validOrderBranch('encargo/-x')).toBe(false);
+    expect(validOrderBranch('encargo/x..y')).toBe(false);
+    expect(orderBranch('login-a1b2')).toBe('encargo/login-a1b2');
+    expect(() => orderBranch('../x')).toThrow(RepoOpError);
+  });
+
+  test('paths stay inside the repository and never look like options', () => {
+    expect(repoPath('lib/a.dart')).toBe('lib/a.dart');
+    for (const bad of ['', '-rf', '/etc/passwd', '../x', 'a/../../b', 'a\0b']) expect(() => repoPath(bad)).toThrow(RepoOpError);
+    const listed = new Set(['lib/a.dart']);
+    expect(numstatPath('lib/a.dart', listed)).toBe('lib/a.dart');
+    expect(() => numstatPath('lib/b.dart', listed)).toThrow(RepoOpError);
+  });
+});
+
+describe('git argv constructors', () => {
+  test('writes only reach encargo/ branches', () => {
+    expect(gitOps.branchDelete('encargo/x', false)).toEqual(['branch', '-d', 'encargo/x']);
+    expect(gitOps.branchDelete('encargo/x', true)).toEqual(['branch', '-D', 'encargo/x']);
+    expect(() => gitOps.branchDelete('develop', true)).toThrow(RepoOpError);
+    expect(() => gitOps.branchDelete('-D', false)).toThrow(RepoOpError);
+    expect(() => gitOps.worktreeAdd('develop', '/tmp/x', 'abcdef1')).toThrow(RepoOpError);
+  });
+
+  test('values that start with a dash are refused everywhere', () => {
+    expect(() => gitOps.fetch('--upload-pack=x')).toThrow(RepoOpError);
+    expect(() => gitOps.verify('-x')).toThrow(RepoOpError);
+    expect(() => gitOps.worktreeAdd('encargo/x', '-x', 'abcdef1')).toThrow(RepoOpError);
+    expect(() => gitOps.worktreeAdd('encargo/x', 'relative', 'abcdef1')).toThrow(RepoOpError);
+    expect(() => gitOps.worktreeAdd('encargo/x', '/tmp/x', '--detach')).toThrow(RepoOpError);
+    expect(() => gitOps.diffNames('abcdef1', '-p')).toThrow(RepoOpError);
+    expect(() => gitOps.show('abcdef1', '-x')).toThrow(RepoOpError);
+    expect(() => gitOps.commit('')).toThrow(RepoOpError);
+    expect(() => gitOps.worktreeRemove('/tmp/x/../y', false)).toThrow(RepoOpError);
+  });
+
+  test('the fixed argv of the common operations', () => {
+    expect(gitOps.fetch('develop')).toEqual(['fetch', '--quiet', 'origin', 'develop']);
+    expect(gitOps.worktreeAdd('encargo/x', '/r/.claude/worktrees/office-x', 'abcdef1')).toEqual([
+      'worktree', 'add', '-q', '-b', 'encargo/x', '/r/.claude/worktrees/office-x', 'abcdef1',
+    ]);
+    expect(gitOps.aheadBehind('abcdef1', 'encargo/x')).toEqual(['rev-list', '--left-right', '--count', 'abcdef1...encargo/x']);
+    expect(gitOps.addFromStdin()).toEqual(['add', '--pathspec-from-file=-', '--pathspec-file-nul']);
+    expect(gitOps.logOneLine('abcdef1', 'encargo/x', 9999)).toContain('--max-count=200');
+  });
+
+  test('run turns a refused value into a failed result instead of throwing', async () => {
+    const calls: string[][] = [];
+    const runner = async (_cwd: string, args: string[]) => {
+      calls.push(args);
+      return { code: 0, stdout: '', stderr: '' };
+    };
+    const refused = await run(runner, '/r', () => gitOps.branchDelete('develop', true));
+    expect(refused.code).toBe(-1);
+    expect(refused.stderr).toContain('encargo/');
+    expect(calls).toEqual([]);
+    expect((await run(runner, '/r', () => gitOps.head())).code).toBe(0);
+    expect(calls).toEqual([['rev-parse', 'HEAD']]);
+  });
+
+  test('zList drops the empty tail of a NUL list', () => {
+    expect(zList('a\0b c\0')).toEqual(['a', 'b c']);
+    expect(zList('')).toEqual([]);
+  });
+
+  test('runGit feeds the input to stdin and a real worktree add stays on its branch', async () => {
+    const root = temp();
+    const repo = makeRepo(root, 'repo', { 'a.txt': 'a\n' });
+    git(repo, 'init', '-q', '-b', 'develop');
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-q', '-m', 'inicio');
+    writeFileSync(join(repo, 'b.txt'), 'b\n');
+    writeFileSync(join(repo, 'c.txt'), 'c\n');
+    const added = await runGit(repo, gitOps.addFromStdin(), 10_000, 'b.txt\0');
+    expect(added.code).toBe(0);
+    expect(git(repo, 'diff', '--cached', '--name-only')).toBe('b.txt');
+    const sha = git(repo, 'rev-parse', 'HEAD');
+    const wt = join(root, 'wt');
+    const created = await run(runGit, repo, () => gitOps.worktreeAdd('encargo/x', wt, sha));
+    expect(created.code).toBe(0);
+    expect(git(wt, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('encargo/x');
+  });
+});
+
+describe('gh', () => {
+  test('prCreate reads the body from stdin and is refused for other branches', () => {
+    expect(ghOps.prCreate('encargo/x', 'develop', 'Login')).toEqual([
+      'pr', 'create', '--head', 'encargo/x', '--base', 'develop', '--title', 'Login', '--body-file', '-',
+    ]);
+    expect(() => ghOps.prCreate('develop', 'develop', 'x')).toThrow(RepoOpError);
+    expect(() => ghOps.prCreate('encargo/x', 'develop', '--web')).toThrow(RepoOpError);
+  });
+
+  test('runGh sends the body by stdin to the gh found on PATH and disables prompts', async () => {
+    const root = temp();
+    const bin = join(root, 'bin');
+    makeRepo(root, 'bin');
+    const out = join(root, 'seen.txt');
+    const script = join(bin, 'gh');
+    writeFileSync(script, `#!/bin/sh\nprintf '%s|' "$@" > ${out}\nprintf 'prompt=%s|' "$GH_PROMPT_DISABLED" >> ${out}\ncat >> ${out}\nprintf 'https://github.com/o/r/pull/1\\n'\n`);
+    chmodSync(script, 0o755);
+    const previous = process.env.PATH;
+    process.env.PATH = `${bin}:${previous ?? ''}`;
+    try {
+      const result = await runGh(root, ghOps.prCreate('encargo/x', 'develop', 'Login'), 10_000, 'cuerpo de la PR');
+      expect(result).toMatchObject({ code: 0, stdout: 'https://github.com/o/r/pull/1\n' });
+    } finally {
+      process.env.PATH = previous;
+    }
+    expect(readFileSync(out, 'utf8')).toBe('pr|create|--head|encargo/x|--base|develop|--title|Login|--body-file|-|prompt=1|cuerpo de la PR');
+  });
+
+  test('runGh without gh installed is a failed result', async () => {
+    const previous = process.env.PATH;
+    process.env.PATH = '/nonexistent';
+    try {
+      expect((await runGh('/', ['auth', 'status'])).code).not.toBe(0);
+    } finally {
+      process.env.PATH = previous;
+    }
+  });
+});
+
+describe('glob', () => {
+  test('a pattern without a slash matches the name anywhere, ** crosses folders and * does not', () => {
+    expect(globMatches('*.log', 'a/b/debug.log')).toBe(true);
+    expect(globMatches('tsconfig*.json', 'packages/x/tsconfig.build.json')).toBe(true);
+    expect(globMatches('vitest.config.*', 'vitest.config.ts')).toBe(true);
+    expect(globMatches('lib/*.dart', 'lib/a.dart')).toBe(true);
+    expect(globMatches('lib/*.dart', 'lib/src/a.dart')).toBe(false);
+    expect(globMatches('lib/**/*.dart', 'lib/src/deep/a.dart')).toBe(true);
+    expect(globMatches('Screenshot*', 'Screenshot 2026-10-17 at 10.00.png')).toBe(true);
+    expect(globMatches('a?.txt', 'ab.txt')).toBe(true);
+    expect(globMatches('a.b', 'axb')).toBe(false);
+    expect(matchesAny(['*.dump', '*.log'], 'x/y.log')).toBe(true);
+    expect(matchesAny([], 'x')).toBe(false);
+  });
+});

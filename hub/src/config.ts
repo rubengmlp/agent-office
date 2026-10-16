@@ -3,18 +3,24 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSy
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type {
+  CheckSpec,
+  CheckpointsConfig,
+  ChecksConfig,
   DepartmentsConfig,
   Effort,
   FloorConfig,
   FloorRoles,
+  GateMode,
   LimitsConfig,
   MemoryConfig,
   OfficeConfig,
   PermissionMode,
   ReviewConfig,
+  ReviewMode,
   RoleId,
   RoleSettings,
   Stack,
+  WorktreesConfig,
 } from './types';
 
 export const REPO_ROOT = resolve(import.meta.dir, '..', '..');
@@ -98,7 +104,7 @@ export const TARGET_ROLES: Record<'managed' | 'redaccion' | 'mantenimiento', rea
 
 export const DEFAULT_BASE_BRANCH = 'develop';
 
-export const CONFIG_VERSION = 3;
+export const CONFIG_VERSION = 4;
 
 export const PERMISSION_MODES: readonly PermissionMode[] = ['auto', 'manual', 'acceptEdits', 'plan', 'dontAsk'];
 
@@ -114,7 +120,24 @@ export const LIMITS = {
   leaveAfterMinutes: { min: 1, max: 60 },
   maxBriefsPerOrder: { min: 0, max: 20 },
   stalledAfterMinutes: { min: 0, max: 240 },
+  checksTimeoutMinutes: { min: 1, max: 120 },
+  checksMaxParallel: { min: 1, max: 8 },
+  checksTailBytes: { min: 1000, max: 64000 },
+  worktreeRetentionDays: { min: 1, max: 90 },
+  worktreeMaxActive: { min: 1, max: 20 },
+  worktreeWarnGb: { min: 1, max: 1000 },
+  checkpointMaxFileKb: { min: 1, max: 102400 },
+  reviewLargeLines: { min: 10, max: 5000 },
 } as const;
+
+export const GATE_MODES: readonly GateMode[] = ['checks', 'checks+tester', 'tester'];
+export const REVIEW_MODES: readonly ReviewMode[] = ['always', 'large', 'off'];
+export const MAX_CHECKS = 8;
+export const MAX_CHECK_COMMAND = 300;
+export const MAX_LINK_DIRS = 8;
+export const MAX_CHECK_FILES = 20;
+export const DEFAULT_REVIEW_LARGE_LINES = 300;
+export const DEFAULT_SKIP_GLOBS: readonly string[] = ['*.log', '*.dump', '*.sqlite', '*.sqlite3', 'Screenshot*', 'Screen Shot*', 'Captura de pantalla*'];
 
 export const DEFAULT_CONFIG: OfficeConfig = {
   configVersion: CONFIG_VERSION,
@@ -127,6 +150,9 @@ export const DEFAULT_CONFIG: OfficeConfig = {
   memory: { maxLessons: 30, maxLessonsPerSession: 3, maxContextChars: 2500 },
   limits: { maxBriefsPerOrder: 3, stalledAfterMinutes: 10 },
   permissionModes: {},
+  checksConfig: { timeoutMinutes: 15, maxParallel: 2, tailBytes: 8000 },
+  worktrees: { retentionDays: 3, maxActivePerFloor: 4, warnTotalGb: 20 },
+  checkpoints: { maxFileKb: 1024, skipGlobs: [...DEFAULT_SKIP_GLOBS] },
   blockedAfterMinutes: 5,
   leaveAfterMinutes: 5,
   retentionDays: 14,
@@ -226,6 +252,68 @@ function normalizeFloorRoles(raw: unknown): FloorRoles {
   return floorRoles;
 }
 
+export function validCheckName(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-z0-9-]{1,20}$/.test(value);
+}
+
+// The checks of a floor as the panel writes them: at most MAX_CHECKS, each with its own name and one command.
+export function validChecks(value: unknown): CheckSpec[] | null {
+  if (!Array.isArray(value) || value.length > MAX_CHECKS) return null;
+  const checks: CheckSpec[] = [];
+  const names = new Set<string>();
+  for (const item of value) {
+    if (!item || typeof item !== 'object') return null;
+    const { name, command } = item as Record<string, unknown>;
+    if (!validCheckName(name) || names.has(name)) return null;
+    if (typeof command !== 'string' || command.trim() === '' || command.length > MAX_CHECK_COMMAND || /[\0\r\n]/.test(command)) return null;
+    names.add(name);
+    checks.push({ name, command: command.trim() });
+  }
+  return checks;
+}
+
+export function validSetup(value: unknown): value is string | null {
+  return value === null || (typeof value === 'string' && value.trim() !== '' && value.length <= MAX_CHECK_COMMAND && !/[\0\r\n]/.test(value));
+}
+
+export function validLinkDirs(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length > MAX_LINK_DIRS) return null;
+  const dirs: string[] = [];
+  for (const item of value) {
+    if (typeof item !== 'string' || !/^[A-Za-z0-9._][A-Za-z0-9._/-]{0,99}$/.test(item) || item.split('/').includes('..') || item.endsWith('/')) return null;
+    dirs.push(item);
+  }
+  return dirs;
+}
+
+export function validCheckFiles(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length > MAX_CHECK_FILES) return null;
+  const files: string[] = [];
+  for (const item of value) {
+    if (typeof item !== 'string' || item.trim() === '' || item.length > 120 || item.startsWith('/') || item.includes('..') || /[\0\r\n]/.test(item)) return null;
+    files.push(item.trim());
+  }
+  return files;
+}
+
+export function validGlobs(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length > 40) return null;
+  const globs: string[] = [];
+  for (const item of value) {
+    if (typeof item !== 'string' || item.trim() === '' || item.length > 120 || /[\0\r\n]/.test(item)) return null;
+    globs.push(item.trim());
+  }
+  return globs;
+}
+
+export function validGateMode(value: unknown): value is GateMode {
+  return typeof value === 'string' && (GATE_MODES as readonly string[]).includes(value);
+}
+
+export function validReviewMode(value: unknown): value is ReviewMode {
+  return typeof value === 'string' && (REVIEW_MODES as readonly string[]).includes(value);
+}
+
 function normalizeFloors(raw: unknown): Record<string, FloorConfig> {
   const floors: Record<string, FloorConfig> = {};
   const src = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
@@ -233,12 +321,23 @@ function normalizeFloors(raw: unknown): Record<string, FloorConfig> {
     if (!value || typeof value !== 'object') continue;
     const f = value as Record<string, unknown>;
     if (typeof f.path !== 'string' || !f.path) continue;
-    floors[slug] = {
+    const floor: FloorConfig = {
       path: f.path,
       stack: STACKS.includes(f.stack as Stack) ? (f.stack as Stack) : 'generic',
       managed: f.managed !== false,
       baseBranch: validBranch(f.baseBranch) ? f.baseBranch : DEFAULT_BASE_BRANCH,
     };
+    const checks = f.checks === undefined ? null : validChecks(f.checks);
+    if (checks) floor.checks = checks;
+    if (f.setup !== undefined && validSetup(f.setup)) floor.setup = f.setup;
+    const linkDirs = f.linkDirs === undefined ? null : validLinkDirs(f.linkDirs);
+    if (linkDirs) floor.linkDirs = linkDirs;
+    if (validGateMode(f.gateMode)) floor.gateMode = f.gateMode;
+    if (validReviewMode(f.review)) floor.review = f.review;
+    if (validInt(f.reviewLargeLines, LIMITS.reviewLargeLines)) floor.reviewLargeLines = f.reviewLargeLines;
+    const checkFiles = f.checkFiles === undefined ? null : validCheckFiles(f.checkFiles);
+    if (checkFiles) floor.checkFiles = checkFiles;
+    floors[slug] = floor;
   }
   return floors;
 }
@@ -253,6 +352,9 @@ export function normalizeConfig(raw: unknown): OfficeConfig {
   const review = obj(src.review);
   const memory = obj(src.memory);
   const limits = obj(src.limits);
+  const checksConfig = obj(src.checksConfig);
+  const worktrees = obj(src.worktrees);
+  const checkpoints = obj(src.checkpoints);
   const d = DEFAULT_CONFIG;
   const normalizedDepartments: DepartmentsConfig = {
     redaccion: flag(departments.redaccion, d.departments.redaccion),
@@ -272,6 +374,20 @@ export function normalizeConfig(raw: unknown): OfficeConfig {
     maxBriefsPerOrder: int(limits.maxBriefsPerOrder, LIMITS.maxBriefsPerOrder, d.limits.maxBriefsPerOrder),
     stalledAfterMinutes: int(limits.stalledAfterMinutes, LIMITS.stalledAfterMinutes, d.limits.stalledAfterMinutes),
   };
+  const normalizedChecks: ChecksConfig = {
+    timeoutMinutes: int(checksConfig.timeoutMinutes, LIMITS.checksTimeoutMinutes, d.checksConfig.timeoutMinutes),
+    maxParallel: int(checksConfig.maxParallel, LIMITS.checksMaxParallel, d.checksConfig.maxParallel),
+    tailBytes: int(checksConfig.tailBytes, LIMITS.checksTailBytes, d.checksConfig.tailBytes),
+  };
+  const normalizedWorktrees: WorktreesConfig = {
+    retentionDays: int(worktrees.retentionDays, LIMITS.worktreeRetentionDays, d.worktrees.retentionDays),
+    maxActivePerFloor: int(worktrees.maxActivePerFloor, LIMITS.worktreeMaxActive, d.worktrees.maxActivePerFloor),
+    warnTotalGb: int(worktrees.warnTotalGb, LIMITS.worktreeWarnGb, d.worktrees.warnTotalGb),
+  };
+  const normalizedCheckpoints: CheckpointsConfig = {
+    maxFileKb: int(checkpoints.maxFileKb, LIMITS.checkpointMaxFileKb, d.checkpoints.maxFileKb),
+    skipGlobs: validGlobs(checkpoints.skipGlobs) ?? [...d.checkpoints.skipGlobs],
+  };
   const permissionModes: Record<string, PermissionMode> = {};
   for (const [slug, mode] of Object.entries(obj(src.permissionModes))) {
     if (/^[a-z0-9][a-z0-9-]*$/.test(slug) && validPermissionMode(mode)) permissionModes[slug] = mode;
@@ -287,6 +403,9 @@ export function normalizeConfig(raw: unknown): OfficeConfig {
     memory: normalizedMemory,
     limits: normalizedLimits,
     permissionModes,
+    checksConfig: normalizedChecks,
+    worktrees: normalizedWorktrees,
+    checkpoints: normalizedCheckpoints,
     blockedAfterMinutes: positive(src.blockedAfterMinutes, d.blockedAfterMinutes),
     leaveAfterMinutes: int(src.leaveAfterMinutes, LIMITS.leaveAfterMinutes, d.leaveAfterMinutes),
     retentionDays: positive(src.retentionDays, d.retentionDays),

@@ -1,12 +1,13 @@
 export type GitResult = { code: number; stdout: string; stderr: string };
 
-export type GitRunner = (cwd: string, args: string[], timeoutMs?: number) => Promise<GitResult>;
+// input is written to the stdin of the command (pathspec lists); without it the command reads nothing.
+export type GitRunner = (cwd: string, args: string[], timeoutMs?: number, input?: string) => Promise<GitResult>;
 
-export const runGit: GitRunner = async (cwd, args, timeoutMs = 60_000) => {
+export const runGit: GitRunner = async (cwd, args, timeoutMs = 60_000, input) => {
   let proc: ReturnType<typeof Bun.spawn>;
   try {
     proc = Bun.spawn(['git', '-C', cwd, ...args], {
-      stdin: 'ignore',
+      stdin: input === undefined ? 'ignore' : new TextEncoder().encode(input),
       stdout: 'pipe',
       stderr: 'pipe',
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' },

@@ -3,5 +3,6 @@
   "skill": null,
   "testRegex": "\\b(bun|npm|pnpm|yarn|deno)\\s+(run\\s+)?test\\b|\\bpytest\\b|\\bgo\\s+test\\b|\\bcargo\\s+test\\b|\\bmix\\s+test\\b|\\bmake\\s+test\\b|\\bctest\\b|\\b(mvn|gradle|gradlew)\\s+test\\b|\\bdotnet\\s+test\\b|\\bswift\\s+test\\b|\\b(vitest|jest|mocha|rspec|phpunit|pest)\\b|\\bphp\\s+artisan\\s+test\\b|\\bflutter\\s+test\\b|\\bdart\\s+test\\b",
   "checkRegex": "\\blint\\b",
-  "testCommand": "el comando de tests que documente el repositorio"
+  "testCommand": "el comando de tests que documente el repositorio",
+  "checkFiles": []
 }

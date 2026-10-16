@@ -2,7 +2,7 @@ import { Database } from 'bun:sqlite';
 import { chmodSync } from 'node:fs';
 import type { FloorRecord, FloorRegistry } from './floors';
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 export const ADDITIVE_SINCE = 2;
 
 export type Migration = { version: number; statements: string[] };
@@ -54,6 +54,131 @@ export const MIGRATIONS: readonly Migration[] = [
       'ALTER TABLE sessions ADD COLUMN launch_hash TEXT',
       'ALTER TABLE sessions ADD COLUMN task_open_since INTEGER',
       'ALTER TABLE sessions ADD COLUMN plan_slug TEXT',
+    ],
+  },
+  {
+    version: 5,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        slug TEXT NOT NULL UNIQUE,
+        floor TEXT NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'pendiente',
+        source TEXT NOT NULL,
+        plan_slug TEXT,
+        parent_id INTEGER,
+        lead_session TEXT,
+        branch TEXT,
+        base_ref TEXT,
+        base_sha TEXT,
+        base_stale INTEGER NOT NULL DEFAULT 0,
+        worktree_path TEXT,
+        worktree_state TEXT,
+        setup_error TEXT,
+        review_state TEXT NOT NULL DEFAULT 'none',
+        cycle INTEGER NOT NULL DEFAULT 1,
+        skipped_files TEXT,
+        checks_forced_sha TEXT,
+        pr_url TEXT,
+        pr_state TEXT,
+        merged_at INTEGER,
+        kept_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        last_activity INTEGER,
+        removed_at INTEGER
+      )`,
+      'CREATE INDEX IF NOT EXISTS orders_floor_status ON orders (floor, status)',
+      'CREATE INDEX IF NOT EXISTS orders_plan ON orders (plan_slug)',
+      `CREATE TABLE IF NOT EXISTS check_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_id INTEGER NOT NULL,
+        floor TEXT NOT NULL,
+        slug TEXT NOT NULL,
+        sha TEXT NOT NULL,
+        trigger TEXT NOT NULL,
+        status TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        ended_at INTEGER
+      )`,
+      'CREATE INDEX IF NOT EXISTS check_runs_order ON check_runs (order_id, id)',
+      `CREATE TABLE IF NOT EXISTS checks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id INTEGER NOT NULL,
+        floor TEXT NOT NULL,
+        slug TEXT NOT NULL,
+        name TEXT NOT NULL,
+        command TEXT NOT NULL,
+        status TEXT NOT NULL,
+        exit_code INTEGER,
+        duration_ms INTEGER,
+        output_tail TEXT
+      )`,
+      'CREATE INDEX IF NOT EXISTS checks_run ON checks (run_id)',
+      `CREATE TABLE IF NOT EXISTS checkpoints (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_id INTEGER NOT NULL,
+        sha TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        label TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      )`,
+      'CREATE INDEX IF NOT EXISTS checkpoints_order ON checkpoints (order_id, id)',
+      `CREATE TABLE IF NOT EXISTS order_comments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_id INTEGER NOT NULL,
+        path TEXT NOT NULL,
+        line INTEGER NOT NULL,
+        side TEXT NOT NULL,
+        text TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        sent_at INTEGER
+      )`,
+      'CREATE INDEX IF NOT EXISTS order_comments_order ON order_comments (order_id)',
+      `CREATE TABLE IF NOT EXISTS review_findings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_id INTEGER NOT NULL,
+        sha TEXT NOT NULL,
+        reviewer_key TEXT NOT NULL,
+        n INTEGER NOT NULL,
+        critical INTEGER NOT NULL DEFAULT 0,
+        important INTEGER NOT NULL DEFAULT 0,
+        text TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        dismissed_at INTEGER,
+        dismiss_reason TEXT
+      )`,
+      'CREATE INDEX IF NOT EXISTS review_findings_order ON review_findings (order_id)',
+      `CREATE TABLE IF NOT EXISTS usage_samples (
+        ts INTEGER NOT NULL,
+        win TEXT NOT NULL,
+        used_pct REAL NOT NULL,
+        resets_at INTEGER,
+        PRIMARY KEY (win, ts)
+      )`,
+      `CREATE TABLE IF NOT EXISTS activity_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts INTEGER NOT NULL,
+        session_id TEXT,
+        agent_key TEXT NOT NULL,
+        floor TEXT,
+        event TEXT NOT NULL,
+        tool TEXT,
+        state TEXT,
+        summary TEXT NOT NULL
+      )`,
+      'CREATE INDEX IF NOT EXISTS activity_log_ts ON activity_log (ts)',
+      'CREATE INDEX IF NOT EXISTS activity_log_agent ON activity_log (agent_key, ts)',
+      'CREATE INDEX IF NOT EXISTS activity_log_floor ON activity_log (floor, ts)',
+      'ALTER TABLE token_cursor ADD COLUMN last_context INTEGER',
+      'ALTER TABLE token_cursor ADD COLUMN compactions INTEGER NOT NULL DEFAULT 0',
+      'ALTER TABLE alerts ADD COLUMN ref TEXT',
+      'ALTER TABLE alerts ADD COLUMN cycle INTEGER',
+      'ALTER TABLE alerts ADD COLUMN seen_at INTEGER',
+      'ALTER TABLE alerts ADD COLUMN detail TEXT',
+      'CREATE UNIQUE INDEX IF NOT EXISTS alerts_cycle ON alerts (level, ref, cycle)',
     ],
   },
 ];

@@ -18,12 +18,17 @@ const RULES: readonly [table: string, where: string][] = [
   ['agents', 'COALESCE(ended_at, updated_at) < ?'],
   ['sessions', 'COALESCE(ended_at, updated_at) < ?'],
   ['reports', 'updated_at < ? AND role_id IS NULL'],
+  ['activity_log', 'ts < ?'],
 ];
+
+// The output of a check is the bulkiest thing a run keeps: past the retention it goes, the result stays.
+const CLEAR_OUTPUT = 'UPDATE checks SET output_tail = NULL WHERE output_tail IS NOT NULL AND run_id IN (SELECT id FROM check_runs WHERE started_at < ?)';
 
 export function prune(db: Database, now: number, retentionDays: number): number {
   const cutoff = now - retentionDays * DAY_MS;
   let removed = 0;
   for (const [table, where] of RULES) removed += db.query(`DELETE FROM ${table} WHERE ${where}`).run(cutoff).changes;
+  removed += db.query(CLEAR_OUTPUT).run(cutoff).changes;
   return removed;
 }
 
@@ -47,5 +52,6 @@ export async function pruneInChunks(
       await yieldLoop();
     }
   }
+  removed += db.query(CLEAR_OUTPUT).run(cutoff).changes;
   return removed;
 }

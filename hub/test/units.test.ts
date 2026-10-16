@@ -76,19 +76,19 @@ describe('config', () => {
 
   test('the v1 plan reviewer default goes through v2 to the v3 default once', () => {
     expect(defaultConfig().configVersion).toBe(CONFIG_VERSION);
-    expect(CONFIG_VERSION).toBe(3);
+    expect(CONFIG_VERSION).toBe(4);
     const legacy = { roles: { 'revisor-planes': { model: 'sonnet', effort: 'xhigh' }, dev: { model: 'haiku', effort: 'low' } } };
     const v1 = normalizeConfig(legacy);
     expect(v1.configVersion).toBe(1);
     expect(v1.roles['revisor-planes']).toEqual({ model: 'sonnet', effort: 'xhigh' });
     const migrated = migrateConfig(v1);
     expect(migrated.changed).toBe(true);
-    expect(migrated.config.configVersion).toBe(3);
+    expect(migrated.config.configVersion).toBe(4);
     expect(migrated.config.roles['revisor-planes']).toEqual({ model: 'sonnet', effort: 'medium' });
     expect(migrated.config.roles.dev).toEqual({ model: 'haiku', effort: 'low' });
     const chosen = migrateConfig(normalizeConfig({ roles: { 'revisor-planes': { model: 'sonnet', effort: 'high' } } }));
     expect(chosen.config.roles['revisor-planes']).toEqual({ model: 'sonnet', effort: 'high' });
-    const v3 = migrateConfig(normalizeConfig({ ...legacy, configVersion: 3 }));
+    const v3 = migrateConfig(normalizeConfig({ ...legacy, configVersion: 4 }));
     expect(v3).toMatchObject({ changed: false, config: { roles: { 'revisor-planes': { model: 'sonnet', effort: 'xhigh' } } } });
 
     const { dir, cleanup } = tempDir();
@@ -96,7 +96,7 @@ describe('config', () => {
     writeFileSync(p.config, JSON.stringify(legacy));
     expect(loadConfig(p).roles['revisor-planes']).toEqual({ model: 'sonnet', effort: 'medium' });
     const saved = JSON.parse(readFileSync(p.config, 'utf8'));
-    expect(saved.configVersion).toBe(3);
+    expect(saved.configVersion).toBe(4);
     expect(saved.roles['revisor-planes']).toEqual({ model: 'sonnet', effort: 'medium' });
     saved.roles['revisor-planes'] = { model: 'sonnet', effort: 'xhigh' };
     writeFileSync(p.config, JSON.stringify(saved));
@@ -115,7 +115,7 @@ describe('config', () => {
     };
     const migrated = migrateConfig(normalizeConfig(old));
     expect(migrated.changed).toBe(true);
-    expect(migrated.config.configVersion).toBe(3);
+    expect(migrated.config.configVersion).toBe(4);
     expect(migrated.config.review).toEqual({ maxRounds: 2, maxPlanBytes: 20000, maxReviewerReads: 30 });
     expect(migrated.config.memory.maxContextChars).toBe(2500);
     expect(migrated.config.roles.redactor).toEqual({ model: 'opus', effort: 'high' });
@@ -135,7 +135,7 @@ describe('config', () => {
     expect(chosen.config.roles.redactor).toEqual({ model: 'fable', effort: 'high' });
     expect(chosen.config.roles['revisor-planes']).toEqual({ model: 'opus', effort: 'high' });
 
-    const current = migrateConfig(normalizeConfig({ ...old, configVersion: 3 }));
+    const current = migrateConfig(normalizeConfig({ ...old, configVersion: 4 }));
     expect(current.changed).toBe(false);
     expect(current.config.review.maxRounds).toBe(4);
     expect(current.config.roles.redactor).toEqual({ model: 'fable', effort: 'xhigh' });

@@ -42,15 +42,15 @@ describe('schema', () => {
   test('later migrations only add tables, columns or indexes', () => {
     const db = openDb(':memory:');
     db.query("INSERT INTO lessons (floor, role, text, norm, origin, created_at) VALUES ('mobile', 'dev', 'x', 'x', 'user', 1)").run();
-    expect(migrate(db, [{ version: 5, statements: ['ALTER TABLE lessons ADD COLUMN tags TEXT', 'CREATE INDEX IF NOT EXISTS lessons_tags ON lessons (tags)'] }])).toBe(5);
-    expect(version(db)).toBe(5);
+    expect(migrate(db, [{ version: 6, statements: ['ALTER TABLE lessons ADD COLUMN tags TEXT', 'CREATE INDEX IF NOT EXISTS lessons_tags ON lessons (tags)'] }])).toBe(6);
+    expect(version(db)).toBe(6);
     expect(columns(db, 'lessons')).toContain('tags');
     expect(db.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM lessons').get()?.n).toBe(1);
-    expect(() => migrate(db, [{ version: 6, statements: ['DROP TABLE lessons'] }])).toThrow(/solo añaden/);
+    expect(() => migrate(db, [{ version: 7, statements: ['DROP TABLE lessons'] }])).toThrow(/solo añaden/);
     expect(() => checkAdditive({ version: 7, statements: ['DELETE FROM reports'] })).toThrow();
     expect(() => checkAdditive({ version: 7, statements: ['ALTER TABLE reports RENAME TO informes'] })).toThrow();
     expect(() => checkAdditive({ version: ADDITIVE_SINCE, statements: ['DROP TABLE x'] })).not.toThrow();
-    expect(version(db)).toBe(5);
+    expect(version(db)).toBe(6);
     expect(tables(db)).toContain('lessons');
   });
 
@@ -76,7 +76,7 @@ describe('schema', () => {
   });
 
   test('v4 adds the token tables and the session columns without touching the data', () => {
-    expect(SCHEMA_VERSION).toBe(4);
+    expect(SCHEMA_VERSION).toBe(5);
     const { dir, cleanup } = tempDir();
     const file = join(dir, 'office.db');
     const v3 = openDb(file, MIGRATIONS.filter((m) => m.version <= 3));
@@ -86,7 +86,7 @@ describe('schema', () => {
     v3.query("INSERT INTO documents (path, kind, slug, round, updated_at) VALUES ('redaccion/planes/x.md', 'plan', 'x', 1, 3)").run();
     v3.close();
 
-    const db = openDb(file);
+    const db = openDb(file, MIGRATIONS.filter((m) => m.version <= 4));
     expect(version(db)).toBe(4);
     for (const t of ['token_usage', 'token_cursor']) expect(tables(db)).toContain(t);
     expect(columns(db, 'token_usage')).toEqual([
@@ -112,7 +112,51 @@ describe('schema', () => {
     expect(db.query('SELECT model, plan_slug, turns, output FROM token_usage').all()).toEqual([{ model: '', plan_slug: '', turns: 2, output: 14 }]);
     for (const migration of MIGRATIONS) expect(() => checkAdditive(migration)).not.toThrow();
     db.close();
-    expect(version(openDb(file))).toBe(4);
+    expect(version(openDb(file, MIGRATIONS.filter((m) => m.version <= 4)))).toBe(4);
     cleanup();
+  });
+
+  test('v5 adds the delivery tables and columns to a v4 database without touching its data', () => {
+    const { dir, cleanup } = tempDir();
+    const file = join(dir, 'office.db');
+    const v4 = openDb(file, MIGRATIONS.filter((m) => m.version <= 4));
+    expect(version(v4)).toBe(4);
+    v4.query("INSERT INTO alerts (ts, level, floor, agent_key, files) VALUES (1, 'alerta', 'mobile', 'a-1', '[]')").run();
+    v4.query("INSERT INTO alerts (ts, level, floor, agent_key, files) VALUES (2, 'alerta', 'mobile', 'a-2', '[]')").run();
+    v4.query("INSERT INTO token_cursor (agent_key, session_id, floor, transcript, updated_at) VALUES ('a-1', 's-1', 'mobile', '/t', 1)").run();
+    v4.close();
+
+    const db = openDb(file);
+    expect(version(db)).toBe(5);
+    for (const t of ['orders', 'check_runs', 'checks', 'checkpoints', 'order_comments', 'review_findings', 'usage_samples', 'activity_log']) {
+      expect(tables(db)).toContain(t);
+    }
+    expect(columns(db, 'orders')).toEqual(
+      expect.arrayContaining(['slug', 'status', 'plan_slug', 'cycle', 'skipped_files', 'checks_forced_sha', 'worktree_state', 'review_state', 'removed_at']),
+    );
+    expect(columns(db, 'check_runs')).toEqual(['id', 'order_id', 'floor', 'slug', 'sha', 'trigger', 'status', 'started_at', 'ended_at']);
+    expect(columns(db, 'checks')).toEqual(['id', 'run_id', 'floor', 'slug', 'name', 'command', 'status', 'exit_code', 'duration_ms', 'output_tail']);
+    expect(columns(db, 'checkpoints')).toEqual(['id', 'order_id', 'sha', 'reason', 'label', 'created_at']);
+    expect(columns(db, 'alerts')).toEqual(expect.arrayContaining(['ref', 'cycle']));
+    expect(columns(db, 'token_cursor')).toEqual(expect.arrayContaining(['last_context', 'compactions']));
+    expect(db.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM alerts').get()?.n).toBe(2);
+    expect(db.query('SELECT agent_key, compactions FROM token_cursor').all()).toEqual([{ agent_key: 'a-1', compactions: 0 }]);
+    for (const migration of MIGRATIONS) expect(() => checkAdditive(migration)).not.toThrow();
+    db.close();
+    cleanup();
+  });
+
+  test('a finish alert is unique per kind of reference and cycle, and old alerts do not collide', () => {
+    const db = openDb(':memory:');
+    const insert = db.query("INSERT OR IGNORE INTO alerts (ts, level, floor, agent_key, files, ref, cycle) VALUES (?, 'fin', 'mobile', 'a', '[]', ?, ?)");
+    expect(insert.run(1, 'order:login', 1).changes).toBe(1);
+    expect(insert.run(2, 'order:login', 1).changes).toBe(0);
+    expect(insert.run(3, 'order:login', 2).changes).toBe(1);
+    expect(insert.run(4, 'plan:login', 1).changes).toBe(1);
+    const old = db.query("INSERT INTO alerts (ts, level, floor, agent_key, files) VALUES (?, 'alerta', 'mobile', 'a', '[]')");
+    old.run(5);
+    old.run(6);
+    expect(db.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM alerts').get()?.n).toBe(5);
+    db.close();
   });
 });

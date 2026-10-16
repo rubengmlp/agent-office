@@ -26,7 +26,13 @@ export const FLOOR_TABLES = [
   'chat_messages',
   'token_usage',
   'token_cursor',
+  'activity_log',
+  'check_runs',
+  'checks',
 ] as const;
+
+// Tables keyed by order: they go before the orders of the floor.
+const ORDER_TABLES = ['checkpoints', 'order_comments', 'review_findings'] as const;
 
 // tasks and gate_decisions have no floor column: their scope is the team of a session or agent of the floor,
 // or session-<8 chars> for a session without a team. It must be read before sessions and agents are deleted.
@@ -40,7 +46,9 @@ export function purgeFloorData(db: Database, slug: string, realPath: string): nu
     for (const table of ['tasks', 'gate_decisions']) {
       rows += db.query(`DELETE FROM ${table} WHERE scope IN (${FLOOR_SCOPES})`).run(slug).changes;
     }
+    for (const table of ORDER_TABLES) rows += db.query(`DELETE FROM ${table} WHERE order_id IN (SELECT id FROM orders WHERE floor = ?)`).run(slug).changes;
     for (const table of FLOOR_TABLES) rows += db.query(`DELETE FROM ${table} WHERE floor = ?`).run(slug).changes;
+    rows += db.query('DELETE FROM orders WHERE floor = ?').run(slug).changes;
     rows += db.query('DELETE FROM floors WHERE slug = ? OR path = ?').run(slug, realPath).changes;
     return rows;
   });

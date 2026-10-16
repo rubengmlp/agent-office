@@ -60,6 +60,15 @@ function seedFloorRows(db: Database, floor: string, session: string): void {
   db.query("INSERT INTO chat_messages (ts, channel, floor, author_key, author_name, origin, kind, text, files) VALUES (?, ?, ?, ?, ?, 'agent', 'texto', 'hola', '[]')").run(now, floor, floor, session, 'dev');
   db.query('INSERT INTO token_usage (day, agent_key, session_id, floor, turns, updated_at) VALUES (?, ?, ?, ?, ?, ?)').run('2026-10-16', session, session, floor, 1, now);
   db.query('INSERT INTO token_cursor (agent_key, session_id, floor, transcript, updated_at) VALUES (?, ?, ?, ?, ?)').run(session, session, floor, `/t/${floor}.jsonl`, now);
+  db.query('INSERT INTO activity_log (ts, agent_key, floor, event, summary) VALUES (?, ?, ?, ?, ?)').run(now, session, floor, 'Seed', '{}');
+  const orderId = Number(
+    db.query('INSERT INTO orders (slug, floor, title, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)').run(`o-${floor}`, floor, 'Encargo', 'director', now, now).lastInsertRowid,
+  );
+  const runId = Number(
+    db.query("INSERT INTO check_runs (order_id, floor, slug, sha, trigger, status, started_at) VALUES (?, ?, ?, 'abcdef1', 'listo', 'passed', ?)").run(orderId, floor, `o-${floor}`, now).lastInsertRowid,
+  );
+  db.query("INSERT INTO checks (run_id, floor, slug, name, command, status) VALUES (?, ?, ?, 'test', 'x', 'passed')").run(runId, floor, `o-${floor}`);
+  db.query("INSERT INTO checkpoints (order_id, sha, reason, label, created_at) VALUES (?, 'abcdef1', 'listo', 'x', ?)").run(orderId, now);
 }
 
 function count(db: Database, table: string, floor: string): number {
@@ -180,10 +189,12 @@ describe('floor admin', () => {
     expect(result.removed).toMatchObject({ files: 3, worktrees: 1 });
     expect(result.removed.rows).toBeGreaterThan(0);
 
-    for (const table of FLOOR_TABLES) {
+    for (const table of [...FLOOR_TABLES, 'orders']) {
       expect(count(h.db, table, 'mobile')).toBe(0);
       expect(count(h.db, table, 'otra')).toBe(1);
     }
+    expect(h.db.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM checkpoints WHERE order_id IN (SELECT id FROM orders WHERE floor = \'otra\')').get()?.n).toBe(1);
+    expect(h.db.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM checkpoints').get()?.n).toBe(1);
     for (const table of ['tasks', 'gate_decisions']) {
       expect(scoped(h.db, table, 'session-aaaaaaaa')).toBe(0);
       expect(scoped(h.db, table, 'equipo-x')).toBe(0);

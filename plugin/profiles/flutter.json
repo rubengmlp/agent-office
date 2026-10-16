@@ -3,5 +3,9 @@
   "skill": "senior-flutter",
   "testRegex": "\\bflutter\\s+test\\b",
   "checkRegex": "\\bflutter\\s+analyze\\b|layering_guard|ds_guard",
-  "testCommand": "flutter test <ruta del test>"
+  "testCommand": "flutter test <ruta del test>",
+  "checkFiles": [
+    "analysis_options.yaml",
+    "dart_test.yaml"
+  ]
 }

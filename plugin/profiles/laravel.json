@@ -3,5 +3,10 @@
   "skill": "laravel-senior-backend",
   "testRegex": "\\bphp\\s+artisan\\s+test\\b|\\bphpunit\\b|\\bpest\\b",
   "checkRegex": "\\bpint\\b|\\bphpstan\\b",
-  "testCommand": "php artisan test --filter=<Clase>"
+  "testCommand": "php artisan test --filter=<Clase>",
+  "checkFiles": [
+    "phpunit.xml*",
+    "pint.json",
+    "composer.json#scripts"
+  ]
 }
