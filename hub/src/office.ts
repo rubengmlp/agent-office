@@ -356,6 +356,7 @@ export class Office {
       documents: this.docs.list(),
       alerts: this.alerts(),
       usage: this.usage.view(),
+      chat: [],
     };
   }
 

@@ -27,6 +27,9 @@ const SAME_KEYS: MessageKey[] = [
   'hub.report.counts',
   'hub.role.director',
   'hub.role.tester',
+  'topbar.tab.chat',
+  'chat.title',
+  'chat.global',
 ];
 
 const SOURCE_DIR = join(import.meta.dir, '../src');

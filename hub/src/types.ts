@@ -99,6 +99,11 @@ export type HubTextParams = {
   'hub.act.verdictIgnored': { who: string; path: string };
   'hub.act.retiredIgnored': { who: string };
   'hub.act.lessonIgnoredReviewer': undefined;
+  'hub.act.chatPost': { who: string; channel: string; text: string };
+  'hub.act.chatClaim': { who: string; channel: string; files: string };
+  'hub.act.chatRelease': { who: string; channel: string; files: string };
+  'hub.act.chatUser': { channel: string; text: string };
+  'hub.act.chatCommand': undefined;
   'hub.round': { n: number };
   'hub.score': { n: number };
 
@@ -176,6 +181,13 @@ export type HubTextParams = {
   'hub.api.lessonEmpty': undefined;
   'hub.api.lessonDuplicate': undefined;
   'hub.api.lessonSaveFailed': undefined;
+  'hub.api.chatFields': undefined;
+  'hub.api.chatTooLong': undefined;
+  'hub.api.chatKind': undefined;
+  'hub.api.chatAuthorUnknown': undefined;
+  'hub.api.chatFloorUnknown': undefined;
+  'hub.api.chatChannelUnknown': undefined;
+  'hub.api.chatChannelForbidden': undefined;
 
   'hub.doc.tooLarge': undefined;
 
@@ -387,6 +399,33 @@ export type MessageView = {
   floor: string;
 };
 
+export type ChatKind = 'texto' | 'toca' | 'listo' | 'pregunta';
+
+export type ChatOrigin = 'agent' | 'user';
+
+export type ChatMessageView = {
+  id: number;
+  ts: number;
+  channel: string;
+  floor: string;
+  authorKey: string;
+  authorName: string;
+  role: string | null;
+  roleId: RoleId | null;
+  origin: ChatOrigin;
+  kind: ChatKind;
+  text: string;
+  files: string[];
+};
+
+export type ChatClaimView = { file: string; authorKey: string; authorName: string; ts: number; id: number };
+
+export type ChatPostRequest = { channel: string; kind?: ChatKind; text: string; files?: string[]; from?: string; cwd?: string };
+
+export type ChatPostResult = { ok: true; message: ChatMessageView; warnings: ChatClaimView[] } | { ok: false; status: 400 | 403 | 404; error: HubText };
+
+export type ChatUserResult = { message: ChatMessageView; delivered: number };
+
 export type SessionView = {
   sessionId: string;
   agentKey: string;
@@ -549,6 +588,7 @@ export type Snapshot = {
   documents: DocumentView[];
   alerts: GuardAlert[];
   usage: UsageView;
+  chat: ChatMessageView[];
 };
 
 export type ServerMessage =
@@ -565,7 +605,8 @@ export type ServerMessage =
   | { type: 'alert'; data: GuardAlert }
   | { type: 'memory'; floor: string; role: RoleId }
   | { type: 'settings'; data: SettingsView }
-  | { type: 'usage'; data: UsageView };
+  | { type: 'usage'; data: UsageView }
+  | { type: 'chat'; data: ChatMessageView };
 
 export type ClientMessage =
   | { type: 'auth'; key: string }
