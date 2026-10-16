@@ -6,7 +6,7 @@ import { managedFloors } from './agents';
 import { deliver, encodeInbox, orderText } from './courier';
 import { commitDocument } from './docs-repo';
 import { DocumentDesk } from './documents';
-import { purgeFloorData } from './floor-data';
+import { FloorInUseError, purgeFloorData } from './floor-data';
 import {
   DIRECCION,
   FloorResolver,
@@ -655,9 +655,12 @@ export class Office {
   }
 
   async forgetFloor(slug: string, path: string): Promise<{ rows: number; worktrees: number }> {
+    const worktrees = await this.sync.removeFloor(slug);
+    // A session may have opened on the floor while git was working.
+    const open = this.floorInUse(slug);
+    if (open.length > 0) throw new FloorInUseError(slug, open);
     const keys = new Set([...this.agents.values()].filter((agent) => agent.floor === slug).map((agent) => agent.key));
     const sessionIds = new Set([...this.sessions.values()].filter((session) => session.floor === slug).map((session) => session.sessionId));
-    const worktrees = await this.sync.removeFloor(slug);
 
     for (const q of this.desk.list()) if (sessionIds.has(q.sessionId)) this.desk.release(q.id);
     for (const [id, hold] of this.permissionHolds) if (keys.has(hold.agentKey)) this.permissionHolds.delete(id);

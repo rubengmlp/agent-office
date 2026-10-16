@@ -1,5 +1,11 @@
 import type { Database } from 'bun:sqlite';
 
+export class FloorInUseError extends Error {
+  constructor(slug: string, sessions: readonly string[]) {
+    super(`Cierra la sesión lead-${slug} (y su equipo) antes de borrar la planta. Sesiones abiertas: ${sessions.join(', ')}.`);
+  }
+}
+
 export const FLOOR_TABLES = [
   'events',
   'sessions',
