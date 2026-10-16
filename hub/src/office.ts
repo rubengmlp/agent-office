@@ -6,6 +6,7 @@ import { managedFloors } from './agents';
 import { deliver, encodeInbox, orderText } from './courier';
 import { commitDocument } from './docs-repo';
 import { DocumentDesk } from './documents';
+import { purgeFloorData } from './floor-data';
 import {
   DIRECCION,
   FloorResolver,
@@ -645,6 +646,33 @@ export class Office {
       if (session.endedAt === null && session.socket && !existsSync(session.socket)) this.endSession(session, now);
       if (session.endedAt !== null && now - session.endedAt > FORGET_ENDED_MS) this.sessions.delete(session.sessionId);
     }
+  }
+
+  floorInUse(slug: string): string[] {
+    return [...this.sessions.values()]
+      .filter((session) => session.floor === slug && session.endedAt === null)
+      .map((session) => session.name ?? session.sessionId.slice(0, 8));
+  }
+
+  async forgetFloor(slug: string, path: string): Promise<{ rows: number; worktrees: number }> {
+    const keys = new Set([...this.agents.values()].filter((agent) => agent.floor === slug).map((agent) => agent.key));
+    const sessionIds = new Set([...this.sessions.values()].filter((session) => session.floor === slug).map((session) => session.sessionId));
+    const worktrees = await this.sync.removeFloor(slug);
+
+    for (const q of this.desk.list()) if (sessionIds.has(q.sessionId)) this.desk.release(q.id);
+    for (const [id, hold] of this.permissionHolds) if (keys.has(hold.agentKey)) this.permissionHolds.delete(id);
+    for (const key of keys) this.agents.delete(key);
+    for (const id of sessionIds) this.sessions.delete(id);
+    const keptMessages = this.messages.filter((message) => message.floor !== slug);
+    this.messages.splice(0, this.messages.length, ...keptMessages);
+    const keptActivity = this.activity.filter((entry) => !keys.has(entry.agentKey));
+    this.activity.splice(0, this.activity.length, ...keptActivity);
+
+    const rows = purgeFloorData(this.opts.db, slug, path);
+    const now = this.now();
+    this.pushActivity({ ts: now, agentKey: 'panel', event: 'FloorRemoved', tool: null, state: null, summary: `planta borrada desde el panel: ${slug}` });
+    this.emit({ type: 'snapshot', data: this.snapshot() });
+    return { rows, worktrees };
   }
 
   reload(config: OfficeConfig, profiles: Profiles): void {

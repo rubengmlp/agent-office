@@ -285,6 +285,16 @@ export type SettingsUpdate = {
 
 export type SettingsResult = { ok: true; regenerated: number; note: string } | { ok: false; error: string };
 
+export type FloorAddRequest = { path: string; slug?: string };
+
+export type FloorErrorStatus = 400 | 404 | 409 | 500;
+
+export type FloorFailure = { ok: false; status: FloorErrorStatus; error: string };
+
+export type FloorAddResult = { ok: true; slug: string; path: string; stack: Stack; startCommand: string; note: string } | FloorFailure;
+
+export type FloorRemoveResult = { ok: true; slug: string; removed: { files: number; rows: number; worktrees: number } } | FloorFailure;
+
 export type MemoryView = { floor: string; role: RoleId; lessons: LessonView[]; reports: ReportView[] };
 
 export type LessonCreate = { floor: string; role: RoleId; text: string };
