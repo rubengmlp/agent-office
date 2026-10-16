@@ -64,6 +64,20 @@ describe('permission requests in the panel', () => {
     expect(h.office.snapshot().questions).toEqual([]);
   });
 
+  test('a permission is held and emitted only for a hidden panel that can notify', async () => {
+    const repo = watched();
+    h.clock.advance(31_000);
+    expect(await h.office.permission(request(repo, 'ls'), leadMeta)).toBeNull();
+    expect(h.office.snapshot().questions).toEqual([]);
+
+    h.office.heartbeat(false, 1);
+    const pending = h.office.permission(request(repo, 'bun run hub'), leadMeta);
+    expect(h.messages).toContainEqual({ type: 'question', data: expect.objectContaining({ kind: 'permission', detail: 'bun run hub', agentKey: LEAD }) });
+    const question = h.office.snapshot().questions[0]!;
+    expect(h.office.answer(question.id, { [question.questions[0]!.question]: 'Permitir' })).toBe('ok');
+    expect(JSON.parse((await pending) ?? '{}').hookSpecificOutput.decision).toEqual({ behavior: 'allow' });
+  });
+
   test('nothing is held when nobody watches the panel or the session is not part of the office', async () => {
     h = harness({ holdMs: 60_000 });
     const repo = join(h.root, 'kapper');
