@@ -25,6 +25,7 @@ import {
   EFFORTS,
   MEMORY_FIELDS,
   MODEL_OPTIONS,
+  OFFICE_FIELDS,
   OTHER_MODEL,
   REVIEW_FIELDS,
   ROLE_ROWS,
@@ -369,6 +370,11 @@ class SettingsPage {
         'Memoria',
         'Lecciones que guarda la oficina y se inyectan a cada agente al empezar.',
         ...numberRows(MEMORY_FIELDS),
+      ),
+      section(
+        'Oficina',
+        'Cuándo se va a casa un compañero que se ha quedado sin trabajo.',
+        ...numberRows(OFFICE_FIELDS),
       ),
       section(
         'Plantas',

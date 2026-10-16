@@ -8,7 +8,7 @@ export const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._[\]-]{0,79}$/;
 
 export const BRANCH_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/;
 
-export type NumberKey = 'maxRounds' | 'maxLessons' | 'maxLessonsPerSession' | 'maxContextChars';
+export type NumberKey = 'maxRounds' | 'maxLessons' | 'maxLessonsPerSession' | 'maxContextChars' | 'leaveAfterMinutes';
 
 export type NumberField = {
   key: NumberKey;
@@ -95,4 +95,14 @@ export const MEMORY_FIELDS: readonly NumberField[] = [
   },
 ];
 
-export const NUMBER_FIELDS: readonly NumberField[] = [...REVIEW_FIELDS, ...MEMORY_FIELDS];
+export const OFFICE_FIELDS: readonly NumberField[] = [
+  {
+    key: 'leaveAfterMinutes',
+    label: 'Minutos hasta irse a casa',
+    hint: 'Un compañero libre durante este tiempo sale del edificio si su jefe no está trabajando; vuelve en cuanto recibe trabajo.',
+    min: 1,
+    max: 60,
+  },
+];
+
+export const NUMBER_FIELDS: readonly NumberField[] = [...REVIEW_FIELDS, ...MEMORY_FIELDS, ...OFFICE_FIELDS];

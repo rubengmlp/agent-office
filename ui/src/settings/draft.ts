@@ -70,6 +70,7 @@ function numbersOf(view: SettingsView): Record<NumberKey, number> {
     maxLessons: view.memory.maxLessons,
     maxLessonsPerSession: view.memory.maxLessonsPerSession,
     maxContextChars: view.memory.maxContextChars,
+    leaveAfterMinutes: view.leaveAfterMinutes,
   };
 }
 
@@ -237,6 +238,8 @@ export function diffDraft(baseline: SettingsView, draft: SettingsDraft): Setting
   if (changed.maxContextChars !== undefined) memory.maxContextChars = changed.maxContextChars;
   if (Object.keys(memory).length > 0) update.memory = memory;
 
+  if (changed.leaveAfterMinutes !== undefined) update.leaveAfterMinutes = changed.leaveAfterMinutes;
+
   const floors: Record<string, { baseBranch?: string }> = {};
   for (const floor of managedFloors(baseline)) {
     const branch = (draft.branches[floor.slug] ?? floor.baseBranch).trim();
@@ -283,6 +286,7 @@ export function applyUpdate(view: SettingsView, update: SettingsUpdate): Setting
     review: { ...view.review, ...update.review },
     memory: { ...view.memory, ...update.memory },
     permissionModes: { ...view.permissionModes, ...update.permissionModes },
+    leaveAfterMinutes: update.leaveAfterMinutes ?? view.leaveAfterMinutes,
     floors: view.floors.map((floor) => {
       const baseBranch = update.floors?.[floor.slug]?.baseBranch;
       return baseBranch === undefined ? floor : { ...floor, baseBranch };
