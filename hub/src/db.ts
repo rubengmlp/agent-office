@@ -2,7 +2,7 @@ import { Database } from 'bun:sqlite';
 import { chmodSync } from 'node:fs';
 import type { FloorRecord, FloorRegistry } from './floors';
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 export const ADDITIVE_SINCE = 2;
 
 export type Migration = { version: number; statements: string[] };
@@ -15,6 +15,45 @@ export const MIGRATIONS: readonly Migration[] = [
       'ALTER TABLE documents ADD COLUMN decision TEXT',
       'ALTER TABLE documents ADD COLUMN decided_at INTEGER',
       'ALTER TABLE documents ADD COLUMN delivered_base TEXT',
+    ],
+  },
+  {
+    version: 4,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS token_usage (
+        day TEXT NOT NULL,
+        agent_key TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        floor TEXT NOT NULL,
+        role_id TEXT,
+        name TEXT,
+        model TEXT NOT NULL DEFAULT '',
+        plan_slug TEXT NOT NULL DEFAULT '',
+        turns INTEGER NOT NULL DEFAULT 0,
+        input INTEGER NOT NULL DEFAULT 0,
+        cache_read INTEGER NOT NULL DEFAULT 0,
+        cache_create INTEGER NOT NULL DEFAULT 0,
+        output INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (day, agent_key, model, plan_slug)
+      )`,
+      'CREATE INDEX IF NOT EXISTS token_usage_agent ON token_usage (agent_key)',
+      'CREATE INDEX IF NOT EXISTS token_usage_plan ON token_usage (plan_slug, day)',
+      `CREATE TABLE IF NOT EXISTS token_cursor (
+        agent_key TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        floor TEXT NOT NULL,
+        transcript TEXT NOT NULL,
+        byte_offset INTEGER NOT NULL DEFAULT 0,
+        last_msg_id TEXT,
+        last_out INTEGER NOT NULL DEFAULT 0,
+        skipped_lines INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL
+      )`,
+      'ALTER TABLE sessions ADD COLUMN rules_hash TEXT',
+      'ALTER TABLE sessions ADD COLUMN launch_hash TEXT',
+      'ALTER TABLE sessions ADD COLUMN task_open_since INTEGER',
+      'ALTER TABLE sessions ADD COLUMN plan_slug TEXT',
     ],
   },
 ];

@@ -203,7 +203,15 @@ describe('prune', () => {
     const question = db.query("INSERT INTO questions (id, session_id, agent_key, floor, payload, status, created_at) VALUES (?, 's', 'a', 'f', '[]', ?, ?)");
     question.run('q-old', 'answered', old);
     question.run('q-pending', 'pending', old);
-    expect(prune(db, now, 14)).toBe(4);
+    const usage = db.query("INSERT INTO token_usage (day, agent_key, session_id, floor, updated_at) VALUES (?, 'a', 's', 'f', ?)");
+    usage.run('2026-01-01', old);
+    usage.run('2026-01-15', recent);
+    const cursor = db.query("INSERT INTO token_cursor (agent_key, session_id, floor, transcript, updated_at) VALUES (?, 's', 'f', '/t.jsonl', ?)");
+    cursor.run('a-old', old);
+    cursor.run('a-recent', recent);
+    expect(prune(db, now, 14)).toBe(6);
+    expect(db.query<{ day: string }, []>('SELECT day FROM token_usage').all()).toEqual([{ day: '2026-01-15' }]);
+    expect(db.query<{ key: string }, []>('SELECT agent_key AS key FROM token_cursor').all()).toEqual([{ key: 'a-recent' }]);
     expect(db.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM events').get()?.n).toBe(1);
     expect(db.query<{ id: string }, []>('SELECT session_id AS id FROM sessions').all().map((r) => r.id)).toEqual(['live']);
     expect(db.query<{ id: string }, []>('SELECT id FROM questions').all().map((r) => r.id)).toEqual(['q-pending']);
