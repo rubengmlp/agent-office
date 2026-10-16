@@ -1,5 +1,4 @@
 import type { Database } from 'bun:sqlite';
-import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { CHAT_SCRIPT, managedFloors } from './agents';
@@ -34,7 +33,6 @@ import {
   MAX_MESSAGES,
   NEW_TURN,
   NOT_DISCARDABLE,
-  NOT_PERMISSIONS,
   NO_TESTS,
   READ_CAP_TOOLS,
   TURN_OVER,
@@ -66,12 +64,10 @@ import {
   historyPath,
   isUserPrompt,
   isoDate,
-  permissionDetail,
-  permissionMatch,
-  permissionPrompt,
   taskLine,
   withoutDiscardMark,
 } from './office-texts';
+import { AskDesk } from './ask-desk';
 import { GuardDesk } from './guard-desk';
 import { MeterDesk } from './meter-desk';
 import { OfficeBus } from './office-bus';
@@ -82,7 +78,7 @@ import { ownerEdits, prepare, type Sql } from './office-sql';
 import { publicDetail, publicSummary, publicText, storedPayload, visibleKind } from './privacy';
 import { detectStack, profileFor, type Profiles } from './profiles';
 import { BRIEF_PREFIX, docRef, parseProtocol, type DocRef } from './protocol';
-import { PERMISSION_ALLOW, PERMISSION_DENY, QuestionDesk, parseQuestions } from './questions';
+import { QuestionDesk } from './questions';
 import { buildReport, saveReport, savedReport, savedReports } from './reports';
 import {
   contextFree,
@@ -128,8 +124,6 @@ import type {
   MessageView,
   OfficeConfig,
   PlanDecision,
-  QuestionOutcome,
-  QuestionView,
   ReportView,
   RoleId,
   ServerMessage,
@@ -206,12 +200,12 @@ export class Office {
   private profiles: Profiles;
   private readonly floors: FloorResolver;
   private readonly messages: MessageView[] = [];
-  private readonly permissionHolds = new Map<string, { agentKey: string; match: string }>();
   private readonly docsQueue = new GitQueue();
   private readonly bus: OfficeBus;
   private readonly book: SessionBook;
   private readonly rules: RulesDesk;
   private readonly guards: GuardDesk;
+  private readonly asks: AskDesk;
   private readonly stall: StallDesk;
   private readonly now: () => number;
   private readonly deliverFn: typeof deliver;
@@ -270,12 +264,13 @@ export class Office {
     });
     this.desk = new QuestionDesk(
       {
-        opened: (view) => this.questionOpened(view),
-        closed: (id, outcome) => this.questionClosed(id, outcome),
+        opened: (view) => this.asks.questionOpened(view),
+        closed: (id, outcome) => this.asks.questionClosed(id, outcome),
       },
       opts.holdMs,
       this.now,
     );
+    this.asks = new AskDesk({ sql: this.sql, now: this.now, bus: this.bus, book: this.book, desk: this.desk });
     this.stall = new StallDesk({ now: this.now, bus: this.bus, book: this.book, config: () => this.config, desk: this.desk });
     this.sync = new SyncDesk({
       db: opts.db,
@@ -495,7 +490,7 @@ export class Office {
     this.pushActivity({ ts: now, agentKey: agent.key, event: c.event, tool: c.tool, state: nextState, summary: publicSummary(c, kind) });
     this.guards.trackDepartment(agent, c.event, ended);
     this.guards.trackChanges(agent, kind, c.event, ended);
-    this.settlePermissions(agent.key, c.event, c.tool, e.tool_input);
+    this.asks.settlePermissions(agent.key, c.event, c.tool, e.tool_input);
     if (c.event === 'SubagentStop' || c.event === 'Stop' || c.event === 'SessionEnd') this.storeReport(agent, now);
 
     if (TURN_OVER.has(c.event)) this.meter.later(agent);
@@ -527,51 +522,12 @@ export class Office {
     return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: decision.reason } });
   }
 
-  async ask(e: HookEvent, meta: HookMeta = EMPTY_META, signal?: AbortSignal): Promise<string | null> {
-    if (!isHookEvent(e) || e.tool_name !== 'AskUserQuestion') return null;
-    const now = this.now();
-    const session = this.book.touchSession(e, meta, now);
-    if (!this.desk.someoneWatching() || !this.book.sessionInOffice(session, text(e.team_name))) return null;
-    const input = record(e.tool_input);
-    const questions = parseQuestions(input.questions);
-    if (!questions) return null;
-    const id = text(e.tool_use_id) ?? randomUUID();
-    if (this.desk.has(id)) return null;
-    return this.desk.hold(
-      { id, agentKey: e.agent_id ?? e.session_id, sessionId: e.session_id, floor: session.floor, questions, createdAt: now },
-      input,
-      signal,
-    );
+  ask(e: HookEvent, meta: HookMeta = EMPTY_META, signal?: AbortSignal): Promise<string | null> {
+    return this.asks.ask(e, meta, signal);
   }
 
-  async permission(e: HookEvent, meta: HookMeta = EMPTY_META, signal?: AbortSignal): Promise<string | null> {
-    if (!isHookEvent(e) || e.hook_event_name !== 'PermissionRequest') return null;
-    if (NOT_PERMISSIONS.has(e.tool_name ?? '')) return null;
-    const now = this.now();
-    const session = this.book.touchSession(e, meta, now);
-    if (!this.desk.someoneWatching() || !this.book.sessionInOffice(session, text(e.team_name))) return null;
-    const tool = text(e.tool_name) ?? '?';
-    const input = record(e.tool_input);
-    const key = e.agent_id ?? e.session_id;
-    const who = this.book.agents.get(key)?.name ?? (key === e.session_id ? session.name : null) ?? key.slice(0, 8);
-    const id = `permiso-${randomUUID()}`;
-    this.permissionHolds.set(id, { agentKey: key, match: permissionMatch(tool, input) });
-    return this.desk.hold(
-      {
-        id,
-        kind: 'permission',
-        detail: permissionDetail(tool, input),
-        tool: text(e.tool_name) ?? undefined,
-        prompt: permissionPrompt(tool, who),
-        agentKey: key,
-        sessionId: e.session_id,
-        floor: session.floor,
-        questions: [{ question: 'permiso', options: [{ label: PERMISSION_ALLOW }, { label: PERMISSION_DENY }] }],
-        createdAt: now,
-      },
-      input,
-      signal,
-    );
+  permission(e: HookEvent, meta: HookMeta = EMPTY_META, signal?: AbortSignal): Promise<string | null> {
+    return this.asks.permission(e, meta, signal);
   }
 
   answer(id: string, answers: unknown): 'ok' | 'closed' | 'invalid' {
@@ -1009,7 +965,7 @@ export class Office {
     const sessionIds = new Set([...this.book.sessions.values()].filter((session) => session.floor === slug).map((session) => session.sessionId));
 
     for (const q of this.desk.list()) if (sessionIds.has(q.sessionId)) this.desk.release(q.id);
-    for (const [id, hold] of this.permissionHolds) if (keys.has(hold.agentKey)) this.permissionHolds.delete(id);
+    this.asks.forget(keys);
     for (const key of keys) this.book.agents.delete(key);
     this.meter.forget(keys);
     this.forgetChatNotes(keys);
@@ -1101,17 +1057,6 @@ export class Office {
 
   refreshDocuments(): void {
     this.docs.refresh();
-  }
-
-  private settlePermissions(agentKey: string, event: string, tool: string | null, input: unknown): void {
-    if (this.permissionHolds.size === 0) return;
-    const turnOver = event === 'Stop' || event === 'SubagentStop' || event === 'SessionEnd' || event === 'UserPromptSubmit';
-    const ran = (event === 'PostToolUse' || event === 'PostToolUseFailure') && tool ? permissionMatch(tool, record(input)) : null;
-    if (!turnOver && !ran) return;
-    for (const [id, hold] of [...this.permissionHolds]) {
-      if (hold.agentKey !== agentKey) continue;
-      if (turnOver || hold.match === ran) this.desk.release(id);
-    }
   }
 
   private storeReport(agent: AgentRuntime, now: number): void {
@@ -1533,7 +1478,7 @@ export class Office {
       });
     }
     if (c.message) this.recordMessage(c.message, agent, session, now);
-    this.settlePermissions(agent.key, c.event, c.tool, e.tool_input);
+    this.asks.settlePermissions(agent.key, c.event, c.tool, e.tool_input);
     if (c.sessionEnded) this.endSession(session, now);
   }
 
@@ -1708,26 +1653,6 @@ export class Office {
       this.guards.finish(agent.key);
     }
     for (const q of this.desk.list()) if (q.sessionId === session.sessionId) this.desk.release(q.id);
-  }
-
-  private questionOpened(view: QuestionView): void {
-    this.sql.insertQuestion.run(view.id, view.sessionId, view.agentKey, view.floor, JSON.stringify(view.questions), 'pending', view.createdAt);
-    this.bus.emit({ type: 'question', data: view });
-    const permission = view.kind === 'permission';
-    this.pushActivity({
-      ts: view.createdAt,
-      agentKey: view.agentKey,
-      event: permission ? 'Permission' : 'Question',
-      tool: permission ? 'PermissionRequest' : 'AskUserQuestion',
-      state: 'asking',
-      summary: permission ? { key: 'hub.act.permissionWaiting', params: { detail: short(view.detail ?? '', 60) } } : { key: 'hub.act.questionWaiting' },
-    });
-  }
-
-  private questionClosed(id: string, outcome: QuestionOutcome): void {
-    this.permissionHolds.delete(id);
-    this.sql.closeQuestion.run(outcome, this.now(), id);
-    this.bus.emit({ type: 'question-closed', id, outcome });
   }
 
   private pushActivity(entry: ActivityView): void {
