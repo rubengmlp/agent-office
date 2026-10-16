@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { ensureDocsRepo } from '../src/docs-repo';
+import type { FloorAdmin } from '../src/floor-admin';
 import { startServer } from '../src/server';
 import type { SettingsService } from '../src/settings';
 import { settingsView } from '../src/settings';
@@ -33,6 +34,19 @@ describe('hub server v2 routes', () => {
       return raw && typeof raw === 'object' && 'roles' in raw ? { ok: true, regenerated: 11, note: 'Guardado.' } : { ok: false, error: 'Nada que guardar' };
     },
   };
+  const floorCalls: unknown[] = [];
+  const floors: FloorAdmin = {
+    add: (raw) => {
+      floorCalls.push(raw);
+      return raw && typeof raw === 'object' && 'path' in raw
+        ? { ok: true, slug: 'web', path: '/tmp/web', stack: 'node', startCommand: 'claude', note: 'Planta web gestionada.' }
+        : { ok: false, status: 400, error: 'Indica la ruta del repositorio.' };
+    },
+    remove: async (slug) => {
+      floorCalls.push(slug);
+      return { ok: false, status: 404, error: `No hay ninguna planta "${slug}".` };
+    },
+  };
   let base = '';
   let stop = () => {};
   const headers = { 'Content-Type': 'application/json', 'X-Office-Key': KEY };
@@ -47,7 +61,7 @@ describe('hub server v2 routes', () => {
     mkdirSync(publicDir, { recursive: true });
     const port = await freePort();
     base = `http://127.0.0.1:${port}`;
-    ({ stop } = startServer({ office: h.office, port, key: () => KEY, publicDir, settings }));
+    ({ stop } = startServer({ office: h.office, port, key: () => KEY, publicDir, settings, floors }));
   });
 
   afterAll(() => {
@@ -104,6 +118,20 @@ describe('hub server v2 routes', () => {
     const refused = await call('POST', '/api/settings', { nada: true });
     expect(refused.status).toBe(400);
     expect(updates).toHaveLength(2);
+  });
+
+  test('floors are added and deleted through the floor admin', async () => {
+    const created = await call('POST', '/api/floors', { path: '/tmp/web' });
+    expect(created.status).toBe(200);
+    expect(await created.json()).toMatchObject({ ok: true, slug: 'web' });
+    const refused = await call('POST', '/api/floors', {});
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toMatchObject({ ok: false, error: 'Indica la ruta del repositorio.' });
+    const missing = await call('DELETE', '/api/floors/x');
+    expect(missing.status).toBe(404);
+    expect(floorCalls).toEqual([{ path: '/tmp/web' }, {}, 'x']);
+    expect((await fetch(`${base}/api/floors`, { method: 'POST', body: '{}' })).status).toBe(401);
+    expect((await fetch(`${base}/api/floors/x`, { method: 'DELETE' })).status).toBe(401);
   });
 
   test('memory: list, add, refuse duplicates and delete', async () => {
