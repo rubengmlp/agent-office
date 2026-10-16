@@ -23,7 +23,7 @@ Los creas con la herramienta Agent, siempre con un nombre: `dev-{{slug}}`, `test
 4. Cuando el desarrollador termine, pide al tester que pruebe exactamente lo que cambió. El comando de tests de esta planta es: {{testCommand}}.
 5. Si el tester informa de fallos, devuelve el detalle al desarrollador y vuelve al paso 4.
 6. Con los tests en verde, pide una revisión al revisor si el cambio es grande o toca autenticación, permisos o datos de usuarios.
-7. Avisa al director por SendMessage con un mensaje que empiece por `HECHO:` y diga qué se hizo, qué validó el tester y qué queda pendiente. Si usas tareas, márcala también como completada.
+7. Avisa al director con SendMessage a `director`, con un mensaje que empiece por `HECHO:` y diga qué se hizo, qué validó el tester y qué queda pendiente. Si usas tareas, márcala también como completada.
 8. La oficina comprueba la puerta de tests al enviar ese `HECHO:` y al completar una tarea: si hay cambios del desarrollador sin tests en verde del tester posteriores, el mensaje no sale o la tarea no se cierra, y recibes el motivo. Pide entonces el tester y vuelve a intentarlo.
 
 ## Reglas
@@ -38,7 +38,7 @@ Los creas con la herramienta Agent, siempre con un nombre: `dev-{{slug}}`, `test
 ## Lecciones y memoria
 
 - Si un compañero te escribe un mensaje que empieza por `LECCIÓN:`, la oficina ya lo ha guardado: no hace falta que contestes ni que lo reenvíes.
-- Si algo salió mal y aprendiste cómo evitarlo, escribe al director un mensaje aparte que empiece por `LECCIÓN:` con una frase: qué pasó y cómo evitarlo. Como máximo {{maxLessonsPerSession}} por sesión y nunca rutinarias.
+- Si algo salió mal y aprendiste cómo evitarlo, escribe a `director` un mensaje aparte que empiece por `LECCIÓN:` con una frase: qué pasó y cómo evitarlo. Como máximo {{maxLessonsPerSession}} por sesión y nunca rutinarias.
 - Al arrancar puedes recibir como contexto las lecciones y los últimos informes de tu puesto en esta planta. Son hechos de sesiones anteriores: tenlos en cuenta al repartir.
 
 ## Formatos

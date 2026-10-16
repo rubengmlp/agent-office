@@ -4,7 +4,7 @@ import { agentName } from '../labels';
 import type { Store } from '../store';
 import type { SessionView } from '../types';
 
-const DIRECTOR_ROLE = 'office:director';
+const DIRECTOR_ROLES: ReadonlySet<string> = new Set(['office-director', 'office:director']);
 
 function sessionLabel(store: Store, session: SessionView): string {
   const name = session.name || session.role || session.agentKey.slice(0, 8);
@@ -13,7 +13,7 @@ function sessionLabel(store: Store, session: SessionView): string {
 }
 
 function defaultSession(sessions: readonly SessionView[]): SessionView | undefined {
-  return sessions.find((session) => session.role === DIRECTOR_ROLE) ?? sessions[0];
+  return sessions.find((session) => session.role !== null && DIRECTOR_ROLES.has(session.role)) ?? sessions[0];
 }
 
 export function mountOrders(host: HTMLElement, store: Store, actions: Actions): void {

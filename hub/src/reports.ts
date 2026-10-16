@@ -29,8 +29,12 @@ function summarize(sent: MessageRow[], closing: string | null, files: number, te
   if (blocked?.text) return short(blocked.text, 160);
   const firstLine = closing?.split('\n').find((line) => line.trim());
   if (firstLine) return short(firstLine, 160);
-  if (files === 0 && tests === 0) return 'Sin actividad registrada';
-  return `${files} ${files === 1 ? 'fichero cambiado' : 'ficheros cambiados'} · ${tests} ${tests === 1 ? 'ejecución de tests' : 'ejecuciones de tests'}`;
+  if (files > 0 || tests > 0) {
+    return `${files} ${files === 1 ? 'fichero cambiado' : 'ficheros cambiados'} · ${tests} ${tests === 1 ? 'ejecución de tests' : 'ejecuciones de tests'}`;
+  }
+  const lastSent = [...sent].reverse().find((m) => m.text);
+  if (lastSent?.text) return `Último mensaje a ${lastSent.to_name}: ${short(lastSent.text, 120)}`;
+  return 'Todavía sin ficheros, tests ni mensajes';
 }
 
 export function buildReport(db: Database, s: ReportSubject, nameOf: (key: string) => string): ReportView {

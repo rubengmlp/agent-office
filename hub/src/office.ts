@@ -42,7 +42,7 @@ import {
   roleKind,
 } from './scope';
 import { settingsView } from './settings';
-import { DONE_PREFIX, classify, idText, record, short, text, type Classified, type SpawnCall } from './state-machine';
+import { DONE_PREFIX, classify, idText, record, short, text, type Classified, type Matchers, type SpawnCall } from './state-machine';
 import { SyncDesk, type SyncResult } from './sync';
 import type {
   ActivityView,
@@ -159,6 +159,7 @@ const TEAM_CACHE_MS = 5000;
 const VERDICT_DEDUP_MS = 10 * 60_000;
 const DAY_MS = 86_400_000;
 const EMPTY_META: HookMeta = { socket: null, token: null, role: null, name: null };
+const NO_TESTS: Matchers = { test: /(?!)/, check: /(?!)/ };
 
 export const ROLE_LABELS: Record<RoleId, string> = {
   director: 'director',
@@ -312,7 +313,7 @@ export class Office {
     this.dumpRaw(e, now);
     const session = this.touchSession(e, meta, now);
     const kind = session.floorKind;
-    const c = classify(e, profileFor(this.profiles, session.stack));
+    const c = classify(e, isDepartmentFloor(kind) ? NO_TESTS : profileFor(this.profiles, session.stack));
     if (c.event === 'SubagentStop' && !this.agents.has(c.agentKey)) {
       this.sql.insertEvent.run(now, e.session_id, c.agentKey, session.floor, c.event, null, null, null, storedPayload(e, kind));
       return null;

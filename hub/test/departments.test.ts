@@ -279,6 +279,18 @@ describe('Mantenimiento skills', () => {
   });
 });
 
+describe('department floors have no tests', () => {
+  test('a command that mentions "test" in a department is not a test run', () => {
+    const cwd = redaccionTeam();
+    h.office.ingest(ev(LEAD, cwd, 'PreToolUse', { tool_name: 'Bash', tool_input: { command: 'office-sync.sh flow-test-otp mobile' } }));
+    h.office.ingest(ev(LEAD, cwd, 'PostToolUse', { tool_name: 'Bash', tool_input: { command: 'office-sync.sh flow-test-otp mobile' } }));
+    expect(agent(LEAD)?.lastTest).toBeNull();
+    expect(agent(LEAD)?.state).not.toBe('testing');
+    expect(h.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM verdicts WHERE kind = 'tests'").get()?.n).toBe(0);
+    expect(h.office.report('ared-1')?.summary).toBe('Todavía sin ficheros, tests ni mensajes');
+  });
+});
+
 describe('guard through the hub', () => {
   test('department writes outside their folder are blocked and other floors are left alone', () => {
     const cwd = redaccionTeam();
