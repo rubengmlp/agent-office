@@ -9,7 +9,7 @@ port=$(cat "$dir/port" 2>/dev/null)
 endpoint="${1:-events}"
 max=2
 case "$endpoint" in
-  ask|permission) max=890 ;;
+  ask|permission) max=3590 ;;
 esac
 out=$(curl -sf -m "$max" -X POST "http://127.0.0.1:$port/$endpoint" \
   -H "Content-Type: application/json" \

@@ -121,6 +121,7 @@ describe('hub server', () => {
       ws.onmessage = (e) => resolve(JSON.parse(String(e.data)));
     });
     expect(first.type).toBe('snapshot');
+    expect(h.office.desk.someoneWatching()).toBe(true);
     ws.send(JSON.stringify({ type: 'heartbeat', visible: true }));
     await until(() => h.office.desk.someoneWatching());
     ws.close();
@@ -148,6 +149,29 @@ describe('hub server', () => {
     const decision = (await (await pending).json()) as { hookSpecificOutput: { updatedInput: { answers: Record<string, string> } } };
     expect(decision.hookSpecificOutput.updatedInput.answers['¿Seguimos?']).toBe('Sí');
     expect((await post('/api/answers/srv-q1', { answers: { '¿Seguimos?': 'No' } }, withKey)).status).toBe(409);
+  });
+
+  test('a question leaves the panel when its hook gives up and closes the connection', async () => {
+    h.office.heartbeat(true);
+    const controller = new AbortController();
+    const pending = fetch(`${base}/ask`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...withKey },
+      body: JSON.stringify({
+        session_id: 'srv-2',
+        cwd: repo,
+        hook_event_name: 'PreToolUse',
+        tool_name: 'AskUserQuestion',
+        tool_use_id: 'srv-q-abort',
+        tool_input: { questions: [{ question: '¿Abandono?', options: [{ label: 'Sí' }] }] },
+      }),
+      signal: controller.signal,
+    }).catch(() => null);
+    await until(() => h.office.desk.has('srv-q-abort'));
+    controller.abort();
+    await pending;
+    await until(() => !h.office.desk.has('srv-q-abort'));
+    expect(h.office.snapshot().questions.map((q) => q.id)).not.toContain('srv-q-abort');
   });
 
   test('/ask answers at once with an empty body when nobody watches', async () => {

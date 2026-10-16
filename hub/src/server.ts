@@ -62,7 +62,7 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
     const event = await readJson(c);
     if (!isHookEvent(event)) return c.body(null, 200);
     holdRequest(c.req.raw);
-    const body = await office.ask(event, metaOf(c));
+    const body = await office.ask(event, metaOf(c), c.req.raw.signal);
     return body ? c.body(body, 200, { 'Content-Type': 'application/json' }) : c.body(null, 200);
   });
 
@@ -70,7 +70,7 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
     const event = await readJson(c);
     if (!isHookEvent(event)) return c.body(null, 200);
     holdRequest(c.req.raw);
-    const body = await office.permission(event, metaOf(c));
+    const body = await office.permission(event, metaOf(c), c.req.raw.signal);
     return body ? c.body(body, 200, { 'Content-Type': 'application/json' }) : c.body(null, 200);
   });
 
@@ -207,6 +207,7 @@ export function startServer(opts: ServerOptions): RunningServer {
         if (!ws.data.authed) {
           if (msg?.type === 'auth' && keyMatches(msg.key, opts.key())) {
             ws.data.authed = true;
+            opts.office.panelConnected();
             if (ws.data.timer) clearTimeout(ws.data.timer);
             clients.add(ws);
             const snapshot: ServerMessage = { type: 'snapshot', data: opts.office.snapshot() };
@@ -219,7 +220,7 @@ export function startServer(opts: ServerOptions): RunningServer {
         if (msg?.type === 'heartbeat') opts.office.heartbeat(msg.visible === true);
       },
       close(ws) {
-        clients.delete(ws);
+        if (clients.delete(ws)) opts.office.panelDisconnected();
         if (ws.data.timer) clearTimeout(ws.data.timer);
       },
     },

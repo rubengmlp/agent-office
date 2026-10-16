@@ -382,7 +382,7 @@ export class Office {
     return null;
   }
 
-  async ask(e: HookEvent, meta: HookMeta = EMPTY_META): Promise<string | null> {
+  async ask(e: HookEvent, meta: HookMeta = EMPTY_META, signal?: AbortSignal): Promise<string | null> {
     if (!isHookEvent(e) || e.tool_name !== 'AskUserQuestion') return null;
     const now = this.now();
     const session = this.touchSession(e, meta, now);
@@ -395,10 +395,11 @@ export class Office {
     return this.desk.hold(
       { id, agentKey: e.agent_id ?? e.session_id, sessionId: e.session_id, floor: session.floor, questions, createdAt: now },
       input,
+      signal,
     );
   }
 
-  async permission(e: HookEvent, meta: HookMeta = EMPTY_META): Promise<string | null> {
+  async permission(e: HookEvent, meta: HookMeta = EMPTY_META, signal?: AbortSignal): Promise<string | null> {
     if (!isHookEvent(e) || e.hook_event_name !== 'PermissionRequest') return null;
     if (NOT_PERMISSIONS.has(e.tool_name ?? '')) return null;
     const now = this.now();
@@ -428,6 +429,7 @@ export class Office {
         createdAt: now,
       },
       input,
+      signal,
     );
   }
 
@@ -441,6 +443,14 @@ export class Office {
 
   heartbeat(visible: boolean): void {
     this.desk.heartbeat(visible);
+  }
+
+  panelConnected(): void {
+    this.desk.connect();
+  }
+
+  panelDisconnected(): void {
+    this.desk.disconnect();
   }
 
   gate(e: HookEvent): GateDecision {

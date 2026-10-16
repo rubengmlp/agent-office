@@ -260,6 +260,27 @@ describe('questions held for the panel', () => {
     expect(await pending).toBeNull();
   });
 
+  test('an open panel counts as watching even when its tab is covered, and a quick reload keeps the question', async () => {
+    h = harness({ holdMs: 60_000 });
+    const repo = managedRepo();
+    h.office.panelConnected();
+    const pending = h.office.ask(question(repo, 'q9'), leadMeta);
+    h.clock.advance(45_000);
+    h.office.tick();
+    expect(h.office.snapshot().questions.map((q) => q.id)).toEqual(['q9']);
+    h.office.panelDisconnected();
+    h.clock.advance(5_000);
+    h.office.tick();
+    h.office.panelConnected();
+    h.clock.advance(40_000);
+    h.office.tick();
+    expect(h.office.snapshot().questions.map((q) => q.id)).toEqual(['q9']);
+    h.office.panelDisconnected();
+    h.clock.advance(31_000);
+    h.office.tick();
+    expect(await pending).toBeNull();
+  });
+
   test('a hidden tab does not count as watching', async () => {
     h = harness({ holdMs: 60_000 });
     const repo = managedRepo();

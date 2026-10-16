@@ -4,7 +4,7 @@ import { record, text } from './state-machine';
 export const VISIBLE_WINDOW_MS = 30_000;
 export const PERMISSION_ALLOW = 'Permitir';
 export const PERMISSION_DENY = 'Denegar';
-export const HOLD_MS = 880_000;
+export const HOLD_MS = 3_580_000;
 
 type Pending = {
   view: QuestionView;
@@ -21,6 +21,7 @@ export type DeskEvents = {
 export class QuestionDesk {
   private readonly pending = new Map<string, Pending>();
   private lastVisibleAt = Number.NEGATIVE_INFINITY;
+  private connected = 0;
 
   constructor(
     private readonly events: DeskEvents,
@@ -32,15 +33,30 @@ export class QuestionDesk {
     if (visible) this.lastVisibleAt = this.now();
   }
 
-  someoneWatching(): boolean {
-    return this.now() - this.lastVisibleAt < VISIBLE_WINDOW_MS;
+  connect(): void {
+    this.connected += 1;
+    this.lastVisibleAt = this.now();
   }
 
-  hold(view: Omit<QuestionView, 'expiresAt'>, toolInput: Record<string, unknown>): Promise<string | null> {
+  disconnect(): void {
+    this.connected = Math.max(0, this.connected - 1);
+    this.lastVisibleAt = this.now();
+  }
+
+  someoneWatching(): boolean {
+    return this.connected > 0 || this.now() - this.lastVisibleAt < VISIBLE_WINDOW_MS;
+  }
+
+  hold(view: Omit<QuestionView, 'expiresAt'>, toolInput: Record<string, unknown>, signal?: AbortSignal): Promise<string | null> {
     return new Promise((resolve) => {
+      if (signal?.aborted) {
+        resolve(null);
+        return;
+      }
       const full: QuestionView = { ...view, expiresAt: view.createdAt + this.holdMs };
       const timer = setTimeout(() => this.close(full.id, 'expired', null), this.holdMs);
       this.pending.set(full.id, { view: full, toolInput, resolve, timer });
+      signal?.addEventListener('abort', () => this.close(full.id, 'released', null), { once: true });
       this.events.opened(full);
     });
   }

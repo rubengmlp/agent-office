@@ -39,7 +39,7 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/emit.sh\" ask",
-            "timeout": 900
+            "timeout": 3600
           }
         ]
       },
@@ -105,7 +105,7 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/emit.sh\" permission",
-            "timeout": 900
+            "timeout": 3600
           }
         ]
       }
