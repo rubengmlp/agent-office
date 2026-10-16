@@ -134,3 +134,19 @@ export function seedPlan(rig: Rig, floors: string[] = ['mobile'], title = 'Login
     .run(PLAN, 'plan', 'login', 1, rig.h.clock.now, JSON.stringify(base), rig.h.clock.now);
   rig.h.office.refreshDocuments();
 }
+
+// A HECHO of the lead to the director, as the gate of SendMessage sees it.
+export function done(rig: Rig, message: string, cwd = rig.repo) {
+  return rig.h.office.gateMessage(ev(LEAD, cwd, 'PreToolUse', { agent_type: 'office-lead-mobile', tool_name: 'SendMessage', tool_input: { to: 'director', message } }));
+}
+
+export function checksConfig(...specs: [string, string][]) {
+  return (config: OfficeConfig) => {
+    const floor = config.floors.mobile;
+    if (floor) floor.checks = specs.map(([name, command]) => ({ name, command }));
+  };
+}
+
+export function leadMessages(rig: Rig): string[] {
+  return rig.sent.filter((m) => m.socket.endsWith('lead.sock')).map((m) => m.text);
+}

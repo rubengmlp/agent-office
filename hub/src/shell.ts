@@ -85,5 +85,5 @@ export function tailOf(text: string, bytes: number): string {
 }
 
 export function lastLines(text: string, lines: number): string {
-  return text.split('\n').slice(-lines).join('\n').trim();
+  return text.trimEnd().split('\n').slice(-lines).join('\n');
 }

@@ -1,6 +1,7 @@
 import type { Database } from 'bun:sqlite';
-import { setupOf } from './profiles';
+import type { ChecksDesk, StartResult } from './checks';
 import { encodeInbox, type deliver } from './courier';
+import { decideOrderGate, type GateDecision } from './gate';
 import { isLeadRole } from './scope';
 import { realPath, isInside } from './floors';
 import type { OfficeBus } from './office-bus';
@@ -8,10 +9,12 @@ import type { AgentRuntime, OrderResult } from './office-state';
 import { folderFailedText, folderText } from './office-texts';
 import type { OrderRow, OrderStore } from './order-store';
 import { BOARD_COLUMNS, doneSummary, leavesDone, manualTarget, nextStatus, orderSlug, randomSuffix, splitBrief } from './orders';
-import { BRIEF_PREFIX } from './protocol';
+import { gateModeOf, setupOf } from './profiles';
+import { BRIEF_PREFIX, parseProtocol } from './protocol';
 import { validRef } from './repo-ops';
 import type { SessionBook } from './session-book';
 import type {
+  CheckTrigger,
   FinishedView,
   HubText,
   OfficeConfig,
@@ -40,10 +43,11 @@ export type BoardDeskOpts = {
   deliver: typeof deliver;
   order: (sessionId: string, text: string) => Promise<OrderResult>;
   planTotals: () => Map<string, TokenTotals>;
-  // Why a card cannot go to hecho without the user's force (checks that are red, a changed definition of them).
-  doneBlock?: (order: OrderRow) => HubText | null;
+  checks?: BoardChecks;
   rand?: () => number;
 };
+
+export type BoardChecks = Pick<ChecksDesk, 'summary' | 'gateReading' | 'start' | 'force' | 'cancel' | 'latest' | 'history' | 'scheduleListo'>;
 
 export type CreateOrderRequest = { floor: string; title: string; description?: string; base?: string; via: 'lead' | 'director' };
 
@@ -89,7 +93,7 @@ export class BoardDesk {
       base: row.base_ref,
       baseSha: row.base_sha,
       worktree: folder,
-      checks: null,
+      checks: this.opts.checks?.summary(row) ?? null,
       review: { state: row.review_state },
       pr: row.pr_url ? { url: row.pr_url, state: row.pr_state } : null,
       mergedAt: row.merged_at,
@@ -117,6 +121,12 @@ export class BoardDesk {
 
   private changed(row: OrderRow): void {
     this.opts.bus.emit({ type: 'order', data: this.view(row) });
+  }
+
+  // The card as it is now, for whoever changed something around it (a run of checks).
+  refresh(id: number): void {
+    const row = this.opts.store.get(id);
+    if (row) this.changed(row);
   }
 
   private note(summary: HubText, agentKey = 'panel'): void {
@@ -272,7 +282,7 @@ export class BoardDesk {
     return floor && setupOf(floor) ? 'listas' : 'no hacen falta';
   }
 
-  private async tellLead(order: OrderRow, content: string): Promise<void> {
+  async tellLead(order: OrderRow, content: string): Promise<void> {
     const lead = this.leadOf(order.floor);
     if (lead?.socket) {
       try {
@@ -325,12 +335,110 @@ export class BoardDesk {
     if (!row) return { ok: false, status: 404, error: { key: 'hub.api.orderNotFound' } };
     const target = manualTarget(row.status, to);
     if (target === null || !BOARD_COLUMNS.includes(to)) return { ok: false, status: 409, error: { key: 'hub.api.orderBadState' } };
-    if (target === 'hecho' && !force) {
-      const reason = this.opts.doneBlock?.(row) ?? null;
-      if (reason) return { ok: false, status: 409, error: { key: 'hub.api.moveNeedsForce', params: { reason } } };
+    if (target === 'hecho') {
+      const block = this.doneBlock(row);
+      if (block && !force) return { ok: false, status: 409, error: { key: 'hub.api.moveNeedsForce', params: { reason: block.reason } } };
+      if (block?.touched) this.opts.checks?.force(row);
     }
     const next = target === 'hecho' ? this.enterDone(row, '', true) : this.setStatus(row, target);
     return { ok: true, order: this.view(next) };
+  }
+
+  // What the user is asked to confirm before a move to hecho: red checks on the current HEAD, or a changed
+  // definition of the checks. A run still going or changes not yet checked are the user's call.
+  private doneBlock(row: OrderRow): { reason: HubText; touched: boolean } | null {
+    const checks = this.opts.checks;
+    const floor = this.opts.config().floors[row.floor];
+    if (!checks || !floor || gateModeOf(floor) === 'tester') return null;
+    const reading = checks.gateReading(row);
+    if (!reading.hasChecks) return null;
+    if (reading.touched.length > 0 && reading.forcedSha !== reading.head) {
+      return { reason: { key: 'hub.move.touched', params: { files: reading.touched.join(', ') } }, touched: true };
+    }
+    if (reading.run?.status === 'failed' && reading.run.sha === reading.head) {
+      return { reason: { key: 'hub.move.red', params: { name: reading.run.failed?.name ?? '?' } }, touched: false };
+    }
+    return null;
+  }
+
+  // ---- the gate of a HECHO ----------------------------------------------------------------------------------
+
+  // The order a HECHO of the lead is about: the one it names (HECHO: encargo/<slug>), the one whose folder the lead
+  // is in, or the only one in progress on the floor. Null when the floor has none: the old gate decides.
+  private resolveDone(floor: string, body: string, cwd: string | null): { order: OrderRow } | { block: GateDecision } | null {
+    const usable = (row: OrderRow) => row.floor === floor && row.worktree_path !== null && row.worktree_state !== 'retirado' && row.worktree_state !== 'error' && row.status !== 'descartado';
+    const target = parseProtocol(body)?.target ?? null;
+    if (target?.startsWith('encargo/')) {
+      const row = this.opts.store.bySlug(target.slice('encargo/'.length));
+      if (row && usable(row)) return { order: row };
+      const open = this.opts.store.inFloor(floor, ['en-curso']).filter(usable).map((o) => `encargo/${o.slug}`);
+      return { block: { pass: false, reason: `No existe ${target} en esta planta, o no tiene carpeta.${open.length > 0 ? ` Encargos en curso: ${open.join(', ')}.` : ''}` } };
+    }
+    const here = this.opts.byPath(cwd);
+    if (here && usable(here)) return { order: here };
+    const open = this.opts.store.inFloor(floor, ['en-curso']).filter(usable);
+    if (open.length === 1 && open[0]) return { order: open[0] };
+    if (open.length > 1) {
+      const names = open.map((o) => `encargo/${o.slug}`).join(', ');
+      return { block: { pass: false, reason: `Hay ${open.length} encargos en curso en esta planta (${names}): empieza el HECHO por encargo/<slug> para decir de cuál hablas.` } };
+    }
+    return null;
+  }
+
+  // The gate of a lead's HECHO when the floor works with orders; an accepted one finishes the card.
+  doneGate(args: { body: string; floor: string; cwd: string | null; legacy: () => GateDecision }): GateDecision | null {
+    const floor = this.opts.config().floors[args.floor];
+    if (!floor?.managed) return null;
+    const found = this.resolveDone(args.floor, args.body, args.cwd);
+    if (!found) return null;
+    if ('block' in found) return found.block;
+    const { order } = found;
+    const mode = gateModeOf(floor);
+    let decision: GateDecision;
+    if (mode === 'tester' || !this.opts.checks) {
+      decision = args.legacy();
+    } else {
+      const reading = this.opts.checks.gateReading(order);
+      const outcome = decideOrderGate({
+        mode,
+        hasChecks: reading.hasChecks,
+        head: reading.head,
+        dirty: reading.dirty,
+        run: reading.run,
+        tester: mode === 'checks+tester' ? args.legacy() : null,
+        touched: reading.touched,
+        forcedSha: reading.forcedSha,
+      });
+      if (outcome.action === 'run-checks') this.opts.bus.background(this.opts.checks.start(order.id, 'hecho'));
+      decision = outcome;
+    }
+    if (decision.pass) this.completed(order.id, args.body);
+    return decision;
+  }
+
+  // The dev says listo from inside a folder: the checks run a little later, once more files may be coming.
+  listo(cwd: string | null | undefined, floor: string): void {
+    if (!cwd || !this.opts.checks) return;
+    const row = this.opts.byPath(realPath(cwd));
+    const config = this.opts.config().floors[floor];
+    if (!row || row.floor !== floor || !config || gateModeOf(config) === 'tester') return;
+    if (row.status === 'hecho' || row.status === 'descartado') return;
+    this.opts.checks.scheduleListo(row);
+  }
+
+  // The user accepts that this order changes how it is checked: its HECHO may go through on the HEAD it has now.
+  confirmChecks(id: number): MoveResult {
+    const row = this.opts.store.get(id);
+    if (!row) return { ok: false, status: 404, error: { key: 'hub.api.orderNotFound' } };
+    if (!this.opts.checks?.force(row)) return { ok: false, status: 409, error: { key: 'hub.api.noFolder' } };
+    const fresh = this.opts.store.get(id) as OrderRow;
+    this.changed(fresh);
+    return { ok: true, order: this.view(fresh) };
+  }
+
+  checkNow(id: number, trigger: CheckTrigger): Promise<StartResult | null> {
+    if (!this.opts.checks || !this.opts.store.get(id)) return Promise.resolve(null);
+    return this.opts.checks.start(id, trigger);
   }
 
   discard(id: number): MoveResult {
@@ -387,8 +495,8 @@ export class BoardDesk {
       summary,
       cycle,
       manual,
-      checks: null,
-      touched: [],
+      checks: finishedChecks(this.opts.checks?.summary(order) ?? null),
+      touched: this.opts.checks?.summary(order)?.forced ? (this.opts.checks.summary(order)?.touched ?? []) : [],
       prUrl: order.pr_url,
       orderSlugs: plan ? cards.map((row) => row.slug) : [order.slug],
     };
@@ -421,6 +529,10 @@ export class BoardDesk {
   markSeen(id: number): boolean {
     return this.markSeenRow.run(this.opts.now(), id).changes > 0;
   }
+}
+
+function finishedChecks(summary: OrderView['checks']): FinishedView['checks'] {
+  return summary && summary.total > 0 && summary.status !== 'none' ? { passed: summary.passed, total: summary.total } : null;
 }
 
 function statusText(status: OrderStatus): HubText {

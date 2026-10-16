@@ -31,6 +31,8 @@ export type GateDeskOpts = {
   userAnswered: (sessionId: string) => void;
   // A brief of the director to a lead that the budget let through.
   briefAccepted: (to: string, body: string) => void;
+  // A lead's HECHO that belongs to an order of its floor; null when the old gate decides.
+  doneGate: (args: { body: string; floor: string; cwd: string | null; legacy: () => GateDecision }) => GateDecision | null;
 };
 
 export class GateDesk {
@@ -121,18 +123,21 @@ export class GateDesk {
     }
     if (!isLeadRole(senderRole)) return { pass: true, reason: 'solo cuenta el aviso de un jefe de planta' };
     const team = teamOfSession(session.sessionId);
-    const lastTesterGreen = this.opts.sql.lastTesterGreen.get(session.floor)?.ts ?? null;
-    const edits = ownerEdits(this.opts.db, this.opts.config().floors, session.floor, this.ownerKeys(null, team, session), lastTesterGreen);
-    const decision = decideGate({
-      officeTeam: true,
-      floorManaged: session.floorKind === 'managed',
-      owner: null,
-      lastOwnerEdit: edits.last,
-      lastTesterGreen,
-      changed: edits.files,
-      changedTotal: edits.total,
-      fingerprintPending: this.opts.busy(session.floor),
-    });
+    const tester = (): GateDecision => {
+      const lastTesterGreen = this.opts.sql.lastTesterGreen.get(session.floor)?.ts ?? null;
+      const edits = ownerEdits(this.opts.db, this.opts.config().floors, session.floor, this.ownerKeys(null, team, session), lastTesterGreen);
+      return decideGate({
+        officeTeam: true,
+        floorManaged: session.floorKind === 'managed',
+        owner: null,
+        lastOwnerEdit: edits.last,
+        lastTesterGreen,
+        changed: edits.files,
+        changedTotal: edits.total,
+        fingerprintPending: this.opts.busy(session.floor),
+      });
+    };
+    const decision = (session.floorKind === 'managed' ? this.opts.doneGate({ body, floor: session.floor, cwd: text(e.cwd) ?? session.cwd, legacy: tester }) : null) ?? tester();
     this.opts.sql.insertGate.run(now, team, null, decision.pass ? 'pass' : 'block', decision.reason);
     this.opts.bus.pushActivity({
       ts: now,

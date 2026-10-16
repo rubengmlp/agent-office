@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { existsSync } from 'node:fs';
 import { createApp } from '../src/server';
-import { newOrder, deliveryRig, type Rig } from './delivery-rig';
+import { checksConfig, deliveryRig, newOrder, write, type Rig } from './delivery-rig';
 
 const KEY = 'k'.repeat(64);
 const PORT = 4747;
@@ -34,6 +34,11 @@ describe('board routes', () => {
       ['POST', '/api/board/orders/1/move'],
       ['POST', '/api/board/orders/1/discard'],
       ['POST', '/api/board/orders/1/folder'],
+      ['POST', '/api/board/orders/1/confirm-checks'],
+      ['GET', '/api/board/orders/1/checks'],
+      ['POST', '/api/board/orders/1/checks'],
+      ['DELETE', '/api/board/orders/1/checks'],
+      ['GET', '/api/board/orders/1/checkpoints'],
       ['POST', '/api/alerts/1/seen'],
       ['GET', '/api/worktrees'],
       ['POST', '/api/worktrees/prune'],
@@ -71,6 +76,42 @@ describe('board routes', () => {
 
     expect((await call('POST', `/api/board/orders/${id}/discard`)).body.order.status).toBe('descartado');
     expect((await call('POST', `/api/board/orders/${id}/discard`)).status).toBe(409);
+  });
+});
+
+describe('checks and checkpoints routes', () => {
+  test('run, read, cancel, list the checkpoints, confirm the definition', async () => {
+    rig = deliveryRig({ configure: checksConfig(['uno', 'exit 0']) });
+    const call = api(rig);
+    const card = await newOrder(rig);
+    write(card.worktree?.path ?? '', 'a.txt', 'a');
+    expect(await call('GET', '/api/board/orders/999/checks')).toMatchObject({ status: 404 });
+    expect((await call('GET', `/api/board/orders/${card.id}/checks`)).body).toEqual({ latest: null, runs: [] });
+
+    const started = await call('POST', `/api/board/orders/${card.id}/checks`);
+    expect(started.status).toBe(200);
+    expect(started.body.run).toMatchObject({ orderId: card.id, trigger: 'panel', status: 'running', checks: [expect.objectContaining({ name: 'uno' })] });
+    await rig.h.office.idle();
+    const read = await call('GET', `/api/board/orders/${card.id}/checks`);
+    expect(read.body.latest).toMatchObject({ status: 'passed', checks: [expect.objectContaining({ status: 'passed' })] });
+    expect(read.body.runs).toHaveLength(1);
+
+    const points = await call('GET', `/api/board/orders/${card.id}/checkpoints`);
+    expect(points.body.checkpoints).toEqual([expect.objectContaining({ reason: 'panel', label: 'comprobación (panel)' })]);
+    expect(points.body.skipped).toEqual([]);
+    expect(await call('GET', '/api/board/orders/999/checkpoints')).toMatchObject({ status: 404 });
+
+    expect((await call('DELETE', `/api/board/orders/${card.id}/checks`)).body).toEqual({ ok: true, cancelled: false });
+    expect((await call('POST', `/api/board/orders/${card.id}/confirm-checks`)).status).toBe(200);
+    expect((await call('POST', '/api/board/orders/999/confirm-checks')).status).toBe(404);
+    expect((await call('POST', '/api/board/orders/999/checks')).status).toBe(404);
+  });
+
+  test('a floor without checks answers 409 and a card without a folder too', async () => {
+    rig = deliveryRig({ configure: (config) => (config.floors.mobile!.checks = []) });
+    const call = api(rig);
+    const card = await newOrder(rig);
+    expect(await call('POST', `/api/board/orders/${card.id}/checks`)).toMatchObject({ status: 409, body: { error: { key: 'hub.api.noChecks' } } });
   });
 });
 

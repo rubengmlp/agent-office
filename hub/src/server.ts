@@ -289,6 +289,43 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
     return result.ok ? c.json({ order: result.order }) : c.json({ error: result.error }, result.status);
   });
 
+  app.post('/api/board/orders/:id/confirm-checks', requirePanel, (c) => {
+    const id = idOf(c.req.param('id'));
+    if (id === null) return c.json({ error: { key: 'hub.api.badId' } }, 400);
+    const result = office.confirmOrderChecks(id);
+    return result.ok ? c.json({ order: result.order }) : c.json({ error: result.error }, result.status);
+  });
+
+  app.get('/api/board/orders/:id/checks', requirePanel, async (c) => {
+    const id = idOf(c.req.param('id'));
+    if (id === null) return c.json({ error: { key: 'hub.api.badId' } }, 400);
+    const result = await office.orderChecks(id);
+    return result ? c.json(result) : c.json({ error: { key: 'hub.api.orderNotFound' } }, 404);
+  });
+
+  app.post('/api/board/orders/:id/checks', requirePanel, async (c) => {
+    const id = idOf(c.req.param('id'));
+    if (id === null) return c.json({ error: { key: 'hub.api.badId' } }, 400);
+    holdRequest(c.req.raw);
+    const started = await office.runOrderChecks(id, 'panel');
+    if (started === null) return c.json({ error: { key: 'hub.api.orderNotFound' } }, 404);
+    if (!started.ok) return c.json({ error: { key: started.reason === 'no-checks' ? 'hub.api.noChecks' : 'hub.api.noFolder' } }, 409);
+    return c.json({ run: started.run });
+  });
+
+  app.delete('/api/board/orders/:id/checks', requirePanel, (c) => {
+    const id = idOf(c.req.param('id'));
+    if (id === null) return c.json({ error: { key: 'hub.api.badId' } }, 400);
+    return c.json({ ok: true, cancelled: office.cancelOrderChecks(id) });
+  });
+
+  app.get('/api/board/orders/:id/checkpoints', requirePanel, (c) => {
+    const id = idOf(c.req.param('id'));
+    if (id === null) return c.json({ error: { key: 'hub.api.badId' } }, 400);
+    const result = office.orderCheckpoints(id);
+    return result ? c.json(result) : c.json({ error: { key: 'hub.api.orderNotFound' } }, 404);
+  });
+
   app.post('/api/alerts/:id/seen', requirePanel, (c) => {
     const id = idOf(c.req.param('id'));
     if (id === null) return c.json({ error: { key: 'hub.api.badId' } }, 400);

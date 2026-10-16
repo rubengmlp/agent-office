@@ -20,6 +20,8 @@ export type ChatRoomOpts = {
   floors: FloorResolver;
   deliver: typeof deliver;
   lines: (unread: ChatUnread, channel: string) => string | null;
+  // A dev announces files are theirs no more, from this folder.
+  listo: (cwd: string, floor: string) => void;
 };
 
 export type UserChatResult = ({ ok: true } & ChatUserResult) | Extract<ChatPostResult, { ok: false }>;
@@ -47,6 +49,7 @@ export class ChatRoom {
     if (channel !== GLOBAL_CHANNEL && channel !== author.floor) return { ok: false, status: 403, error: { key: 'hub.api.chatChannelForbidden' } };
     const { message, warnings } = this.opts.chat.post({ ...input, author });
     this.chatActivity(message);
+    if (kind === 'listo' && cwd) this.opts.listo(cwd, author.floor);
     return { ok: true, message, warnings };
   }
 

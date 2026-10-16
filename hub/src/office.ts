@@ -5,6 +5,8 @@ import { managedFloors } from './agents';
 import { AskDesk } from './ask-desk';
 import { BoardDesk, type CreateOrderRequest, type CreateOrderResult, type MoveResult } from './board-desk';
 import { ChatDesk, GLOBAL_CHANNEL, SNAPSHOT_LIMIT } from './chat';
+import { CheckpointDesk } from './checkpoints';
+import { ChecksDesk } from './checks';
 import { withoutChatCalls } from './chat-commands';
 import { ChatRoom, type ReadChatResult, type UserChatResult } from './chat-room';
 import { ContextDesk } from './context-desk';
@@ -66,6 +68,9 @@ import type {
   ChatMessageView,
   ChatPostRequest,
   ChatPostResult,
+  CheckRunView,
+  CheckTrigger,
+  CheckpointView,
   DocumentContent,
   DocumentView,
   HookEvent,
@@ -79,6 +84,7 @@ import type {
   ReportView,
   RoleId,
   ServerMessage,
+  SkippedFile,
   Snapshot,
   Stack,
   UsageRange,
@@ -145,6 +151,8 @@ export type OfficeOptions = {
   log?: Log;
   // How long a discarded plan can be restored before its sources are removed.
   undoMs?: number;
+  // How long after a dev says listo the checks of its order start.
+  listoDelayMs?: number;
 };
 
 export class Office {
@@ -175,6 +183,8 @@ export class Office {
   private readonly meter: MeterDesk;
   private readonly store: OrderStore;
   private readonly worktrees: WorktreeDesk;
+  private readonly checkpoints: CheckpointDesk;
+  private readonly checks: ChecksDesk;
   private readonly board: BoardDesk;
   readonly chat: ChatDesk;
 
@@ -272,6 +282,7 @@ export class Office {
       floors: this.floors,
       deliver: this.deliverFn,
       lines: (unread, channel) => this.context.chatLines(unread, channel),
+      listo: (cwd, floor) => this.board.listo(cwd, floor),
     });
     const documents = {
       docs: this.docs,
@@ -287,6 +298,7 @@ export class Office {
       busy: (floor) => this.guards.busy(floor),
       userAnswered: (sessionId) => this.stall.userAnswered(sessionId),
       briefAccepted: (to, body) => this.board.briefAccepted(to, body, planSlugIn(body)),
+      doneGate: (args) => this.board.doneGate(args),
     });
     this.protocol = new ProtocolDesk({
       ...base,
@@ -322,6 +334,20 @@ export class Office {
       inside: (path) => this.sessionInside(path),
       changed: (order) => this.bus.emit({ type: 'worktrees', floor: order.floor }),
     });
+    this.checkpoints = new CheckpointDesk({ db: opts.db, store: this.store, git: this.git, now: this.now, bus: this.bus, config: () => this.config });
+    this.checks = new ChecksDesk({
+      db: opts.db,
+      store: this.store,
+      git: this.git,
+      now: this.now,
+      bus: this.bus,
+      config: () => this.config,
+      profiles: () => this.profiles,
+      checkpoints: this.checkpoints,
+      notify: (order, text) => this.board.tellLead(order, text),
+      changed: (order) => this.board.refresh(order.id),
+      listoDelayMs: opts.listoDelayMs,
+    });
     this.board = new BoardDesk({
       db: opts.db,
       store: this.store,
@@ -334,6 +360,7 @@ export class Office {
       deliver: this.deliverFn,
       order: (sessionId, text) => this.orders.order(sessionId, text),
       planTotals: () => this.meter.planTotals(),
+      checks: this.checks,
     });
     this.book.restoreSessions();
     this.docs.refresh();
@@ -351,6 +378,7 @@ export class Office {
   stop(): void {
     this.docs.unwatch();
     this.orders.stop();
+    this.checks.stop();
   }
 
   idle(): Promise<void> {
@@ -673,6 +701,27 @@ export class Office {
 
   discardOrder(id: number): MoveResult {
     return this.board.discard(id);
+  }
+
+  async orderChecks(id: number): Promise<{ latest: CheckRunView | null; runs: CheckRunView[] } | null> {
+    return this.store.get(id) ? { latest: this.checks.latest(id), runs: this.checks.history(id) } : null;
+  }
+
+  runOrderChecks(id: number, trigger: CheckTrigger): ReturnType<BoardDesk['checkNow']> {
+    return this.board.checkNow(id, trigger);
+  }
+
+  cancelOrderChecks(id: number): boolean {
+    return this.checks.cancel(id);
+  }
+
+  orderCheckpoints(id: number): { checkpoints: CheckpointView[]; skipped: SkippedFile[] } | null {
+    const order = this.store.get(id);
+    return order ? { checkpoints: this.checkpoints.list(id), skipped: this.checkpoints.skipped(order) } : null;
+  }
+
+  confirmOrderChecks(id: number): MoveResult {
+    return this.board.confirmChecks(id);
   }
 
   retryOrderFolder(id: number): Promise<MoveResult> {

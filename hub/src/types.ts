@@ -130,6 +130,8 @@ export type HubTextParams = {
   'hub.act.worktreeFailed': { slug: string; reason: string };
   'hub.act.folderUnsent': { slug: string };
   'hub.act.editOutsideWorktree': { who: string; slug: string };
+  'hub.act.checkpointSkipped': { slug: string; files: string };
+  'hub.act.checkpointFailed': { slug: string };
   'hub.act.worktreesOrphan': { n: number; paths: string };
   'hub.act.worktreesPending': { n: number; sizeKb: number };
   'hub.act.worktreesHeavy': { gb: number; max: number };
@@ -235,6 +237,10 @@ export type HubTextParams = {
   'hub.api.relaunchNoScript': undefined;
   'hub.api.relaunchFailed': undefined;
   'hub.api.panelLinkInvalid': undefined;
+  'hub.move.red': { name: string };
+  'hub.move.touched': { files: string };
+  'hub.api.noFolder': undefined;
+  'hub.api.noChecks': undefined;
   'hub.api.boardFields': undefined;
   'hub.api.floorNotManaged': undefined;
   'hub.api.leadClosed': undefined;

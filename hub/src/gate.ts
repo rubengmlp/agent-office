@@ -1,3 +1,6 @@
+import { globMatches } from './glob';
+import type { GateMode } from './types';
+
 export type GateFacts = {
   officeTeam: boolean;
   floorManaged: boolean;
@@ -120,4 +123,138 @@ export function decideReviewGate(f: ReviewGateFacts): ReviewGateDecision {
     cause: 'size',
     reason: `Plan demasiado largo: ${f.path ?? 'el plan'} ocupa ${kilobytes(f.bytes)} KB y el tope es ${max} KB${why} (review.maxPlanBytes). Condénsalo a ${max} KB como mucho: quita lo que repite el código o tu exploración, cita símbolos en vez de ruta:línea fuera de Diseño y deja el historial en redaccion/historial/. Si tiene fases que se ejecutan por separado, pide a tu jefe partirlo con PARTIR:. Después repite el mismo REVISAR, con la misma ronda.`,
   };
+}
+
+export type RunFacts = {
+  sha: string;
+  status: 'running' | 'passed' | 'failed' | 'cancelled';
+  // The first check that did not pass.
+  failed: { name: string; exitCode: number | null; timedOut: boolean } | null;
+};
+
+export type OrderGateFacts = {
+  mode: GateMode;
+  hasChecks: boolean;
+  // HEAD of the folder; null when git could not say.
+  head: string | null;
+  // Files with changes nobody committed, after discounting the ones a checkpoint skipped and that have not changed.
+  dirty: readonly string[];
+  run: RunFacts | null;
+  // For checks+tester: what the tester gate says about the same order.
+  tester: GateDecision | null;
+  // Files of the diff that change how the floor is checked.
+  touched: readonly string[];
+  forcedSha: string | null;
+};
+
+export type OrderGateDecision = GateDecision & { action: 'run-checks' | 'request-review' | null };
+
+function short(sha: string): string {
+  return sha.slice(0, 7);
+}
+
+// The gate of a HECHO that belongs to an order. Everything it needs has been read already: it decides, and says
+// whether the hub should run the checks to get unstuck. mode tester is the old gate and is not decided here.
+export function decideOrderGate(f: OrderGateFacts): OrderGateDecision {
+  const pass = (reason: string): OrderGateDecision => ({ pass: true, reason, action: null });
+  const block = (reason: string, action: OrderGateDecision['action'] = null): OrderGateDecision => ({ pass: false, reason, action });
+  if (f.mode === 'tester') return pass('puerta del tester');
+  if (!f.hasChecks) {
+    return f.mode === 'checks+tester' && f.tester && !f.tester.pass ? block(f.tester.reason) : pass('esta planta no tiene comprobaciones configuradas');
+  }
+  if (f.head === null) return block('No he podido leer el estado de la carpeta del encargo: vuelve a intentarlo en unos segundos.');
+  if (f.touched.length > 0 && f.forcedSha !== f.head) {
+    return block(
+      `El encargo cambia cómo se comprueba (${f.touched.join(', ')}): un verde sobre unas comprobaciones que el propio encargo modificó no vale. El usuario tiene que darlo por bueno en el Tablero; no repitas el HECHO hasta entonces.`,
+    );
+  }
+  if (f.dirty.length > 0) {
+    return block(`Hay cambios sin comprobar después de ${f.run ? short(f.run.sha) : 'el último punto'}: ${listed(f.dirty)}. La oficina lanza las comprobaciones; espera el aviso COMPROBACIONES y repite el HECHO.`, 'run-checks');
+  }
+  if (!f.run || f.run.status === 'cancelled' || f.run.sha !== f.head) {
+    return block(
+      `Hay cambios sin comprobar después de ${f.run && f.run.status !== 'cancelled' ? short(f.run.sha) : 'el último punto'}. La oficina lanza las comprobaciones; espera el aviso COMPROBACIONES y repite el HECHO.`,
+      'run-checks',
+    );
+  }
+  if (f.run.status === 'running') return block('Comprobaciones en marcha: espera el aviso COMPROBACIONES y repite el HECHO.');
+  if (f.run.status === 'failed') {
+    const failed = f.run.failed;
+    const what = failed ? `${failed.name}${failed.timedOut ? ' (se pasó del tiempo)' : failed.exitCode === null ? '' : ` (código ${failed.exitCode})`}` : 'una comprobación';
+    return block(`Rojo en ${what} sobre ${short(f.run.sha)}: pide al desarrollador que lo arregle y repite el HECHO cuando las comprobaciones estén en verde.`);
+  }
+  if (f.mode === 'checks+tester' && f.tester && !f.tester.pass) return block(f.tester.reason);
+  return pass(`comprobaciones en verde sobre ${short(f.head)}`);
+}
+
+function listed(files: readonly string[]): string {
+  const shown = files.slice(0, 5).join(', ');
+  return files.length > 5 ? `${shown} (y ${files.length - 5} más)` : shown;
+}
+
+// Files a checkpoint left out (too big, a log) do not count as changes while they stay as they were.
+export type SkippedFileFacts = { path: string; size: number; mtime: number };
+
+export function remainingDirty(
+  dirty: readonly string[],
+  skipped: readonly SkippedFileFacts[],
+  stat: (path: string) => { size: number; mtime: number } | null,
+): string[] {
+  const left = new Map(skipped.map((file) => [file.path, file]));
+  return dirty.filter((path) => {
+    const was = left.get(path);
+    if (!was) return true;
+    const now = stat(path);
+    return !now || now.size !== was.size || now.mtime !== was.mtime;
+  });
+}
+
+// Lockfiles and pubspec.yaml change with every dependency: they never count as a change of the checks.
+const NEVER_DEFINITION = new Set(['bun.lock', 'bun.lockb', 'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'composer.lock', 'pubspec.lock', 'pubspec.yaml']);
+
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b));
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'undefined';
+}
+
+function keyOf(content: string | null, key: string): { present: boolean; value: string } | 'unreadable' {
+  if (content === null) return { present: false, value: '' };
+  try {
+    const parsed: unknown = JSON.parse(content);
+    const value = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>)[key] : undefined;
+    return value === undefined ? { present: false, value: '' } : { present: true, value: canonical(value) };
+  } catch {
+    return 'unreadable';
+  }
+}
+
+// Which of the changed files redefine how the floor is checked. A pattern is a glob, or file#key for "only when
+// that key of the JSON changes"; the key is compared in the version of the base and in the one of the order.
+export function checksTouched(
+  files: readonly string[],
+  patterns: readonly string[],
+  fileAt: (path: string, side: 'base' | 'head') => string | null,
+): string[] {
+  const touched = new Set<string>();
+  for (const file of files) {
+    if (NEVER_DEFINITION.has(file.split('/').pop() ?? file)) continue;
+    for (const pattern of patterns) {
+      const hash = pattern.lastIndexOf('#');
+      if (hash < 0) {
+        if (globMatches(pattern, file)) touched.add(file);
+        continue;
+      }
+      const glob = pattern.slice(0, hash);
+      const key = pattern.slice(hash + 1);
+      if (!globMatches(glob, file)) continue;
+      const before = keyOf(fileAt(file, 'base'), key);
+      const after = keyOf(fileAt(file, 'head'), key);
+      if (before === 'unreadable' || after === 'unreadable' || before.present !== after.present || before.value !== after.value) touched.add(`${file}#${key}`);
+    }
+  }
+  return [...touched].sort();
 }
