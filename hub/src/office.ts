@@ -37,7 +37,6 @@ import {
   HOLDS_QUESTION,
   LAUNCH_CHECK_MS,
   LEAD_BUSY,
-  MAX_ACTIVITY,
   MAX_ALERTS,
   MAX_MESSAGES,
   METER_SWEEP_MS,
@@ -89,6 +88,7 @@ import {
   taskLine,
   withoutDiscardMark,
 } from './office-texts';
+import { OfficeBus } from './office-bus';
 import { ownerEdits, prepare, type AlertRow, type Sql } from './office-sql';
 import { isPrivate, publicDetail, publicSummary, publicText, storedPayload, visibleKind } from './privacy';
 import { detectStack, profileFor, type Profiles } from './profiles';
@@ -244,13 +244,11 @@ export class Office {
   private readonly spawnCallsByName = new Map<string, SpawnCall>();
   private readonly spawnedAgents = new Map<string, SpawnCall>();
   private readonly teammateIds = new Map<string, true>();
-  private readonly activity: ActivityView[] = [];
   private readonly messages: MessageView[] = [];
-  private readonly listeners = new Set<(msg: ServerMessage) => void>();
   private readonly teamCache = new Map<string, { at: number; members: Record<string, unknown>[] }>();
-  private readonly pending = new Set<Promise<unknown>>();
   private readonly permissionHolds = new Map<string, { agentKey: string; match: string }>();
   private readonly docsQueue = new GitQueue();
+  private readonly bus: OfficeBus;
   private readonly now: () => number;
   private readonly deliverFn: typeof deliver;
   private readonly git: GitRunner;
@@ -273,7 +271,6 @@ export class Office {
   private readonly briefAllowance = new Map<string, number>();
   private readonly sessionFlags = new Map<string, string>();
   private readonly tmux: TmuxFn;
-  private readonly log: Log;
   private readonly undoMs: number;
   private readonly removals = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly deciding = new Set<string>();
@@ -286,7 +283,7 @@ export class Office {
     this.now = opts.now ?? Date.now;
     this.deliverFn = opts.deliverFn ?? deliver;
     this.tmux = opts.tmux ?? runTmux;
-    this.log = opts.log ?? ((text) => console.error(`Agent Office: ${text}`));
+    this.bus = new OfficeBus(opts.log ?? ((text) => console.error(`Agent Office: ${text}`)));
     this.undoMs = opts.undoMs ?? UNDO_MS;
     this.git = opts.git ?? runGit;
     this.floors = new FloorResolver(
@@ -330,7 +327,7 @@ export class Office {
       installTargets: () => this.installTargets(),
       base: (slug) => this.sync.base(slug),
       ahead: (slug) => this.sync.ahead(slug),
-      onChange: (docs) => this.emit({ type: 'documents', data: this.withPlanTokens(docs) }),
+      onChange: (docs) => this.bus.emit({ type: 'documents', data: this.withPlanTokens(docs) }),
       maxRounds: () => this.config.review.maxRounds,
     });
     this.watch = new GuardWatch({
@@ -356,12 +353,12 @@ export class Office {
       exempt: () => this.installTargets().map((target) => realPath(target.dir)),
       report: (finding) => this.recordBashChanges(finding),
     });
-    this.usage = new UsageDesk(this.now, (view) => this.emit({ type: 'usage', data: view }));
+    this.usage = new UsageDesk(this.now, (view) => this.bus.emit({ type: 'usage', data: view }));
     this.meter = new TokenMeter({
       db: opts.db,
       claudeHome: opts.claudeHome,
       now: this.now,
-      onRead: (data) => this.emit({ type: 'tokens', data }),
+      onRead: (data) => this.bus.emit({ type: 'tokens', data }),
     });
     this.meterSweptAt = this.now();
     this.chat = new ChatDesk({
@@ -372,7 +369,7 @@ export class Office {
         const id = roleIdOf(role);
         return id ? ROLE_LABELS[id] : null;
       },
-      onMessage: (message) => this.emit({ type: 'chat', data: message }),
+      onMessage: (message) => this.bus.emit({ type: 'chat', data: message }),
     });
     this.restoreSessions();
     this.docs.refresh();
@@ -383,7 +380,7 @@ export class Office {
     this.sql.releaseStalePending.run(this.now());
     this.docs.watch();
     this.refreshDocuments();
-    this.background(this.sync.cleanup(this.docs.finishedPlanSlugs()));
+    this.bus.background(this.sync.cleanup(this.docs.finishedPlanSlugs()));
   }
 
   stop(): void {
@@ -392,13 +389,12 @@ export class Office {
     this.removals.clear();
   }
 
-  async idle(): Promise<void> {
-    while (this.pending.size > 0) await Promise.allSettled([...this.pending]);
+  idle(): Promise<void> {
+    return this.bus.idle();
   }
 
   subscribe(listener: (msg: ServerMessage) => void): () => void {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    return this.bus.subscribe(listener);
   }
 
   snapshot(): Snapshot {
@@ -410,7 +406,7 @@ export class Office {
       sessions: [...this.sessions.values()].map((s) => this.sessionView(s)),
       questions: this.desk.list(),
       messages: this.messages.slice(-100),
-      activity: this.activity.slice(-MAX_ACTIVITY),
+      activity: this.bus.recent(),
       documents: this.withPlanTokens(recentDocuments(this.docs.list())),
       alerts: this.alerts(),
       usage: this.usage.view(),
@@ -901,7 +897,7 @@ export class Office {
       this.config.memory,
     );
     if (result.status === 'saved') {
-      this.emit({ type: 'memory', floor, role });
+      this.bus.emit({ type: 'memory', floor, role });
       return { ok: true, lesson: result.lesson };
     }
     if (result.status === 'duplicate') return { ok: false, status: 409, error: { key: 'hub.api.lessonDuplicate' } };
@@ -911,7 +907,7 @@ export class Office {
   removeLesson(id: number): boolean {
     const removed = deleteLesson(this.opts.db, id);
     if (!removed) return false;
-    this.emit({ type: 'memory', floor: removed.floor, role: removed.role });
+    this.bus.emit({ type: 'memory', floor: removed.floor, role: removed.role });
     return true;
   }
 
@@ -952,7 +948,7 @@ export class Office {
     // The sources go once the window to undo has passed; stop() cancels it and the next start() sweeps the orphans.
     const timer = setTimeout(() => {
       this.removals.delete(doc.path);
-      this.background(this.sync.remove(doc.slug));
+      this.bus.background(this.sync.remove(doc.slug));
     }, this.undoMs);
     timer.unref?.();
     this.removals.set(doc.path, timer);
@@ -1041,7 +1037,7 @@ export class Office {
     for (const agent of [...this.agents.values()]) {
       if (agent.endedAt !== null && now - agent.endedAt > FORGET_ENDED_MS) {
         this.agents.delete(agent.key);
-        this.emit({ type: 'agent-gone', key: agent.key });
+        this.bus.emit({ type: 'agent-gone', key: agent.key });
         continue;
       }
       if (this.goesHome(agent, now)) {
@@ -1090,14 +1086,13 @@ export class Office {
     for (const id of sessionIds) this.sessions.delete(id);
     const keptMessages = this.messages.filter((message) => message.floor !== slug);
     this.messages.splice(0, this.messages.length, ...keptMessages);
-    const keptActivity = this.activity.filter((entry) => !keys.has(entry.agentKey));
-    this.activity.splice(0, this.activity.length, ...keptActivity);
+    this.bus.forget(keys);
 
     this.chat.forgetFloor(slug);
     const rows = purgeFloorData(this.opts.db, slug, path);
     const now = this.now();
     this.pushActivity({ ts: now, agentKey: 'panel', event: 'FloorRemoved', tool: null, state: null, summary: { key: 'hub.act.floorRemoved', params: { slug } } });
-    this.emit({ type: 'snapshot', data: this.snapshot() });
+    this.bus.emit({ type: 'snapshot', data: this.snapshot() });
     return { rows, worktrees };
   }
 
@@ -1118,8 +1113,8 @@ export class Office {
       }
     }
     this.refreshSessionFlags(now, true);
-    this.emit({ type: 'floors', data: this.floors.views() });
-    this.emit({ type: 'settings', data: settingsView(config) });
+    this.bus.emit({ type: 'floors', data: this.floors.views() });
+    this.bus.emit({ type: 'settings', data: settingsView(config) });
     this.docs.watch();
     this.refreshDocuments();
   }
@@ -1419,14 +1414,6 @@ export class Office {
     }
   }
 
-  private background(task: Promise<unknown>): void {
-    const tracked = task.catch((error: unknown) => {
-      this.log(`tarea en segundo plano fallida: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
-    });
-    this.pending.add(tracked);
-    void tracked.finally(() => this.pending.delete(tracked));
-  }
-
   private docsRoot(): string {
     return this.floors.docsRoot();
   }
@@ -1520,20 +1507,20 @@ export class Office {
     const kind = roleKind(agent.role);
     if (floorKind !== 'managed' || (kind !== 'dev' && kind !== 'intern') || agent.key === agent.sessionId) return;
     if (TURN_OVER.has(event)) {
-      if (this.changes.watching(agent.key)) this.background(this.changes.finish(agent.key));
+      if (this.changes.watching(agent.key)) this.bus.background(this.changes.finish(agent.key));
       return;
     }
     if (event === 'SessionStart' || event === 'Notification' || ended || agent.endedAt !== null || this.changes.watching(agent.key)) return;
     const floors = this.guardFloors().filter((f) => f.slug === agent.floor);
     if (floors.length === 0) return;
     this.changes.start(agent.key, floors);
-    this.background(this.changes.ready(agent.key));
+    this.bus.background(this.changes.ready(agent.key));
   }
 
   private recordAlert(finding: GuardFinding): void {
     const id = Number(this.sql.insertAlert.run(finding.ts, finding.level, finding.floor, finding.agentKey, JSON.stringify(finding.files)).lastInsertRowid);
     const alert: GuardAlert = { id, ...finding };
-    this.emit({ type: 'alert', data: alert });
+    this.bus.emit({ type: 'alert', data: alert });
     const who = this.agents.get(finding.agentKey)?.name ?? finding.agentKey;
     this.pushActivity({
       ts: finding.ts,
@@ -1566,13 +1553,13 @@ export class Office {
   private trackDepartment(agent: AgentRuntime, event: string, ended: boolean): void {
     if (!departmentOf(agent.role)) return;
     if (event === 'SubagentStop' || event === 'Stop' || event === 'SessionEnd') {
-      if (this.watch.watching(agent.key)) this.background(this.watch.finish(agent.key));
+      if (this.watch.watching(agent.key)) this.bus.background(this.watch.finish(agent.key));
       return;
     }
     if (event === 'SessionStart' || event === 'Notification' || event === 'TeammateIdle') return;
     if (!ended && agent.endedAt === null && !this.watch.watching(agent.key)) {
       this.watch.start(agent.key);
-      this.background(this.watch.ready(agent.key));
+      this.bus.background(this.watch.ready(agent.key));
     }
   }
 
@@ -1790,7 +1777,7 @@ export class Office {
       if (ref.kind === 'plan') {
         this.docs.markDelivered(ref, this.sync.base(ref.slug), now);
         this.refreshDocuments();
-        this.background(this.sync.remove(ref.slug));
+        this.bus.background(this.sync.remove(ref.slug));
       } else {
         this.docs.markClosed(ref, now);
         this.refreshDocuments();
@@ -1876,7 +1863,7 @@ export class Office {
     this.docs.markRound(ref, round, now);
     if (verdict === 'approved') {
       this.commitRound(ref, round);
-      if (ref.kind === 'plan') this.background(this.sync.checkAhead(ref.slug));
+      if (ref.kind === 'plan') this.bus.background(this.sync.checkAhead(ref.slug));
     }
     this.refreshDocuments();
     const key = verdict === 'approved' ? 'hub.act.verdictApproved' : verdict === 'improve' ? 'hub.act.verdictImprove' : 'hub.act.verdictNoAgreement';
@@ -1910,8 +1897,8 @@ export class Office {
     }
     if (agent.endedAt === null) agent.endedAt = now;
     agent.updatedAt = now;
-    if (this.watch.watching(agent.key)) this.background(this.watch.finish(agent.key));
-    if (this.changes.watching(agent.key)) this.background(this.changes.finish(agent.key));
+    if (this.watch.watching(agent.key)) this.bus.background(this.watch.finish(agent.key));
+    if (this.changes.watching(agent.key)) this.bus.background(this.changes.finish(agent.key));
     this.persistAgent(agent);
     this.emitAgent(agent, now);
     this.storeReport(agent, now);
@@ -2078,14 +2065,14 @@ export class Office {
 
   private commitDocumentFile(ref: DocRef, message: string): void {
     const root = this.docsRoot();
-    this.background(this.docsQueue.run(root, () => commitDocument(this.git, root, ref.path, message)));
+    this.bus.background(this.docsQueue.run(root, () => commitDocument(this.git, root, ref.path, message)));
   }
 
   private commitRound(ref: DocRef, round: number | null): void {
     const root = this.docsRoot();
     const message = `${ref.kind === 'plan' ? 'redaccion' : 'taller'}: ${ref.slug} ronda ${round ?? '?'}`;
     const paths = ref.kind === 'plan' ? [ref.path, historyPath(ref.slug)] : [ref.path];
-    this.background(
+    this.bus.background(
       this.docsQueue
         .run(root, () => commitDocument(this.git, root, paths, message))
         .then((outcome) => {
@@ -2111,7 +2098,7 @@ export class Office {
       { floor: agent.floor, role: roleId, text: raw, origin: 'agent', agentKey: agent.key, now },
       this.config.memory,
     );
-    if (result.status === 'saved') this.emit({ type: 'memory', floor: agent.floor, role: roleId });
+    if (result.status === 'saved') this.bus.emit({ type: 'memory', floor: agent.floor, role: roleId });
     const summary: HubText =
       result.status === 'saved'
         ? { key: 'hub.act.lessonSaved', params: { role: roleText(roleId), floor: floorText(agent.floor) } }
@@ -2327,7 +2314,7 @@ export class Office {
     const view: MessageView = { id, ts: now, fromKey: from.key, toName: message.to, toKey, text: body, floor: session.floor };
     this.messages.push(view);
     if (this.messages.length > MAX_MESSAGES) this.messages.splice(0, this.messages.length - MAX_MESSAGES);
-    this.emit({ type: 'message', data: view });
+    this.bus.emit({ type: 'message', data: view });
     const recipient = toKey ? this.agents.get(toKey) : undefined;
     this.settleWaiting(from, recipient, body, now);
     if (recipient && recipient !== from) this.messageReceived(recipient, assigns(from, recipient) ? body : null, now);
@@ -2520,15 +2507,15 @@ export class Office {
       this.emitAgent(agent, now);
       this.storeReport(agent, now);
       this.meterLater(agent);
-      if (this.watch.watching(agent.key)) this.background(this.watch.finish(agent.key));
-      if (this.changes.watching(agent.key)) this.background(this.changes.finish(agent.key));
+      if (this.watch.watching(agent.key)) this.bus.background(this.watch.finish(agent.key));
+      if (this.changes.watching(agent.key)) this.bus.background(this.changes.finish(agent.key));
     }
     for (const q of this.desk.list()) if (q.sessionId === session.sessionId) this.desk.release(q.id);
   }
 
   private questionOpened(view: QuestionView): void {
     this.sql.insertQuestion.run(view.id, view.sessionId, view.agentKey, view.floor, JSON.stringify(view.questions), 'pending', view.createdAt);
-    this.emit({ type: 'question', data: view });
+    this.bus.emit({ type: 'question', data: view });
     const permission = view.kind === 'permission';
     this.pushActivity({
       ts: view.createdAt,
@@ -2543,7 +2530,7 @@ export class Office {
   private questionClosed(id: string, outcome: QuestionOutcome): void {
     this.permissionHolds.delete(id);
     this.sql.closeQuestion.run(outcome, this.now(), id);
-    this.emit({ type: 'question-closed', id, outcome });
+    this.bus.emit({ type: 'question-closed', id, outcome });
   }
 
   private view(agent: AgentRuntime, now: number): AgentView {
@@ -2609,29 +2596,17 @@ export class Office {
   private emitSession(session: SessionRuntime): void {
     const view = this.sessionView(session);
     this.sessionFlags.set(session.sessionId, flagsOf(view));
-    this.emit({ type: 'session', data: view });
+    this.bus.emit({ type: 'session', data: view });
   }
 
   private emitAgent(agent: AgentRuntime, now: number): void {
     const view = this.view(agent, now);
     agent.sentState = view.state;
-    this.emit({ type: 'agent', data: view });
+    this.bus.emit({ type: 'agent', data: view });
   }
 
   private pushActivity(entry: ActivityView): void {
-    this.activity.push(entry);
-    if (this.activity.length > MAX_ACTIVITY) this.activity.splice(0, this.activity.length - MAX_ACTIVITY);
-    this.emit({ type: 'activity', data: entry });
-  }
-
-  private emit(msg: ServerMessage): void {
-    for (const listener of this.listeners) {
-      try {
-        listener(msg);
-      } catch (error) {
-        this.log(`un oyente falló con ${msg.type}: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
-      }
-    }
+    this.bus.pushActivity(entry);
   }
 
   private persistSession(s: SessionRuntime): void {
@@ -2746,7 +2721,7 @@ export class Office {
 
   private meterLater(agent: AgentRuntime): void {
     const subject = this.meterAgent(agent);
-    if (subject) this.background(this.meter.schedule(subject));
+    if (subject) this.bus.background(this.meter.schedule(subject));
   }
 
   private setPlan(agent: AgentRuntime, slug: string): void {
