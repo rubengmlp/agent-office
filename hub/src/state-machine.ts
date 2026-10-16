@@ -63,6 +63,25 @@ export const SPAWN_TOOLS = new Set(['Agent', 'Task']);
 export const BLOCK_PREFIX = /^\s*BLOQUEADO\s*:/i;
 export const DONE_PREFIX = /^\s*HECHO\s*:/i;
 export const QUESTION_PREFIX = /^\s*PREGUNTA\s*:/;
+export const NEVER_FAILS = /\|\|\s*(?:true\b|:(?=\s|$|[;&)])|exit\s+0\b)|;\s*true\s*$/;
+export const TEST_FAILED: readonly RegExp[] = [
+  /^\s*[1-9]\d* fail\s*$/m,
+  /^\s*Tests?:?\s.*\b[1-9]\d* failed\b/m,
+  /^=+ .*\b[1-9]\d* failed\b/m,
+  /^(--- )?FAIL\b/m,
+  /^\d+:\d+ \+\d+.*: Some tests failed\.\s*$/m,
+  /^(FAILURES|ERRORS)!$/m,
+];
+
+export function isTestCommand(command: string, m: Matchers): boolean {
+  return m.test.test(command) && !NEVER_FAILS.test(command);
+}
+
+function testsRed(response: Record<string, unknown>): boolean {
+  if (typeof response.exit_code === 'number' && response.exit_code !== 0) return true;
+  const output = `${typeof response.stdout === 'string' ? response.stdout : ''}\n${typeof response.stderr === 'string' ? response.stderr : ''}`;
+  return TEST_FAILED.some((pattern) => pattern.test(output));
+}
 
 export function questionText(body: string): string {
   return body.replace(QUESTION_PREFIX, '').split(/\s*[—–-]+\s*opciones\s*:/i)[0]?.trim() ?? '';
@@ -200,7 +219,7 @@ function preTool(base: Classified, e: HookEvent, input: Record<string, unknown>,
 
   if (tool === 'Bash') {
     const command = text(input.command) ?? '';
-    if (m.test.test(command)) {
+    if (isTestCommand(command, m)) {
       return { ...working, state: 'testing', command, test: 'start', detail: short(command), summary: { key: 'hub.act.tests', params: { command: short(command, 60) } } };
     }
     if (m.check.test(command)) {
@@ -313,7 +332,21 @@ function postTool(base: Classified, e: HookEvent, input: Record<string, unknown>
 
   if (tool === 'Bash') {
     const command = text(input.command) ?? '';
-    if (m.test.test(command)) {
+    if (isTestCommand(command, m)) {
+      const response = record(e.tool_response);
+      if (input.run_in_background === true || response.interrupted === true) {
+        return { ...base, state: 'working', command, summary: { key: 'hub.act.ok', params: { what: short(command, 60) } } };
+      }
+      if (testsRed(response)) {
+        return {
+          ...base,
+          state: 'working',
+          command,
+          test: 'fail',
+          detail: { key: 'hub.detail.testsRed' },
+          summary: { key: 'hub.act.testsRed', params: { command: short(command, 60) } },
+        };
+      }
       return {
         ...base,
         state: 'working',
@@ -363,7 +396,7 @@ function failedTool(base: Classified, e: HookEvent, input: Record<string, unknow
 
   if (tool === 'Bash') {
     const command = text(input.command) ?? '';
-    if (m.test.test(command)) {
+    if (isTestCommand(command, m) && input.run_in_background !== true) {
       if (e.is_interrupt === true) {
         return {
           ...base,
