@@ -350,6 +350,22 @@ export const es = {
   'deliverables.skillApproved': 'Skill aprobada: {title}',
   'deliverables.noHub': 'El contenido solo está disponible con la oficina conectada al hub.',
   'deliverables.loading': 'Cargando…',
+
+  'scene.plate.annex': '{name} (anexo)',
+  'scene.sub.direccion': 'Despacho del director',
+  'scene.sub.redaccion': 'Planes y documentos',
+  'scene.sub.mantenimiento': 'Taller de skills',
+  'scene.sub.observed': '{stack} · observada',
+  'scene.sign.redaccion': 'Redacción de planes',
+  'scene.noCanvas': 'Canvas 2D no disponible',
+  'scene.loadingCharacters': 'Cargando personajes…',
+  'scene.waiting': 'Esperando a que llegue alguien a la oficina…',
+  'scene.floors': 'Plantas',
+  'scene.building': 'Edificio',
+  'scene.annex': 'Anexo',
+  'scene.gestures': 'Desliza con dos dedos para subir, bajar o ir a los lados. Pellizca para acercar. Arrastra para girar.',
+  'scene.following': 'Siguiendo a ',
+  'scene.stopFollow': 'Dejar de seguir (Esc)',
 } as const;
 
 export type Messages = { [K in keyof typeof es]: string };

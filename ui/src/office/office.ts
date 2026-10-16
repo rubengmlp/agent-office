@@ -104,7 +104,7 @@ class OfficeView {
       });
 
     this.app.ticker.add((ticker) => this.update(ticker.deltaMS / 1000));
-    this.store.watch(['agents', 'floors', 'tick'], () => {
+    this.store.watch(['agents', 'floors', 'tick', 'lang'], () => {
       this.dirty = true;
     });
     this.store.watch(['selection'], () => this.focusSelected());

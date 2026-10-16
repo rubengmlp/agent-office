@@ -1,5 +1,6 @@
 import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
-import { STATE_COLORS, STATE_LABELS } from '../labels';
+import { currentLang, type Lang } from '../i18n';
+import { STATE_COLORS, stateLabel } from '../labels';
 import type { AgentState } from '../types';
 
 export type LabelIcon = 'ask' | 'talk' | 'lock' | 'stamp' | 'check' | 'cross';
@@ -60,6 +61,7 @@ export class AgentLabel {
   private readonly stateEl = span('scene-tag-state');
   private name = '';
   private state: AgentState | null = null;
+  private lang: Lang | null = null;
   private icon: LabelIcon | null | undefined = undefined;
   private badgeKind: BadgeKind | null | undefined = undefined;
   private progressOn: boolean | undefined = undefined;
@@ -93,9 +95,10 @@ export class AgentLabel {
       this.nameEl.textContent = input.name;
       this.chip.title = input.name;
     }
-    if (input.state !== this.state) {
+    if (input.state !== this.state || currentLang() !== this.lang) {
       this.state = input.state;
-      this.stateEl.textContent = STATE_LABELS[input.state] ?? input.state;
+      this.lang = currentLang();
+      this.stateEl.textContent = stateLabel(input.state);
       this.root.style.setProperty('--c', STATE_COLORS[input.state] ?? '#94a3b8');
       this.root.dataset.state = input.state;
     }

@@ -13,19 +13,6 @@ import type {
   VerdictKind,
 } from './types';
 
-export const ROLE_LABELS: Record<RoleKind, string> = {
-  director: 'Director',
-  lead: 'Jefe de planta',
-  dev: 'Desarrollador',
-  tester: 'Tester',
-  reviewer: 'Revisor',
-  writer: 'Redactor',
-  planReviewer: 'Revisor de planes',
-  skillwright: 'Artesano',
-  skillReviewer: 'Revisor de skills',
-  intern: 'Becario',
-};
-
 export const ROLE_ORDER: readonly RoleKind[] = [
   'director',
   'lead',
@@ -39,19 +26,6 @@ export const ROLE_ORDER: readonly RoleKind[] = [
   'intern',
 ];
 
-export const STATE_LABELS: Record<AgentState, string> = {
-  idle: 'Libre',
-  working: 'Trabajando',
-  reading: 'Leyendo',
-  testing: 'En tests',
-  checking: 'Revisando',
-  asking: 'Pregunta',
-  talking: 'Hablando',
-  blocked: 'Bloqueado',
-  done: 'Terminado',
-  failed: 'Fallido',
-};
-
 export const STATE_COLORS: Record<AgentState, string> = {
   idle: '#94a3b8',
   working: '#4f7cff',
@@ -63,42 +37,6 @@ export const STATE_COLORS: Record<AgentState, string> = {
   blocked: '#ef4444',
   done: '#22c55e',
   failed: '#9f1239',
-};
-
-export const STACK_LABELS: Record<Stack, string> = {
-  flutter: 'Flutter',
-  laravel: 'Laravel',
-  node: 'Node',
-  generic: 'Genérico',
-};
-
-export const FLOOR_KIND_LABELS: Record<FloorKind, string> = {
-  direccion: 'Dirección',
-  managed: 'Gestionada',
-  observed: 'Observada',
-  redaccion: 'Redacción',
-  mantenimiento: 'Mantenimiento',
-};
-
-export const VERDICT_LABELS: Record<VerdictKind, string> = {
-  tests: 'Tests',
-  approved: 'Aprobado',
-  improve: 'Mejorar',
-  'no-agreement': 'Sin acuerdo',
-};
-
-export const ALERT_LEVEL_LABELS: Record<GuardAlertLevel, string> = {
-  alerta: 'Alerta',
-  posible: 'Posible',
-};
-
-export const DOCUMENT_STATUS_LABELS: Record<DocumentStatus, string> = {
-  borrador: 'Borrador',
-  revision: 'En revisión',
-  aprobado: 'Aprobado',
-  'sin-acuerdo': 'Sin acuerdo',
-  cerrado: 'Entregado',
-  descartado: 'Descartado',
 };
 
 export const DOCUMENT_STATUS_COLORS: Record<DocumentStatus, string> = {

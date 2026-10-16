@@ -1,6 +1,7 @@
 import { Box3, CanvasTexture, Group, Mesh, PlaneGeometry, SRGBColorSpace, Vector3, type MeshStandardMaterial } from 'three';
-import { STACK_LABELS } from '../labels';
-import type { FloorView, Stack } from '../types';
+import { currentLang, t } from '../i18n';
+import { floorLabel, stackLabel } from '../labels';
+import type { FloorView } from '../types';
 import { Batcher, disposeMeshes, transform } from './batch';
 import {
   AISLE_Z,
@@ -52,16 +53,16 @@ import { buildingKit, floorStyle, furnitureKit, hashString, std, type FloorStyle
 type Opening = { x0: number; x1: number };
 
 function subtitleFor(view: FloorView): string {
-  const stack = (STACK_LABELS as Partial<Record<Stack, string>>)[view.stack] ?? view.stack;
+  const stack = stackLabel(view.stack);
   switch (view.kind) {
     case 'direccion':
-      return 'Despacho del director';
+      return t('scene.sub.direccion');
     case 'redaccion':
-      return 'Redacción de planes';
+      return t('scene.sign.redaccion');
     case 'mantenimiento':
-      return 'Taller de skills';
+      return t('scene.sub.mantenimiento');
     case 'observed':
-      return `${stack} · observada`;
+      return t('scene.sub.observed', { stack });
     default:
       return stack;
   }
@@ -79,7 +80,7 @@ export function signTexture(title: string, subtitle: string, accent: string, wid
   element.width = width;
   element.height = height;
   const ctx = element.getContext('2d');
-  if (!ctx) throw new Error('Canvas 2D no disponible');
+  if (!ctx) throw new Error(t('scene.noCanvas'));
   ctx.fillStyle = '#121820';
   ctx.fillRect(0, 0, width, height);
   ctx.fillStyle = accent;
@@ -242,7 +243,7 @@ export class FloorRoom {
     this.origin.copy(origin);
     this.group.position.copy(origin);
     this.group.updateMatrixWorld(true);
-    const signature = [view.kind, view.stack, view.label, this.building, width.toFixed(2)].join('|');
+    const signature = [view.kind, view.stack, view.label, currentLang(), this.building, width.toFixed(2)].join('|');
     if (signature === this.signature) return;
     this.signature = signature;
     this.width = width;
@@ -369,7 +370,7 @@ export class FloorRoom {
     this.labLamp = { mesh: lamp, material: lampMaterial, texture: null };
     this.owned.push(this.labLamp);
 
-    const sign = signMesh(signTexture(this.view.label, subtitleFor(this.view), style.accentCss), 2.8, 0.61);
+    const sign = signMesh(signTexture(floorLabel(this.view), subtitleFor(this.view), style.accentCss), 2.8, 0.61);
     sign.mesh.position.set(-half + 0.4 + 1.4, CLEAR_H - 0.55, -HALF_D + (style.glass ? 0.04 : 0.012));
     this.group.add(sign.mesh);
     this.owned.push(sign);
@@ -462,7 +463,8 @@ export class Site {
     this.order = order;
     this.nav = { floors: navFloors, mainGround, annexGround };
 
-    const signature = [this.mainWidth, this.annexWidth, this.mainLevels, this.annexLevels].map((value) => value.toFixed(2)).join('|');
+    const sizes = [this.mainWidth, this.annexWidth, this.mainLevels, this.annexLevels].map((value) => value.toFixed(2));
+    const signature = [...sizes, currentLang()].join('|');
     if (signature !== this.siteSignature) {
       this.siteSignature = signature;
       this.rebuildSite();
@@ -596,7 +598,7 @@ export class Site {
       }
     }
     if (hasAnnex) {
-      roof(this.annexX, this.annexWidth, this.annexLevels, 'Mantenimiento', '#f59e0b');
+      roof(this.annexX, this.annexWidth, this.annexLevels, t('floor.mantenimiento'), '#f59e0b');
       if (this.annexLevels > 1) {
         const sx = this.annexX - this.annexWidth / 2 - WALL_T - 0.7;
         const from = PLINTH_H + 2.85;
