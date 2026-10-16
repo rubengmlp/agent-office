@@ -1,6 +1,7 @@
 import { Application, Container, Graphics } from 'pixi.js';
 import type { Store } from '../store';
 import type { AgentView } from '../types';
+import { mountUsageCard } from '../usage-card';
 import { CharacterView, type Target } from './character-view';
 import {
   DESK_FEET_Y,
@@ -94,6 +95,7 @@ class OfficeView {
       autoDensity: true,
     });
     host.appendChild(this.app.canvas);
+    host.appendChild(mountUsageCard(this.store).root);
 
     this.actors.sortableChildren = true;
     this.world.scale.set(SCALE);

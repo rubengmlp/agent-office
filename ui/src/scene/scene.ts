@@ -23,6 +23,7 @@ import { agentName } from '../labels';
 import type { OfficeHandle } from '../office/office';
 import type { Store } from '../store';
 import type { AgentView, FloorView } from '../types';
+import { mountUsageCard } from '../usage-card';
 import { AssetLibrary, loadManifest } from './assets';
 import { disposeBatchMaterials } from './batch';
 import { Site } from './buildings';
@@ -173,17 +174,24 @@ class OfficeScene {
     this.scene.add(this.sun, this.sun.target, this.fill, this.hemi, this.site.root, this.actors, this.talkLines.mesh);
     this.applyTheme();
 
-    this.cameraRig = new CameraRig(this.ui, renderer.domElement, {
-      onFloor: (slug) => this.focusFloor(slug),
-      onOverview: () => this.focusOverview(),
-      onStopFollow: () => this.cameraRig.stopFollow(),
-    });
+    const usageCard = mountUsageCard(store);
+    this.cameraRig = new CameraRig(
+      this.ui,
+      renderer.domElement,
+      {
+        onFloor: (slug) => this.focusFloor(slug),
+        onOverview: () => this.focusOverview(),
+        onStopFollow: () => this.cameraRig.stopFollow(),
+      },
+      usageCard.root,
+    );
     this.picker = new Picker(renderer.domElement, this.cameraRig.camera, () => this.pickTargets(), {
       select: (key) => this.store.select(key),
       follow: (key) => this.follow(key),
     });
 
     this.unsubscribers.push(
+      usageCard.destroy,
       store.watch(['agents', 'floors', 'tick'], () => {
         this.dirty = true;
       }),

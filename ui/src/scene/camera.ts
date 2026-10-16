@@ -57,6 +57,7 @@ export class CameraRig {
     private readonly overlay: HTMLElement,
     private readonly domElement: HTMLElement,
     private readonly callbacks: CameraCallbacks,
+    private readonly card: HTMLElement,
   ) {
     this.camera.position.set(6, 9, 30);
     this.controls = new OrbitControls(this.camera, domElement);
@@ -137,7 +138,7 @@ export class CameraRig {
     overview.className = 'scene-floor-btn is-overview';
     overview.textContent = 'Edificio';
     overview.addEventListener('click', () => this.callbacks.onOverview());
-    const list: HTMLElement[] = [overview];
+    const list: HTMLElement[] = [overview, this.card];
     let annexStarted = false;
     for (const item of items) {
       if (item.annex && !annexStarted) {

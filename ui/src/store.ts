@@ -15,6 +15,7 @@ import type {
   SessionView,
   SettingsView,
   Snapshot,
+  UsageView,
 } from './types';
 
 export type Topic =
@@ -32,7 +33,8 @@ export type Topic =
   | 'documents'
   | 'alerts'
   | 'memory'
-  | 'settings';
+  | 'settings'
+  | 'usage';
 
 export type ConnectionStatus = 'nokey' | 'connecting' | 'online' | 'offline' | 'denied' | 'replay';
 export type ToastKind = 'ok' | 'info' | 'error';
@@ -64,6 +66,7 @@ export class Store {
   documents: DocumentView[] = [];
   alerts: GuardAlert[] = [];
   settings: SettingsView | null = null;
+  usage: UsageView | null = null;
   memoryVersion = new Map<string, number>();
   toasts: Toast[] = [];
   selectedKey: string | null = null;
@@ -183,6 +186,10 @@ export class Store {
         this.settings = message.data;
         this.mark('settings');
         break;
+      case 'usage':
+        this.usage = message.data;
+        this.mark('usage');
+        break;
     }
   }
 
@@ -195,6 +202,7 @@ export class Store {
     this.activity = [];
     this.documents = [];
     this.alerts = [];
+    this.usage = null;
     this.debouncer.clear();
     this.markAll();
   }
@@ -289,6 +297,7 @@ export class Store {
     this.activity = snapshot.activity.slice(-ACTIVITY_LIMIT);
     this.documents = snapshot.documents ?? [];
     this.alerts = (snapshot.alerts ?? []).slice(-ALERT_LIMIT);
+    this.usage = snapshot.usage ?? null;
     this.markAll();
   }
 
@@ -301,7 +310,7 @@ export class Store {
   }
 
   private markAll(): void {
-    const all: Topic[] = ['floors', 'agents', 'sessions', 'questions', 'messages', 'activity', 'selection', 'documents', 'alerts', 'memory'];
+    const all: Topic[] = ['floors', 'agents', 'sessions', 'questions', 'messages', 'activity', 'selection', 'documents', 'alerts', 'memory', 'usage'];
     for (const topic of all) this.mark(topic);
   }
 

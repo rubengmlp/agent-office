@@ -2050,3 +2050,83 @@ details[open] > .floors-summary::before {
   overflow-wrap: anywhere;
   line-height: 1.35;
 }
+
+.usage-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  font-size: 12px;
+  pointer-events: auto;
+}
+
+.usage-card.is-stale {
+  opacity: 0.6;
+}
+
+.usage-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.usage-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 8px;
+  align-items: baseline;
+}
+
+.usage-pct {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.usage-bar {
+  grid-column: 1 / -1;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--border);
+}
+
+.usage-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--ok);
+}
+
+.usage-fill[data-level='warn'] {
+  background: var(--asking);
+}
+
+.usage-fill[data-level='danger'] {
+  background: var(--danger);
+}
+
+.usage-reset,
+.usage-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.office-view > .usage-card {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 2;
+  width: 190px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(8px);
+}
