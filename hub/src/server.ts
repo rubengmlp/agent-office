@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, normalize, resolve, sep } from 'node:path';
 import type { Server, ServerWebSocket } from 'bun';
 import { Hono, type Context, type Next } from 'hono';
+import type { FloorAdmin } from './floor-admin';
 import { isRoleId } from './memory';
 import { isHookEvent, type Office } from './office';
 import { hostAllowed, injectKey, keyMatches, originAllowed } from './security';
@@ -18,6 +19,7 @@ export type ServerOptions = {
   publicDir: string;
   dev?: boolean;
   settings?: SettingsService;
+  floors?: FloorAdmin;
 };
 
 export type RunningServer = { server: Server<WsData>; stop: () => void };
@@ -121,6 +123,19 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
     if (!opts.settings) return c.json({ ok: false, error: 'Ajustes no disponibles' }, 503);
     const result = opts.settings.update(await readJson(c));
     return c.json(result, result.ok ? 200 : 400);
+  });
+
+  app.post('/api/floors', requireKey, async (c) => {
+    if (!opts.floors) return c.json({ ok: false, error: 'Proyectos no disponibles' }, 503);
+    const result = opts.floors.add(await readJson(c));
+    return c.json(result, result.ok ? 200 : result.status);
+  });
+
+  app.delete('/api/floors/:slug', requireKey, async (c) => {
+    if (!opts.floors) return c.json({ ok: false, error: 'Proyectos no disponibles' }, 503);
+    holdRequest(c.req.raw);
+    const result = await opts.floors.remove(c.req.param('slug') ?? '');
+    return c.json(result, result.ok ? 200 : result.status);
   });
 
   app.get('/api/memory/:floor/:role', requireKey, (c) => {
