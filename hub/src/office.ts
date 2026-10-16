@@ -1,11 +1,9 @@
 import type { Database } from 'bun:sqlite';
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { managedFloors } from './agents';
 import { ChatDesk, GLOBAL_CHANNEL, SNAPSHOT_LIMIT } from './chat';
-import { deliver, encodeInbox, orderText } from './courier';
-import { writeAtomic } from './config';
-import { commitDocument } from './docs-repo';
+import { deliver } from './courier';
 import { DocumentDesk } from './documents';
 import { FloorInUseError, purgeFloorData } from './floor-data';
 import {
@@ -20,18 +18,15 @@ import { GUARDED_TOOLS, guardDecision } from './guard';
 import type { Log } from './log';
 import {
   ANSWERS_QUESTION,
-  DECISION_FROM,
   EMPTY_META,
   FILE_TOOLS,
   FORGET_ENDED_MS,
   HOLDS_QUESTION,
   MAX_MESSAGES,
   NEW_TURN,
-  NOT_DISCARDABLE,
   NO_TESTS,
   TURN_OVER,
   UNDO_MS,
-  DAY_MS,
   isHookEvent,
   recentDocuments,
   teamOfSession,
@@ -48,20 +43,16 @@ import {
 } from './office-state';
 import { withoutChatCalls } from './chat-commands';
 import {
-  STATUS_REQUEST,
-  DISCARDED_MARK,
   ROLE_LABELS,
-  analysisOrderText,
-  executeOrderText,
   isUserPrompt,
   taskLine,
-  withoutDiscardMark,
 } from './office-texts';
 import { AskDesk } from './ask-desk';
 import { ChatRoom, type ReadChatResult, type UserChatResult } from './chat-room';
 import { ContextDesk } from './context-desk';
 import { GateDesk } from './gate-desk';
 import { ProtocolDesk } from './protocol-desk';
+import { OrderDesk } from './order-desk';
 import { GuardDesk } from './guard-desk';
 import { MeterDesk } from './meter-desk';
 import { OfficeBus } from './office-bus';
@@ -71,7 +62,7 @@ import { StallDesk } from './stall-desk';
 import { prepare, type Sql } from './office-sql';
 import { publicDetail, publicSummary, publicText, storedPayload, visibleKind } from './privacy';
 import { detectStack, profileFor, type Profiles } from './profiles';
-import { parseProtocol, type DocRef } from './protocol';
+import { parseProtocol } from './protocol';
 import { QuestionDesk } from './questions';
 import { buildReport, saveReport, savedReport, savedReports } from './reports';
 import {
@@ -87,7 +78,6 @@ import {
   EDIT_TOOLS,
   classify,
   record,
-  short,
   text,
   type Classified,
 } from './state-machine';
@@ -189,6 +179,7 @@ export class Office {
   private readonly book: SessionBook;
   private readonly rules: RulesDesk;
   private readonly guards: GuardDesk;
+  private readonly orders: OrderDesk;
   private readonly protocol: ProtocolDesk;
   private readonly gates: GateDesk;
   private readonly room: ChatRoom;
@@ -204,9 +195,6 @@ export class Office {
   private readonly usage: UsageDesk;
   private readonly meter: MeterDesk;
   readonly chat: ChatDesk;
-  private readonly undoMs: number;
-  private readonly removals = new Map<string, ReturnType<typeof setTimeout>>();
-  private readonly deciding = new Set<string>();
 
   constructor(private readonly opts: OfficeOptions) {
     this.config = opts.config;
@@ -214,7 +202,6 @@ export class Office {
     this.now = opts.now ?? Date.now;
     this.deliverFn = opts.deliverFn ?? deliver;
     this.bus = new OfficeBus(opts.log ?? ((text) => console.error(`Agent Office: ${text}`)));
-    this.undoMs = opts.undoMs ?? UNDO_MS;
     this.git = opts.git ?? runGit;
     this.floors = new FloorResolver(
       () => this.config,
@@ -355,6 +342,24 @@ export class Office {
       declareWaiting: (agent, rest, now) => this.stall.declareWaiting(agent, rest, now),
       retire: (agent, detail, now) => this.retire(agent, detail, now),
     });
+    this.orders = new OrderDesk({
+      now: this.now,
+      bus: this.bus,
+      book: this.book,
+      config: () => this.config,
+      docs: this.docs,
+      sync: this.sync,
+      git: this.git,
+      queue: this.docsQueue,
+      deliver: this.deliverFn,
+      undoMs: opts.undoMs ?? UNDO_MS,
+      docsRoot: () => this.docsRoot(),
+      refreshDocuments: () => this.refreshDocuments(),
+      instructed: (sessionId, now) => this.gates.userInstructed(sessionId, now),
+      allowBriefs: (sessionId, floors) => this.gates.allowBriefs(sessionId, floors),
+      setPlan: (agent, slug) => this.meter.setPlan(agent, slug),
+      openTask: (agent, now) => this.stall.openTask(agent, now),
+    });
     this.book.restoreSessions();
     this.docs.refresh();
   }
@@ -369,8 +374,7 @@ export class Office {
 
   stop(): void {
     this.docs.unwatch();
-    for (const timer of this.removals.values()) clearTimeout(timer);
-    this.removals.clear();
+    this.orders.stop();
   }
 
   idle(): Promise<void> {
@@ -573,49 +577,6 @@ export class Office {
     return this.gates.guard(e, meta);
   }
 
-  async order(sessionId: string, body: string): Promise<OrderResult> {
-    const result = await this.deliverOrder(sessionId, body, { asTask: true });
-    if (result === 'ok') this.gates.userInstructed(sessionId, this.now());
-    return result;
-  }
-
-  requestStatus(sessionId: string): Promise<OrderResult> {
-    return this.deliverOrder(sessionId, STATUS_REQUEST, { asTask: false });
-  }
-
-  private async deliverOrder(sessionId: string, body: string, opts: { asTask: boolean }): Promise<OrderResult> {
-    const session = this.book.sessions.get(sessionId);
-    if (!session || session.endedAt !== null) return 'not-found';
-    if (!this.book.sessionInOffice(session)) return 'not-office';
-    if (!session.socket || !existsSync(session.socket)) return 'unreachable';
-    try {
-      await this.deliverFn(session.socket, encodeInbox(session.token, orderText(body)));
-    } catch {
-      return 'failed';
-    }
-    this.pushActivity({
-      ts: this.now(),
-      agentKey: session.sessionId,
-      event: opts.asTask ? 'Order' : 'Status',
-      tool: null,
-      state: null,
-      summary: opts.asTask
-        ? { key: 'hub.act.order', params: { text: short(body, 60) } }
-        : { key: 'hub.act.statusRequested', params: { who: session.name ?? session.sessionId.slice(0, 8) } },
-    });
-    const main = this.book.agents.get(sessionId);
-    const plan = opts.asTask ? planSlugIn(body) : null;
-    if (main && main.retiredAt === null && plan) this.meter.setPlan(main, plan);
-    const task = opts.asTask ? taskLine(publicText(body, session.floorKind)) : null;
-    if (main && main.retiredAt === null && task) {
-      main.task = task;
-      main.away = false;
-      this.stall.openTask(main, this.now());
-      this.book.emitAgent(main, this.now());
-    }
-    return 'ok';
-  }
-
   memoryView(floor: string, role: RoleId): MemoryView {
     return this.context.memoryView(floor, role);
   }
@@ -630,6 +591,14 @@ export class Office {
 
   report(agentKey: string): ReportView | null {
     return this.context.report(agentKey);
+  }
+
+  order(sessionId: string, body: string): Promise<OrderResult> {
+    return this.orders.order(sessionId, body);
+  }
+
+  requestStatus(sessionId: string): Promise<OrderResult> {
+    return this.orders.requestStatus(sessionId);
   }
 
   postChat(raw: ChatPostRequest, meta: HookMeta): ChatPostResult {
@@ -660,104 +629,24 @@ export class Office {
     return this.docs.content(path);
   }
 
-  async discardDocument(path: string): Promise<DiscardResult> {
-    const doc = this.docs.find(path);
-    if (!doc || doc.kind !== 'plan') return 'not-found';
-    if (NOT_DISCARDABLE.has(doc.status)) return 'closed';
-    const now = this.now();
-    const ref: DocRef = { path: doc.path, kind: doc.kind, slug: doc.slug };
-    this.docs.markDiscarded(ref, now);
-    this.markDiscardedFile(ref, now);
-    this.refreshDocuments();
-    this.pushActivity({ ts: now, agentKey: 'panel', event: 'Discard', tool: null, state: null, summary: { key: 'hub.act.planDiscarded', params: { path: doc.path } } });
-    if (this.undoMs <= 0) {
-      await this.sync.remove(doc.slug);
-      return 'ok';
-    }
-    // The sources go once the window to undo has passed; stop() cancels it and the next start() sweeps the orphans.
-    const timer = setTimeout(() => {
-      this.removals.delete(doc.path);
-      this.bus.background(this.sync.remove(doc.slug));
-    }, this.undoMs);
-    timer.unref?.();
-    this.removals.set(doc.path, timer);
-    return 'ok';
+  discardDocument(path: string): Promise<DiscardResult> {
+    return this.orders.discardDocument(path);
   }
 
-  async restoreDocument(path: string): Promise<RestoreResult> {
-    const doc = this.docs.find(path);
-    if (!doc || doc.kind !== 'plan') return 'not-found';
-    if (doc.status !== 'descartado') return 'not-discarded';
-    const now = this.now();
-    const ref: DocRef = { path: doc.path, kind: doc.kind, slug: doc.slug };
-    const timer = this.removals.get(doc.path);
-    if (timer) clearTimeout(timer);
-    this.removals.delete(doc.path);
-    this.restoreFile(ref);
-    this.docs.clearDiscarded(ref, now);
-    this.refreshDocuments();
-    this.pushActivity({ ts: now, agentKey: 'panel', event: 'Restore', tool: null, state: null, summary: { key: 'hub.act.planRestored', params: { path: doc.path } } });
-    return 'ok';
+  restoreDocument(path: string): Promise<RestoreResult> {
+    return this.orders.restoreDocument(path);
   }
 
-  // A second click on Ejecutar while the first order is still on its way must not send another one.
-  async decidePlan(path: string, decision: PlanDecision): Promise<DecideResult> {
-    if (this.deciding.has(path)) return 'busy';
-    this.deciding.add(path);
-    try {
-      return await this.decide(path, decision);
-    } finally {
-      this.deciding.delete(path);
-    }
+  decidePlan(path: string, decision: PlanDecision): Promise<DecideResult> {
+    return this.orders.decidePlan(path, decision);
   }
 
-  private async decide(path: string, decision: PlanDecision): Promise<DecideResult> {
-    const doc = this.docs.find(path);
-    if (!doc || doc.kind !== 'plan') return 'not-found';
-    if (!DECISION_FROM[decision].includes(doc.status)) return 'invalid-state';
-    if (decision === 'ejecutar') {
-      const director = this.book.directorSession();
-      if (!director) return 'no-director';
-      const text = doc.docType === 'analisis' ? analysisOrderText(doc, this.docsRoot()) : executeOrderText(doc, this.docsRoot());
-      const sent = await this.order(director.sessionId, text);
-      if (sent === 'not-found' || sent === 'not-office') return 'no-director';
-      if (sent !== 'ok') return sent;
-      this.gates.allowBriefs(director.sessionId, new Set(doc.base.map((b) => b.floor)).size);
-    }
-    const now = this.now();
-    this.docs.markDecision({ path: doc.path, kind: doc.kind, slug: doc.slug }, decision, now);
-    this.refreshDocuments();
-    const summary: HubText =
-      decision === 'ejecutar'
-        ? { key: doc.docType === 'analisis' ? 'hub.act.planAnalysisSent' : 'hub.act.planExecuting', params: { path: doc.path } }
-        : decision === 'aparcar'
-          ? { key: 'hub.act.planParked', params: { path: doc.path } }
-          : { key: 'hub.act.planClosed', params: { path: doc.path } };
-    this.pushActivity({ ts: now, agentKey: 'panel', event: 'Decision', tool: null, state: null, summary });
-    return 'ok';
+  syncSources(raw: unknown): Promise<SyncResult> {
+    return this.orders.syncSources(raw);
   }
 
-  async syncSources(raw: unknown): Promise<SyncResult> {
-    const result = await this.sync.sync(raw);
-    if (result.ok) {
-      this.pushActivity({
-        ts: this.now(),
-        agentKey: 'redaccion',
-        event: 'Sync',
-        tool: null,
-        state: null,
-        summary: { key: 'hub.act.sourcesReady', params: { slug: result.slug, floors: result.floors.map((f) => f.floor).join(', ') } },
-      });
-    }
-    return result;
-  }
-
-  async expireSources(): Promise<string[]> {
-    const cutoff = this.now() - this.config.retentionDays * DAY_MS;
-    return this.sync.expire(cutoff, (slug) => {
-      const doc = this.docs.list().find((d) => d.kind === 'plan' && d.slug === slug);
-      return doc?.updatedAt ?? 0;
-    });
+  expireSources(): Promise<string[]> {
+    return this.orders.expireSources();
   }
 
   tick(): void {
@@ -891,36 +780,6 @@ export class Office {
     if (c.message) this.recordMessage(c.message, agent, session, now);
     this.asks.settlePermissions(agent.key, c.event, c.tool, e.tool_input);
     if (c.sessionEnded) this.endSession(session, now);
-  }
-
-  private markDiscardedFile(ref: DocRef, now: number): void {
-    const file = join(this.docsRoot(), ref.path);
-    try {
-      const content = readFileSync(file, 'utf8');
-      if (!content.startsWith(DISCARDED_MARK)) {
-        const stamp = new Date(now).toISOString().slice(0, 16).replace('T', ' ');
-        writeAtomic(file, `${DISCARDED_MARK} desde el panel de Agent Office el ${stamp}. No se continúa: un encargo nuevo empieza con otro slug.\n\n${content}`, statSync(file).mode & 0o777);
-      }
-    } catch {
-      return;
-    }
-    this.commitDocumentFile(ref, `redaccion: ${ref.slug} descartado`);
-  }
-
-  private restoreFile(ref: DocRef): void {
-    const file = join(this.docsRoot(), ref.path);
-    try {
-      const content = readFileSync(file, 'utf8');
-      if (content.startsWith(DISCARDED_MARK)) writeAtomic(file, withoutDiscardMark(content), statSync(file).mode & 0o777);
-    } catch {
-      return;
-    }
-    this.commitDocumentFile(ref, `redaccion: ${ref.slug} restaurado`);
-  }
-
-  private commitDocumentFile(ref: DocRef, message: string): void {
-    const root = this.docsRoot();
-    this.bus.background(this.docsQueue.run(root, () => commitDocument(this.git, root, ref.path, message)));
   }
 
   private recordTask(e: HookEvent, c: Classified, agent: AgentRuntime, session: SessionRuntime, now: number): void {
