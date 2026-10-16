@@ -24,3 +24,4 @@ export const BADGE_VISIBLE_S = 5;
 export const FADE_S = 2;
 export const FADE_HOLD_S = 0.8;
 export const MEETING_REFRESH_S = 0.5;
+export const EXIT_FADE_S = 1;

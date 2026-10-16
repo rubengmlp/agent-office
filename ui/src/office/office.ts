@@ -5,6 +5,7 @@ import { CharacterView, type Target } from './character-view';
 import {
   DESK_FEET_Y,
   DESK_SEAT_X,
+  FADE_HOLD_S,
   FLOOR_GAP,
   LEAD_SEAT_X,
   MEETING_REFRESH_S,
@@ -14,12 +15,14 @@ import {
 } from './constants';
 import { FloorScene } from './floor-scene';
 import { buildDesk, type DeskParts } from './furniture';
-import { computeFloorLayout, type DeskSlot, type Point } from './layout';
+import { computeFloorLayout, liftGate, liftRoute, streetExit, type DeskSlot, type Point } from './layout';
 import { findMeetingPairs } from './meetings';
 import { hashString } from './palette';
 
 type Entry = {
   view: CharacterView;
+  agent: AgentView;
+  scale: number;
   look: string;
   ownDesk: DeskParts | null;
   desk: DeskParts | null;
@@ -72,6 +75,7 @@ class OfficeView {
   private sceneOrder: FloorScene[] = [];
   private meetings = new Map<string, MeetingSeat>();
   private seenCounter = 0;
+  private primed = false;
   private scrollY = 0;
   private worldHeight = 0;
   private logicalWidth = MIN_WIDTH;
@@ -154,7 +158,7 @@ class OfficeView {
       if (!this.firstSeen.has(agent.key)) this.firstSeen.set(agent.key, this.seenCounter++);
     }
     const byFloor = new Map<string, AgentView[]>();
-    for (const agent of agents) {
+    for (const agent of this.store.officeAgents()) {
       const list = byFloor.get(agent.floor) ?? [];
       list.push(agent);
       byFloor.set(agent.floor, list);
@@ -196,21 +200,27 @@ class OfficeView {
     for (const agent of agents) {
       const scene = this.scenes.get(agent.floor);
       if (!scene) continue;
+      let entry = this.entries.get(agent.key);
+      if (!entry && agent.away) continue;
       present.add(agent.key);
       const saturation = scene.view.kind === 'observed' ? 0.4 : 1;
       const look = `${agent.roleKind}|${saturation}`;
-      let entry = this.entries.get(agent.key);
       if (entry && entry.look !== look) {
         entry.view.destroy();
         entry.view = this.createView(agent, saturation);
         entry.look = look;
       } else if (!entry) {
-        entry = { view: this.createView(agent, saturation), look, ownDesk: null, desk: null, slot: null };
+        const view = this.createView(agent, saturation);
+        const ground = this.sceneOrder[this.sceneOrder.length - 1];
+        if (this.primed && ground) view.placeAt(streetExit(ground.layout, ground.top));
+        entry = { view, agent, scale: 1, look, ownDesk: null, desk: null, slot: null };
         this.entries.set(agent.key, entry);
       }
+      entry.agent = agent;
 
       const slot = scene.layout.desks.get(agent.key) ?? null;
       entry.slot = slot;
+      if (slot) entry.scale = slot.scale;
       if (slot?.lead) {
         this.releaseDesk(entry);
         entry.desk = scene.leadDeskParts;
@@ -227,8 +237,9 @@ class OfficeView {
       }
     }
 
+    this.primed = agents.length > 0;
     for (const [key, entry] of this.entries) {
-      if (present.has(key)) continue;
+      if (!entry.view.gone && (present.has(key) || entry.view.leaving)) continue;
       this.releaseDesk(entry);
       entry.view.destroy();
       this.entries.delete(key);
@@ -255,7 +266,7 @@ class OfficeView {
   }
 
   private canMeet(agent: AgentView): boolean {
-    if (agent.endedAt !== null || !this.entries.has(agent.key)) return false;
+    if (agent.endedAt !== null || agent.away || !this.entries.has(agent.key)) return false;
     const state = this.store.shownState(agent);
     return state !== 'done' && state !== 'failed' && state !== 'testing';
   }
@@ -290,9 +301,9 @@ class OfficeView {
   private assignTargets(): void {
     const labUse = new Map<string, number>();
     for (const [key, entry] of this.entries) {
-      const agent = this.store.agents.get(key);
-      const scene = agent ? this.scenes.get(agent.floor) : undefined;
-      if (!agent || !scene) continue;
+      const agent = this.store.agents.get(key) ?? entry.agent;
+      const scene = this.scenes.get(agent.floor);
+      if (!scene) continue;
       const resolved = this.resolveTarget(agent, entry, scene, labUse);
       if (!resolved) continue;
       entry.view.setTarget(resolved.target, this.buildPath(entry.view.position, resolved.target, resolved.scene));
@@ -306,6 +317,13 @@ class OfficeView {
     labUse: Map<string, number>,
   ): { target: Target; scene: FloorScene } | null {
     const state = this.store.shownState(agent);
+    if (agent.away) {
+      const ground = this.sceneOrder[this.sceneOrder.length - 1];
+      if (!ground) return null;
+      if (state === 'done' && !entry.view.leaving && this.store.now() - agent.stateSince < FADE_HOLD_S * 1000) return null;
+      const exit = streetExit(ground.layout, ground.top);
+      return { scene: ground, target: { id: 'exit', kind: 'exit', x: exit.x, y: exit.y, z: exit.y, desk: null } };
+    }
     const leaving = state === 'done' || state === 'failed' || agent.endedAt !== null;
 
     if (!leaving && state === 'testing') {
@@ -355,11 +373,10 @@ class OfficeView {
   private buildPath(from: Point, target: Target, targetScene: FloorScene): Point[] {
     const goal = { x: target.x, y: target.y };
     const origin = this.sceneAt(from.y);
+    const gate = (scene: FloorScene): Point => liftGate(scene.layout, scene.top);
+    if (target.kind === 'exit') return liftRoute(origin ? gate(origin) : null, gate(targetScene), goal);
+    if (origin && from.x > origin.layout.width) return liftRoute(gate(origin), gate(targetScene), goal);
     if (!origin || origin === targetScene) return [goal];
-    const gate = (scene: FloorScene): Point => ({
-      x: scene.layout.lift.x + scene.layout.lift.w / 2,
-      y: scene.top + scene.layout.walkY,
-    });
     return [gate(origin), gate(targetScene), goal];
   }
 
@@ -368,18 +385,17 @@ class OfficeView {
     const asking = new Set(this.store.questions.map((question) => question.agentKey));
     const testingFloors = new Set<string>();
     for (const [key, entry] of this.entries) {
-      const agent = this.store.agents.get(key);
-      if (!agent) continue;
+      const agent = this.store.agents.get(key) ?? entry.agent;
       const state = this.store.shownState(agent);
       if (state === 'testing') testingFloors.add(agent.floor);
       entry.view.update({
         dt,
         now,
         state,
-        scale: entry.slot?.scale ?? 1,
+        scale: entry.scale,
         selected: key === this.store.selectedKey,
         asking: asking.has(key),
-        ended: agent.endedAt !== null,
+        ended: agent.endedAt !== null && !agent.away,
         lastTest: agent.lastTest,
       });
     }

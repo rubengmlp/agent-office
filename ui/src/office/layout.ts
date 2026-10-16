@@ -1,5 +1,6 @@
 import type { AgentView, FloorView, RoleKind } from '../types';
 import {
+  CHAR_W,
   CHILD_SCALE,
   CHILD_SLOT_W,
   LEAD_SLOT_W,
@@ -138,4 +139,21 @@ export function computeFloorLayout(
     walkY: height - 8,
     windows,
   };
+}
+
+export function liftGate(layout: FloorLayout, top: number): Point {
+  return { x: layout.lift.x + layout.lift.w / 2, y: top + layout.walkY };
+}
+
+export function streetExit(layout: FloorLayout, top: number): Point {
+  return { x: layout.width + CHAR_W, y: top + layout.walkY };
+}
+
+export function liftRoute(from: Point | null, to: Point | null, goal: Point): Point[] {
+  const points: Point[] = [];
+  for (const point of [from, to]) {
+    if (point && !points.some((p) => p.x === point.x && p.y === point.y)) points.push(point);
+  }
+  points.push(goal);
+  return points;
 }

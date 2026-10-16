@@ -5,6 +5,7 @@ import {
   BADGE_VISIBLE_S,
   CHAR_H,
   CHAR_W,
+  EXIT_FADE_S,
   FADE_HOLD_S,
   FADE_S,
   TALK_VISIBLE_S,
@@ -14,7 +15,7 @@ import { Overlay, type BadgeKind, type IconKind } from './effects';
 import type { DeskParts } from './furniture';
 import type { Point } from './layout';
 
-export type TargetKind = 'desk' | 'lab' | 'meeting';
+export type TargetKind = 'desk' | 'lab' | 'meeting' | 'exit';
 
 export type Target = {
   id: string;
@@ -56,6 +57,9 @@ export class CharacterView {
   private badge: BadgeKind | null = null;
   private badgeUntil = 0;
   private interactive = true;
+  private placed = false;
+  private exitAt: number | null = null;
+  private left = false;
 
   constructor(
     readonly key: string,
@@ -80,6 +84,21 @@ export class CharacterView {
     return this.path.length > 0;
   }
 
+  get leaving(): boolean {
+    return this.target?.kind === 'exit';
+  }
+
+  get gone(): boolean {
+    return this.left;
+  }
+
+  placeAt(point: Point): void {
+    this.x = point.x;
+    this.y = point.y;
+    this.path = [];
+    this.placed = true;
+  }
+
   get talkingActive(): boolean {
     return this.lastState === 'talking' && this.seconds - this.stateStart < TALK_VISIBLE_S;
   }
@@ -87,6 +106,10 @@ export class CharacterView {
   setTarget(target: Target, path: Point[]): void {
     const previous = this.target;
     this.target = target;
+    if (!previous && this.placed) {
+      this.path = path;
+      return;
+    }
     if (!previous) {
       this.x = target.x;
       this.y = target.y;
@@ -321,13 +344,29 @@ export class CharacterView {
     if (lit) desk.glow.alpha = 0.6 + 0.4 * Math.sin(t * 5);
   }
 
+  private exitAlpha(): number {
+    if (this.moving) {
+      this.exitAt = null;
+      return 1;
+    }
+    if (this.exitAt === null) this.exitAt = this.seconds;
+    const alpha = Math.max(0, 1 - (this.seconds - this.exitAt) / EXIT_FADE_S);
+    if (alpha <= 0) this.left = true;
+    return alpha;
+  }
+
   private applyTransform(input: FrameInput): void {
     let alpha = 1;
-    if (this.fadeStart !== null) {
-      alpha = Math.max(0, 1 - (this.seconds - this.fadeStart - FADE_HOLD_S) / FADE_S);
-      alpha = Math.min(1, alpha);
+    if (this.leaving) {
+      alpha = this.exitAlpha();
+    } else {
+      this.exitAt = null;
+      if (this.fadeStart !== null) {
+        alpha = Math.max(0, 1 - (this.seconds - this.fadeStart - FADE_HOLD_S) / FADE_S);
+        alpha = Math.min(1, alpha);
+      }
+      if (input.ended) alpha = Math.min(alpha, 0.45);
     }
-    if (input.ended) alpha = Math.min(alpha, 0.45);
 
     const visible = alpha > 0.01;
     this.root.visible = visible;
