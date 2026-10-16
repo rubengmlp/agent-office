@@ -1,9 +1,9 @@
+import { orderRows, type Row } from '../agents-order';
 import { stateBadge } from '../badge';
 import { button, el } from '../dom';
 import {
   agentName,
   ALERT_LEVEL_LABELS,
-  compareAgents,
   DOCUMENT_STATUS_LABELS,
   documentKindFor,
   FLOOR_KIND_LABELS,
@@ -23,34 +23,6 @@ const ALERT_HINTS: Record<GuardAlert['level'], string> = {
   alerta: 'Cambio en la planta sin que trabajara ningún agente de ella',
   posible: 'Puede venir de un comando Bash de un agente de la planta',
 };
-
-type Row = { agent: AgentView; depth: number };
-
-function orderRows(agents: readonly AgentView[]): Row[] {
-  const keys = new Set(agents.map((agent) => agent.key));
-  const children = new Map<string, AgentView[]>();
-  const roots: AgentView[] = [];
-  for (const agent of agents) {
-    if (agent.parentKey !== null && agent.parentKey !== agent.key && keys.has(agent.parentKey)) {
-      const siblings = children.get(agent.parentKey) ?? [];
-      siblings.push(agent);
-      children.set(agent.parentKey, siblings);
-    } else {
-      roots.push(agent);
-    }
-  }
-  const rows: Row[] = [];
-  const visited = new Set<string>();
-  const visit = (agent: AgentView, depth: number): void => {
-    if (visited.has(agent.key)) return;
-    visited.add(agent.key);
-    rows.push({ agent, depth });
-    for (const child of (children.get(agent.key) ?? []).sort(compareAgents)) visit(child, depth + 1);
-  };
-  for (const root of roots.sort(compareAgents)) visit(root, 0);
-  for (const agent of agents) visit(agent, 0);
-  return rows;
-}
 
 function testCell(agent: AgentView, now: number): HTMLTableCellElement {
   const cell = el('td', 'col-test');

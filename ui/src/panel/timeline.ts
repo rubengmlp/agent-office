@@ -46,20 +46,26 @@ function section(title: string, items: readonly HTMLElement[], empty: string): H
 
 export function mountTimeline(host: HTMLElement, store: Store): void {
   let signature = '';
+  const body = el('div', 'panel-card-body');
+  const summary = el('summary', 'panel-summary', el('span', 'section-title', 'Línea de tiempo'));
+  host.replaceChildren(el('details', 'panel-card', summary, body));
+  host.hidden = true;
 
   store.watch(['selection', 'activity', 'messages', 'agents'], () => {
     const key = store.selectedKey;
     if (key === null) {
       signature = '';
-      host.replaceChildren();
+      host.hidden = true;
+      body.replaceChildren();
       return;
     }
+    host.hidden = false;
     const activity = newestFirst(store.activity, (entry) => entry.agentKey === key, ACTIVITY_LIMIT);
     const messages = newestFirst(store.messages, (m) => m.fromKey === key || m.toKey === key, MESSAGE_LIMIT);
     const next = [key, activity.length, activity[0]?.ts ?? 0, messages.length, messages[0]?.id ?? 0].join(':');
     if (next === signature) return;
     signature = next;
-    host.replaceChildren(
+    body.replaceChildren(
       section('Mensajes', messages.map((message) => messageItem(store, key, message)), 'Sin mensajes.'),
       section('Actividad', activity.map(activityItem), 'Sin actividad.'),
     );

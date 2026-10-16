@@ -8,7 +8,7 @@ export function mountHeader(host: HTMLElement, store: Store): void {
   store.watch(['selection', 'agents', 'floors', 'tick'], () => {
     const key = store.selectedKey;
     if (key === null) {
-      host.replaceChildren(el('p', 'hint muted', 'Selecciona un agente en la oficina o en la tabla.'));
+      host.replaceChildren(el('p', 'hint muted', 'Selecciona un agente en la lista, en la oficina o en la tabla.'));
       return;
     }
     const agent = store.agents.get(key);
@@ -28,7 +28,6 @@ export function mountHeader(host: HTMLElement, store: Store): void {
         el('span', 'chip', floor?.label ?? agent.floor),
         el('span', 'muted', since),
       ),
-      ...(agent.detail ? [el('p', 'panel-detail', agent.detail)] : []),
     );
   });
 }
