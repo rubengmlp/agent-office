@@ -384,6 +384,38 @@ export const es = {
   'scene.gestures': 'Desliza con dos dedos para subir, bajar o ir a los lados. Pellizca para acercar. Arrastra para girar.',
   'scene.following': 'Siguiendo a ',
   'scene.stopFollow': 'Dejar de seguir (Esc)',
+
+  'notify.permission.title': 'Permiso pendiente · {agent}',
+  'notify.question.title': 'Pregunta de {agent}',
+  'notify.blocked.title': 'Bloqueado: {agent}',
+  'notify.done.title': 'Entrega de {agent}',
+  'notify.alert.title': 'Alerta en {floor}',
+  'notify.alert.files.one': '{n} fichero sin atribuir',
+  'notify.alert.files.other': '{n} ficheros sin atribuir',
+  'notify.document.approvedPlan': 'Plan aprobado: {title}',
+  'notify.document.approvedSkill': 'Skill aprobada: {title}',
+  'notify.document.noAgreement': 'Sin acuerdo en {title}',
+  'notify.openPanel': 'Abre el panel para ver el detalle.',
+  'notify.test': 'Agent Office avisa aquí',
+
+  'settings.notifications.title': 'Avisos de escritorio',
+  'settings.notifications.hint':
+    'Avisos de macOS cuando la oficina tiene algo pendiente para ti, aunque el panel esté oculto o en otro escritorio. Un clic en el aviso te lleva al agente o al documento. Se guarda en este navegador.',
+  'settings.notifications.enable': 'Avisar en el escritorio',
+  'settings.notifications.unsupported': 'Este navegador no tiene avisos de escritorio.',
+  'settings.notifications.denied':
+    'El navegador tiene bloqueados los avisos de esta página: permítelos en los ajustes del sitio y vuelve a activarlos.',
+  'settings.notifications.granted': 'El navegador permite los avisos de esta página.',
+  'settings.notifications.ask': 'Al activarlos, el navegador te pedirá permiso.',
+  'settings.notifications.holdHint':
+    'Con el panel oculto, el hub retiene permisos y preguntas en el panel solo si estos dos avisos están activos; si apagas uno, vuelven a la terminal.',
+  'settings.notifications.test': 'Probar',
+  'settings.notifications.event.permission': 'Permisos pendientes',
+  'settings.notifications.event.question': 'Preguntas pendientes',
+  'settings.notifications.event.blocked': 'Bloqueos (BLOQUEADO:)',
+  'settings.notifications.event.done': 'Entregas de los jefes (HECHO:)',
+  'settings.notifications.event.document': 'Planes y skills aprobados o sin acuerdo',
+  'settings.notifications.event.alert': 'Alertas de la guardia',
 } as const;
 
 export type Messages = { [K in keyof typeof es]: string };

@@ -385,4 +385,36 @@ export const en: Messages = {
   'scene.gestures': 'Swipe with two fingers to move up, down or sideways. Pinch to zoom. Drag to rotate.',
   'scene.following': 'Following ',
   'scene.stopFollow': 'Stop following (Esc)',
+
+  'notify.permission.title': 'Pending permission · {agent}',
+  'notify.question.title': 'Question from {agent}',
+  'notify.blocked.title': 'Blocked: {agent}',
+  'notify.done.title': 'Delivery from {agent}',
+  'notify.alert.title': 'Alert on {floor}',
+  'notify.alert.files.one': '{n} unattributed file',
+  'notify.alert.files.other': '{n} unattributed files',
+  'notify.document.approvedPlan': 'Plan approved: {title}',
+  'notify.document.approvedSkill': 'Skill approved: {title}',
+  'notify.document.noAgreement': 'No agreement on {title}',
+  'notify.openPanel': 'Open the panel to see the details.',
+  'notify.test': 'Agent Office notifies here',
+
+  'settings.notifications.title': 'Desktop notifications',
+  'settings.notifications.hint':
+    'macOS notifications when the office has something pending for you, even with the panel hidden or on another desktop. Clicking one takes you to the agent or the document. Saved in this browser.',
+  'settings.notifications.enable': 'Notify on the desktop',
+  'settings.notifications.unsupported': 'This browser has no desktop notifications.',
+  'settings.notifications.denied':
+    'The browser blocks notifications for this page: allow them in the site settings and turn them on again.',
+  'settings.notifications.granted': 'The browser allows notifications for this page.',
+  'settings.notifications.ask': 'When you turn them on, the browser will ask for permission.',
+  'settings.notifications.holdHint':
+    'With the panel hidden, the hub holds permissions and questions in the panel only if these two notifications are on; if you turn one off, they go back to the terminal.',
+  'settings.notifications.test': 'Test',
+  'settings.notifications.event.permission': 'Pending permissions',
+  'settings.notifications.event.question': 'Pending questions',
+  'settings.notifications.event.blocked': 'Blockers (BLOQUEADO:)',
+  'settings.notifications.event.done': 'Deliveries from leads (HECHO:)',
+  'settings.notifications.event.document': 'Plans and skills approved or without agreement',
+  'settings.notifications.event.alert': 'Guard alerts',
 };
