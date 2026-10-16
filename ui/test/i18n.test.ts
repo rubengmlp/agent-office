@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { en } from '../src/i18n/en';
 import { es, type MessageKey } from '../src/i18n/es';
+import { errorText, renderHubText } from '../src/i18n/hub';
 import { createTranslator, interpolate } from '../src/i18n/index';
 
 // Keys whose text is legitimately the same in both languages: proper names, words shared by both, symbols.
@@ -20,6 +21,12 @@ const SAME_KEYS: MessageKey[] = [
   'stack.node',
   'verdict.tests',
   'table.docs.skills',
+  'hub.detail.tests',
+  'hub.act.tests',
+  'hub.act.ok',
+  'hub.report.counts',
+  'hub.role.director',
+  'hub.role.tester',
 ];
 
 const SOURCE_DIR = join(import.meta.dir, '../src');
@@ -72,6 +79,35 @@ describe('translator', () => {
 
   test('t falls back to the key when it is missing', () => {
     expect(createTranslator(es).t('stack.unknown' as MessageKey)).toBe('stack.unknown');
+  });
+});
+
+describe('hub texts', () => {
+  const spanish = createTranslator(es).t;
+  const english = createTranslator(en).t;
+
+  test('raw text stays as is, keys are translated with their nested parameters', () => {
+    expect(renderHubText(spanish, 'flutter test')).toBe('flutter test');
+    expect(renderHubText(spanish, null)).toBe('');
+    const start = { key: 'hub.act.sessionStart', params: { source: 'startup' } } as const;
+    expect(renderHubText(spanish, start)).toBe('sesión iniciada (startup)');
+    expect(renderHubText(english, start)).toBe('session started (startup)');
+    const lesson = { key: 'hub.act.lessonSaved', params: { role: { key: 'hub.role.redactor' }, floor: { key: 'hub.floor.redaccion' } } } as const;
+    expect(renderHubText(spanish, lesson)).toBe('lección guardada para redactor en Redacción');
+    expect(renderHubText(english, lesson)).toBe('lesson saved for writer in Drafting');
+  });
+
+  test('parameters are interpolated in a single pass', () => {
+    expect(renderHubText(spanish, { key: 'hub.act.message', params: { to: '{text}', text: 'hola' } })).toBe('escribe a {text}: hola');
+  });
+
+  test('API errors may be raw text, a hub text or a list of them', () => {
+    expect(errorText(spanish, 'x')).toBe('x');
+    expect(errorText(english, { key: 'hub.api.noReport' })).toBe('There is no report for that agent');
+    expect(errorText(spanish, [{ key: 'hub.settings.saved' }, { key: 'hub.settings.noChanges' }])).toBe(
+      `${es['hub.settings.saved']} ${es['hub.settings.noChanges']}`,
+    );
+    expect(errorText(spanish, 42)).toBeNull();
   });
 });
 
