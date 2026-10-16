@@ -217,6 +217,21 @@ describe('prune', () => {
   });
 });
 
+describe('prune reports', () => {
+  test('prune drops role-less reports past retention, keeps role reports', () => {
+    const db = openDb(':memory:');
+    const now = 1_800_000_000_000;
+    const old = now - 15 * 86_400_000;
+    const recent = now - 86_400_000;
+    const report = db.query("INSERT INTO reports (agent_key, floor, role_id, name, started_at, summary, data, updated_at) VALUES (?, 'mobile', ?, null, ?, '', '{}', ?)");
+    report.run('personal-old', null, old, old);
+    report.run('personal-recent', null, recent, recent);
+    report.run('lead-old', 'lead', old, old);
+    prune(db, now, 14);
+    expect(db.query<{ key: string }, []>('SELECT agent_key AS key FROM reports ORDER BY agent_key').all().map((r) => r.key)).toEqual(['lead-old', 'personal-recent']);
+  });
+});
+
 describe('security', () => {
   test('only the hub host and port are allowed', () => {
     expect(hostAllowed('127.0.0.1:4747', 4747)).toBe(true);

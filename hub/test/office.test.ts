@@ -7,7 +7,7 @@ import { realPath } from '../src/floors';
 import { runGit, type GitRunner } from '../src/git';
 import { Office } from '../src/office';
 import { loadProfiles } from '../src/profiles';
-import type { AgentView, HookMeta, Stack } from '../src/types';
+import type { AgentView, HookMeta, ServerMessage, Stack } from '../src/types';
 import { ev, floor, git, harness, loadFixture, useGitIdentity, type Harness } from './helpers';
 
 const LEAD = '22222222-bbbb-4ccc-8ddd-000000000002';
@@ -95,13 +95,59 @@ describe('privacy by floor kind', () => {
     expect(JSON.stringify(h.messages)).not.toContain('secreto');
   });
 
-  test('a managed floor keeps the full event', () => {
+  test('a managed floor keeps the full event of an office session', () => {
     h = harness();
     const repo = managedRepo();
-    h.office.ingest(ev('man-1', repo, 'PreToolUse', { tool_name: 'Bash', tool_use_id: 't1', tool_input: { command: 'flutter analyze' } }));
+    h.office.ingest(ev('man-1', repo, 'PreToolUse', { tool_name: 'Bash', tool_use_id: 't1', tool_input: { command: 'flutter analyze' } }), leadMeta);
     const row = h.db.query<{ payload: string | null }, []>('SELECT payload FROM events').get();
     expect(row?.payload).toContain('flutter analyze');
     expect(agent('man-1')?.state).toBe('checking');
+  });
+
+  test('a personal session in a managed floor is observed: no payload, no task, no report', () => {
+    h = harness();
+    const repo = managedRepo();
+    h.office.ingest(ev('me-1', repo, 'SessionStart', { source: 'startup' }));
+    h.office.ingest(ev('me-1', repo, 'UserPromptSubmit', { prompt: 'Arregla el pago con la clave secreta' }));
+    h.office.ingest(ev('me-1', repo, 'PreToolUse', { tool_name: 'Bash', tool_use_id: 't1', tool_input: { command: 'cat secreto.txt' } }));
+    expect(agent('me-1')?.task).toBeNull();
+    expect(agent('me-1')?.detail).toBe('Bash');
+    h.office.ingest(ev('me-1', repo, 'Stop', { last_assistant_message: 'Pago arreglado con la clave secreta' }));
+    h.office.ingest(ev('me-1', repo, 'SessionEnd', { reason: 'other' }));
+    const payloads = h.db.query<{ payload: string | null }, []>('SELECT payload FROM events').all();
+    expect(payloads).toHaveLength(5);
+    expect(payloads.every((row) => row.payload === null)).toBe(true);
+    expect(h.office.report('me-1')).toBeNull();
+    expect(h.db.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM reports').get()?.n).toBe(0);
+    expect(JSON.stringify(h.messages)).not.toContain('secret');
+    expect(h.office.snapshot().sessions.find((s) => s.sessionId === 'me-1')?.office).toBe(false);
+  });
+
+  test('a lead identified only by agent_type is an office session from its first event and after a restart', () => {
+    h = harness();
+    const repo = managedRepo();
+    const socket = join(h.root, 'lead.sock');
+    writeFileSync(socket, '');
+    h.office.ingest(ev(LEAD, repo, 'SessionStart', { source: 'startup', agent_type: 'office-lead-mobile' }), { socket, token: null, role: null, name: null });
+    const emitted = h.messages
+      .filter((m): m is Extract<ServerMessage, { type: 'session' }> => m.type === 'session' && m.data.sessionId === LEAD)
+      .at(-1);
+    expect(emitted?.data.office).toBe(true);
+    h.office.ingest(
+      ev(LEAD, repo, 'PreToolUse', { agent_id: 'dev-1', agent_type: 'office-dev-mobile', tool_name: 'Bash', tool_use_id: 't1', tool_input: { command: 'flutter analyze' } }),
+    );
+    expect(h.db.query<{ payload: string | null }, []>('SELECT payload FROM events ORDER BY id DESC LIMIT 1').get()?.payload).toContain('flutter analyze');
+    const restarted = new Office({
+      hubId: 'hub-test',
+      db: h.db,
+      config: h.config,
+      profiles: loadProfiles(PROFILES_DIR),
+      workspaceDir: h.workspace,
+      claudeHome: join(h.root, 'claude-home'),
+      gitRoot: (cwd) => cwd,
+      now: () => h.clock.now,
+    });
+    expect(restarted.snapshot().sessions.find((s) => s.sessionId === LEAD)).toMatchObject({ role: 'office-lead-mobile', office: true });
   });
 });
 
@@ -382,6 +428,28 @@ describe('orders from the panel', () => {
     expect(lines[1].message.role).toBe('user');
     expect(lines[1].message.content).toStartWith('[Agent Office]');
     expect(lines[1].message.content).toContain('Prioriza el login');
+  });
+
+  test('a session outside the office is refused before delivery, also for a status request and a relaunch', async () => {
+    const sent: string[] = [];
+    h = harness({
+      deliverFn: async (socket) => {
+        sent.push(socket);
+      },
+    });
+    const repo = managedRepo();
+    const socket = join(h.root, 'me.sock');
+    writeFileSync(socket, '');
+    h.office.ingest(ev('me-3', repo, 'SessionStart', {}), { socket, token: 'tok-3', role: null, name: null });
+    expect(h.office.snapshot().sessions.find((s) => s.sessionId === 'me-3')).toMatchObject({ canReceive: true, office: false });
+    expect(await h.office.order('me-3', 'hola')).toBe('not-office');
+    expect(await h.office.requestStatus('me-3')).toBe('not-office');
+    expect(await h.office.relaunch('me-3')).toBe('not-office');
+    expect(sent).toEqual([]);
+    h.office.ingest(ev(LEAD, repo, 'SessionStart', {}), { ...leadMeta, socket, token: 'tok-1' });
+    expect(h.office.snapshot().sessions.find((s) => s.sessionId === LEAD)?.office).toBe(true);
+    expect(await h.office.requestStatus(LEAD)).toBe('ok');
+    expect(sent).toEqual([socket]);
   });
 
   test('unknown, unreachable and failing sessions', async () => {
