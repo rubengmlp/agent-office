@@ -4,8 +4,9 @@ import { currentLang, plural, t, type MessageKey } from '../i18n';
 import { hubText } from '../i18n/hub';
 import { DOCUMENT_STATUS_COLORS, documentKindFor, documentStatusText } from '../labels';
 import type { Store } from '../store';
-import type { DocumentAhead, DocumentBase, DocumentStatus, DocumentView, HubText } from '../types';
+import type { DocumentAhead, DocumentBase, DocumentKind, DocumentStatus, DocumentView, HubText } from '../types';
 import { renderMarkdown } from './markdown';
+import { panelSection } from './section';
 
 const SHORT_SHA = 7;
 const NOT_DISCARDABLE: ReadonlySet<DocumentStatus> = new Set<DocumentStatus>(['ejecutando', 'cerrado', 'descartado']);
@@ -319,12 +320,20 @@ export function mountDeliverables(host: HTMLElement, store: Store, api: OfficeAp
   viewerApi = api;
   host.replaceChildren();
   host.hidden = true;
+  let kind: DocumentKind | null = null;
+  const section = panelSection({
+    id: 'deliverables',
+    title: () => t(kind === 'skill' ? 'deliverables.title.skill' : 'deliverables.title.plan'),
+    defaultOpen: false,
+    host,
+  });
+  const count = el('span', 'chip');
   trackAhead(host);
   watchApprovals(store);
 
   let signature = '';
 
-  host.addEventListener('click', (event) => {
+  section.body.addEventListener('click', (event) => {
     const target = event.target;
     if (!(target instanceof Element) || target.closest('.doc-discard, .doc-download, summary, .doc-files')) return;
     const path = target.closest<HTMLElement>('.doc')?.dataset.path;
@@ -336,39 +345,28 @@ export function mountDeliverables(host: HTMLElement, store: Store, api: OfficeAp
     const key = store.selectedKey;
     const agent = key === null ? undefined : store.agents.get(key);
     const floor = agent ? store.floorBySlug(agent.floor) : undefined;
-    const kind = floor ? documentKindFor(floor.kind) : null;
+    kind = floor ? documentKindFor(floor.kind) : null;
     if (kind === null) {
       signature = '';
       host.hidden = true;
-      host.replaceChildren();
+      section.body.replaceChildren();
       return;
     }
 
     host.hidden = false;
-    const documents = store.documents.filter((doc) => doc.kind === kind).sort((a, b) => b.updatedAt - a.updatedAt);
+    const shown = kind;
+    const documents = store.documents.filter((doc) => doc.kind === shown).sort((a, b) => b.updatedAt - a.updatedAt);
     const next = JSON.stringify([store.lang, kind, documents]);
     if (next === signature) return;
     signature = next;
 
-    const empty = t(kind === 'plan' ? 'table.docs.noPlans' : 'table.docs.noSkills');
-    host.replaceChildren(
-      el(
-        'section',
-        'panel-card deliverables',
-        el(
-          'div',
-          'panel-summary',
-          el('span', 'section-title', t(kind === 'plan' ? 'deliverables.title.plan' : 'deliverables.title.skill')),
-          el('span', 'chip', String(documents.length)),
-        ),
-        el(
-          'div',
-          'panel-card-body',
-          documents.length > 0
-            ? el('div', 'doc-list', ...documents.map((doc) => card(store, doc)))
-            : el('p', 'muted hint', empty),
-        ),
-      ),
+    section.setTitle();
+    count.textContent = String(documents.length);
+    section.setMeta(count);
+    section.body.replaceChildren(
+      documents.length > 0
+        ? el('div', 'doc-list', ...documents.map((doc) => card(store, doc)))
+        : el('p', 'muted hint', t(kind === 'plan' ? 'table.docs.noPlans' : 'table.docs.noSkills')),
     );
   });
 }

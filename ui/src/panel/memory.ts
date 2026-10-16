@@ -6,6 +6,7 @@ import { agentName, floorLabel, roleLabel } from '../labels';
 import { memoryKey, type Store } from '../store';
 import { relativeTime } from '../time';
 import type { FloorKind, FloorView, LessonView, MemoryView, ReportView, RoleId, RoleKind } from '../types';
+import { panelSection } from './section';
 
 const MEMORY_KINDS: ReadonlySet<FloorKind> = new Set<FloorKind>(['managed', 'direccion', 'redaccion', 'mantenimiento']);
 const REPORT_LIMIT = 50;
@@ -38,7 +39,6 @@ export function mountMemory(host: HTMLElement, store: Store, api: OfficeApi | nu
 
   const client = api;
   const count = el('span', 'chip');
-  count.hidden = true;
   const scope = el('p', 'memory-scope muted');
   const lessonsHost = el('div', 'memory-lessons');
   const text = el('textarea', 'memory-text');
@@ -48,10 +48,8 @@ export function mountMemory(host: HTMLElement, store: Store, api: OfficeApi | nu
   const status = el('p', 'memory-status');
   const reportsHost = el('div', 'memory-reports');
   const form = el('div', 'memory-add', text, el('div', 'memory-add-actions', add, status));
-  const body = el('div', 'panel-card-body', scope, lessonsHost, form, reportsHost);
-  const title = el('span', 'section-title');
-  const summary = el('summary', 'panel-summary', title, count);
-  host.append(el('details', 'panel-card', summary, body));
+  const section = panelSection({ id: 'memory', title: () => t('memory.title'), defaultOpen: false, host });
+  section.body.append(scope, lessonsHost, form, reportsHost);
 
   let target: Target | null = null;
   let scopeText: { role: RoleKind; floor: FloorView } | null = null;
@@ -87,7 +85,7 @@ export function mountMemory(host: HTMLElement, store: Store, api: OfficeApi | nu
   const renderLists = (): void => {
     const current = data;
     if (current === null) {
-      count.hidden = true;
+      section.setMeta(null);
       lessonsHost.replaceChildren(
         failure === null ? el('p', 'muted hint', t('memory.loading')) : el('p', 'memory-error hint', failure),
       );
@@ -97,8 +95,8 @@ export function mountMemory(host: HTMLElement, store: Store, api: OfficeApi | nu
 
     const now = store.now();
     const lessons = [...current.lessons].sort((a, b) => b.createdAt - a.createdAt || b.id - a.id);
-    count.hidden = false;
     count.textContent = String(lessons.length);
+    section.setMeta(count);
     const stale = failure === null ? [] : [el('p', 'memory-error hint', t('panel.updateFailed', { error: failure }))];
     lessonsHost.replaceChildren(
       lessons.length > 0
@@ -215,7 +213,7 @@ export function mountMemory(host: HTMLElement, store: Store, api: OfficeApi | nu
   };
 
   const relabel = (): void => {
-    title.textContent = t('memory.title');
+    section.setTitle();
     text.placeholder = t('memory.placeholder', { max: LESSON_MAX_CHARS });
     text.setAttribute('aria-label', t('memory.newLesson'));
     relabelScope();

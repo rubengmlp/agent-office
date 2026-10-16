@@ -1,10 +1,11 @@
 import { el, setStateColor } from '../dom';
-import { t } from '../i18n';
+import { plural, t } from '../i18n';
 import { hubText } from '../i18n/hub';
 import { agentName, STATE_COLORS } from '../labels';
 import type { Store } from '../store';
 import { clockTime } from '../time';
 import type { ActivityView, MessageView } from '../types';
+import { panelSection } from './section';
 
 const ACTIVITY_LIMIT = 50;
 const MESSAGE_LIMIT = 30;
@@ -48,10 +49,8 @@ function section(title: string, items: readonly HTMLElement[], empty: string): H
 
 export function mountTimeline(host: HTMLElement, store: Store): void {
   let signature = '';
-  const body = el('div', 'panel-card-body');
-  const title = el('span', 'section-title');
-  const summary = el('summary', 'panel-summary', title);
-  host.replaceChildren(el('details', 'panel-card', summary, body));
+  const card = panelSection({ id: 'timeline', title: () => t('timeline.title'), defaultOpen: false, host });
+  const { body } = card;
   host.hidden = true;
 
   store.watch(['selection', 'activity', 'messages', 'agents', 'lang'], () => {
@@ -64,11 +63,14 @@ export function mountTimeline(host: HTMLElement, store: Store): void {
     }
     host.hidden = false;
     const activity = newestFirst(store.activity, (entry) => entry.agentKey === key, ACTIVITY_LIMIT);
-    const messages = newestFirst(store.messages, (m) => m.fromKey === key || m.toKey === key, MESSAGE_LIMIT);
-    const next = [store.lang, key, activity.length, activity[0]?.ts ?? 0, messages.length, messages[0]?.id ?? 0].join(':');
+    const mine = (message: MessageView): boolean => message.fromKey === key || message.toKey === key;
+    const messages = newestFirst(store.messages, mine, MESSAGE_LIMIT);
+    const total = store.messages.filter(mine).length;
+    const next = [store.lang, key, activity.length, activity[0]?.ts ?? 0, total, messages[0]?.id ?? 0].join(':');
     if (next === signature) return;
     signature = next;
-    title.textContent = t('timeline.title');
+    card.setTitle();
+    card.setMeta(plural('panel.sectionMeta.messages', total));
     body.replaceChildren(
       section(t('timeline.messages'), messages.map((message) => messageItem(store, key, message)), t('timeline.noMessages')),
       section(t('timeline.activity'), activity.map(activityItem), t('timeline.noActivity')),
