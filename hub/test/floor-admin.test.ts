@@ -1,6 +1,6 @@
 import type { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PROFILES_DIR, REPO_ROOT, loadConfig, saveConfig, type Paths } from '../src/config';
 import { createFloorAdmin, type FloorAdmin } from '../src/floor-admin';
@@ -72,11 +72,14 @@ describe('floor admin', () => {
   let p: Paths;
   let admin: FloorAdmin;
   let broken: boolean;
+  let duringGit: (() => void) | null;
 
   beforeEach(() => {
     broken = false;
+    duringGit = null;
     const stubGit: GitRunner = async () => {
       if (broken) throw new Error('git colgado');
+      duringGit?.();
       return { code: 0, stdout: '', stderr: '' };
     };
     h = harness({ git: stubGit });
@@ -141,7 +144,8 @@ describe('floor admin', () => {
     seedFloorRows(h.db, 'mobile', TEAM_SESSION);
     seedFloorRows(h.db, 'otra', OTHER_SESSION);
     h.db.query("UPDATE sessions SET team = 'equipo-x' WHERE session_id = ?").run(TEAM_SESSION);
-    for (const scope of ['session-aaaaaaaa', 'equipo-x', 'session-cccccccc']) {
+    h.db.query("UPDATE agents SET team = 'equipo-agente' WHERE agent_key = ?").run(`${TEAM_SESSION}-agent`);
+    for (const scope of ['session-aaaaaaaa', 'equipo-x', 'equipo-agente', 'session-cccccccc']) {
       h.db.query('INSERT INTO tasks (scope, task_id, updated_at) VALUES (?, ?, ?)').run(scope, '1', 1);
       h.db.query('INSERT INTO gate_decisions (ts, scope, decision) VALUES (?, ?, ?)').run(1, scope, 'pass');
     }
@@ -180,6 +184,7 @@ describe('floor admin', () => {
     for (const table of ['tasks', 'gate_decisions']) {
       expect(scoped(h.db, table, 'session-aaaaaaaa')).toBe(0);
       expect(scoped(h.db, table, 'equipo-x')).toBe(0);
+      expect(scoped(h.db, table, 'equipo-agente')).toBe(0);
       expect(scoped(h.db, table, 'session-cccccccc')).toBe(1);
     }
     expect(h.db.query("SELECT slug FROM floors ORDER BY slug").all()).toEqual([{ slug: 'otra' }]);
@@ -216,6 +221,52 @@ describe('floor admin', () => {
     removed(await admin.remove('mobile'));
     expect(loadConfig(p).floors.mobile).toBeUndefined();
     for (const table of FLOOR_TABLES) expect(count(h.db, table, 'mobile')).toBe(0);
+  });
+
+  test('a delete whose launchers cannot be written keeps the floor and the retry writes them', async () => {
+    floorWithData();
+    rmSync(p.sessionsDir, { recursive: true, force: true });
+    writeFileSync(p.sessionsDir, 'no es una carpeta');
+    expect(await admin.remove('mobile')).toMatchObject({ ok: false, status: 500 });
+    expect(loadConfig(p).floors.mobile).toBeDefined();
+    expect(loadConfig(p).permissionModes.mobile).toBe('plan');
+
+    rmSync(p.sessionsDir);
+    removed(await admin.remove('mobile'));
+    expect(loadConfig(p).floors.mobile).toBeUndefined();
+    expect(readFileSync(p.officeSh, 'utf8')).not.toContain('mobile');
+    expect(readFileSync(p.directorFloors, 'utf8')).not.toContain('mobile');
+    expect(existsSync(join(p.sessionsDir, 'lead-mobile.sh'))).toBe(false);
+  });
+
+  test('a second delete of the same floor while the first runs is refused', async () => {
+    floorWithData();
+    const first = admin.remove('mobile');
+    expect(await admin.remove('mobile')).toMatchObject({ ok: false, status: 409, error: expect.stringContaining('ya se está borrando') });
+    removed(await first);
+  });
+
+  test('a session opened on the floor while its snapshots are removed stops the delete', async () => {
+    const { repo } = floorWithData();
+    duringGit = () => {
+      duringGit = null;
+      h.office.ingest(ev('dddddddd-0000-0000-0000-000000000004', repo, 'SessionStart'), { socket: null, token: null, role: 'office-lead-mobile', name: 'lead-mobile' });
+    };
+    expect(await admin.remove('mobile')).toMatchObject({ ok: false, status: 409, error: expect.stringContaining('lead-mobile') });
+    expect(loadConfig(p).floors.mobile).toBeDefined();
+    expect(count(h.db, 'lessons', 'mobile')).toBeGreaterThan(0);
+  });
+
+  test('reserved floors cannot be deleted', async () => {
+    const config = loadConfig(p);
+    config.floors.redaccion = { path: join(h.root, 'docs'), stack: 'generic', managed: false, baseBranch: 'develop' };
+    config.permissionModes.redaccion = 'plan';
+    saveConfig(p, config);
+    expect(await admin.remove('redaccion')).toMatchObject({ ok: false, status: 400, error: expect.stringContaining('reservado') });
+    expect(await admin.remove('direccion')).toMatchObject({ ok: false, status: 400 });
+    const after = loadConfig(p);
+    expect(after.floors.redaccion).toBeDefined();
+    expect(after.permissionModes.redaccion).toBe('plan');
   });
 
   test('deleting needs the floor sessions closed, an existing floor and a valid name', async () => {

@@ -140,6 +140,7 @@ describe('floor CLI', () => {
     expect(readFileSync(p.officeSh, 'utf8')).not.toContain('mobile');
     expect(readFileSync(p.directorFloors, 'utf8')).not.toContain('mobile');
     expect(() => purgeFloor(p, profiles, 'mobile')).toThrow(FloorError);
+    expect(() => purgeFloor(p, profiles, 'redaccion')).toThrow(FloorError);
   });
 
   test('a repository that is already a floor is a conflict', () => {
