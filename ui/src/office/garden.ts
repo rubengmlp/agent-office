@@ -64,7 +64,8 @@ function minmax(value: number, low: number, high: number): number {
 }
 
 class CarSprite {
-  readonly body = new Graphics();
+  readonly body = new Container();
+  private readonly paint = new Graphics();
   private readonly beam = new Graphics();
   private seed = -1;
 
@@ -72,7 +73,7 @@ class CarSprite {
     this.body.eventMode = 'none';
     px(this.beam, CAR_W / 2, -7, 8, 2, 0xfff1a8, 0.45);
     px(this.beam, CAR_W / 2 - 2, -7, 2, 2, 0xfff1a8);
-    this.body.addChild(this.beam);
+    this.body.addChild(this.paint, this.beam);
     actors.addChild(this.body);
   }
 
@@ -117,7 +118,7 @@ class CarSprite {
   }
 
   private draw(paint: number): void {
-    const g = this.body;
+    const g = this.paint;
     g.clear();
     const half = CAR_W / 2;
     px(g, -half + 1, 0, CAR_W - 2, 1, 0x000000, 0.25);
