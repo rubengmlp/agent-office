@@ -55,6 +55,7 @@ import { detectStack, profileFor, type Profiles } from './profiles';
 import { parseProtocol } from './protocol';
 import { ProtocolDesk } from './protocol-desk';
 import { QuestionDesk } from './questions';
+import type { ReplayDeps } from './replay-build';
 import { RulesDesk } from './rules-desk';
 import { isDepartmentFloor, remembers, roleKind } from './scope';
 import { SearchDesk, type SearchQuery } from './search';
@@ -988,6 +989,14 @@ export class Office {
     if (agent) return { floor: agent.floor, sessionId: agent.sessionId };
     const session = this.book.sessions.get(key);
     return session ? { floor: session.floor, sessionId: session.sessionId } : { floor: null, sessionId: null };
+  }
+
+  // What buildRecording needs of the live office to rebuild a session next to it.
+  replaySource(): { db: Database; deps: ReplayDeps } {
+    return {
+      db: this.opts.db,
+      deps: { config: this.config, profiles: this.profiles, workspaceDir: this.opts.workspaceDir, hubId: this.opts.hubId, registry: this.opts.registry },
+    };
   }
 
   search(query: SearchQuery): SearchResult {

@@ -11,6 +11,7 @@ import type { Log } from './log';
 import { isHookEvent, type Office, type RelaunchResult } from './office';
 import { claimLaunchToken, mintPanelToken, verifyPanelToken } from './panel-auth';
 import { hostAllowed, keyMatches, originAllowed } from './security';
+import { buildRecording, MAX_REPLAY_EVENTS } from './replay-build';
 import { parseSearchParams } from './search';
 import type { SettingsService } from './settings';
 import { record, text } from './state-machine';
@@ -395,6 +396,14 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
   app.get('/api/search', requirePanel, (c) => {
     const query = parseSearchParams((name) => c.req.query(name));
     return query ? c.json(office.search(query)) : c.json({ error: { key: 'hub.api.searchBad' } }, 400);
+  });
+
+  app.get('/api/replay/:sessionId', requirePanel, async (c) => {
+    const { db, deps } = office.replaySource();
+    const built = await buildRecording(db, c.req.param('sessionId') ?? '', deps, { compress: c.req.query('compress') === '1' });
+    if (built.ok) return c.json(built.recording);
+    if (built.reason === 'too-large') return c.json({ error: { key: 'hub.api.recordingTooLarge', params: { max: MAX_REPLAY_EVENTS } } }, 413);
+    return c.json({ error: { key: 'hub.api.noRecording' } }, 404);
   });
 
   app.get('/api/documents', requirePanel, (c) => c.json(office.documents()));
