@@ -19,6 +19,7 @@ import type {
   PlanDecision,
   ReportView,
   RoleId,
+  SearchResult,
   SettingsResult,
   SettingsUpdate,
   SettingsView,
@@ -202,6 +203,11 @@ export class OfficeApi {
 
   pruneWorktrees(): Promise<ApiData<{ removed: number }>> {
     return this.send('POST', '/api/worktrees/prune', {});
+  }
+
+  // path comes from searchPath() in table/history.ts.
+  search(path: string): Promise<ApiData<SearchResult>> {
+    return this.get(path);
   }
 
   chatHistory(channel: string, before: number | null): Promise<ApiData<ChatMessageView[]>> {

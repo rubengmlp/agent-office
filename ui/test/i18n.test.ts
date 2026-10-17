@@ -28,6 +28,7 @@ const SAME_KEYS: MessageKey[] = [
   'hub.role.director',
   'hub.role.tester',
   'topbar.tab.chat',
+  'history.kind.chat',
   'chat.title',
   'chat.global',
   'usage.spend.total',

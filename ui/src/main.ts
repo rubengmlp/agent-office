@@ -18,7 +18,7 @@ import { closeDocument } from './panel/deliverables';
 import { mountFinished } from './panel/finished';
 import { mountPanel } from './panel/panel';
 import { mountPlans } from './plans/plans';
-import { loadRecording, mountReplayControls, ReplayPlayer } from './replay';
+import { loadRecording, mountReplayControls, replayFetchUrl, ReplayPlayer } from './replay';
 import { Store } from './store';
 import { UsageToday } from './usage-today';
 import { mountBoard } from './board/board';
@@ -112,7 +112,7 @@ async function boot(): Promise<void> {
   usageToday?.setActive(tab === 'office');
   const actions: Actions = api ? liveActions(store, api) : replayActions(store);
 
-  mountTable(tableHost, store, api);
+  const table = mountTable(tableHost, store, api);
   mountPanel(panelHost, store, actions, api);
   const board = mountBoard(boardHost, store, api);
   mountPlans(plansHost, store, api);
@@ -135,6 +135,7 @@ async function boot(): Promise<void> {
     showTab,
     office: () => office,
     board: () => board,
+    table: () => table,
   };
   const palette = mountPalette(overlayHost, { context: () => paletteContext(nav), run: (target) => runTarget(nav, target) });
   const help = mountHelp(overlayHost);
@@ -164,7 +165,10 @@ async function boot(): Promise<void> {
     });
 
   if (replayUrl) {
-    loadRecording(replayUrl)
+    const search = new URLSearchParams(location.search);
+    // A recording the hub builds (/api/replay/...) needs the panel credential; a file does not.
+    const credential = replayUrl.startsWith('/api/') ? await panelCredential(browserPanelEnv()) : null;
+    loadRecording(replayFetchUrl(replayUrl, search), credential)
       .then((recording) => {
         const player = new ReplayPlayer(recording, store);
         mountReplayControls(topbar.replayHost, player, store);

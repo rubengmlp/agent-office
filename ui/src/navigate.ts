@@ -12,6 +12,7 @@ import { relaunchable } from './panel/orderable';
 import { openSection, type SectionId } from './panel/section';
 import { requestSession } from './panel/session-controls';
 import type { Store } from './store';
+import type { TableHandle } from './table/table';
 import { TABS, type Tab } from './topbar';
 import type { AgentView, QuestionView } from './types';
 import type { KeyAction } from './keys';
@@ -24,6 +25,7 @@ export type Nav = {
   showTab(tab: Tab): void;
   office(): OfficeHandle | null;
   board(): BoardHandle;
+  table(): TableHandle;
 };
 
 const SECTION_OF: Record<NeedKind, SectionId | null> = {
@@ -71,6 +73,16 @@ export function stepNeed(nav: Nav, cursor: NeedCursor, direction: 1 | -1): void 
   }
   goToNeed(nav, step.need);
   nav.store.toast(needToast(step.position, step.total, step.need), 'info', { ttlMs: 2500 });
+}
+
+// The history lives in the Tabla and needs the hub; a replay has none, so there it is the search of the timeline.
+export function openHistory(nav: Nav): void {
+  if (nav.api === null) {
+    openSection('timeline');
+    return;
+  }
+  nav.showTab('table');
+  nav.table().showHistory();
 }
 
 function oldestQuestion(nav: Nav): QuestionView | undefined {
@@ -147,7 +159,7 @@ export function runTarget(nav: Nav, target: PaletteTarget): void {
       store.setLang(store.lang === 'es' ? 'en' : 'es');
       break;
     case 'history':
-      openSection('timeline');
+      openHistory(nav);
       break;
     case 'mute': {
       const prefs = nav.notifier?.preferences;
@@ -175,7 +187,7 @@ export function runKey(nav: Nav, action: KeyAction, cursor: NeedCursor, extra: {
       stepNeed(nav, cursor, action.step);
       break;
     case 'history':
-      openSection('timeline');
+      openHistory(nav);
       break;
     case 'orders':
       focusOrders();

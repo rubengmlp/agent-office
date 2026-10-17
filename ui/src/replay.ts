@@ -1,5 +1,6 @@
 import { button, el } from './dom';
 import { t } from './i18n';
+import { errorText } from './i18n/hub';
 import type { Store } from './store';
 import type { Recording } from './types';
 
@@ -14,9 +15,26 @@ function isRecording(value: unknown): value is Recording {
   return record.version === 1 && typeof record.startedAt === 'number' && Array.isArray(record.messages);
 }
 
-export async function loadRecording(url: string): Promise<Recording> {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+async function failure(response: Response): Promise<Error> {
+  try {
+    const body: unknown = await response.json();
+    const text = typeof body === 'object' && body !== null ? errorText(t, (body as { error?: unknown }).error) : null;
+    if (text) return new Error(text);
+  } catch {}
+  return new Error(`HTTP ${response.status}`);
+}
+
+// Pure: the URL to fetch for ?replay=<url>. For a recording the hub builds, compress=1 of the page goes with it.
+export function replayFetchUrl(url: string, search: URLSearchParams): string {
+  if (!url.startsWith('/api/') || search.get('compress') !== '1' || /[?&]compress=/.test(url)) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}compress=1`;
+}
+
+// token: the panel credential, sent only to the hub's own /api/ routes (a recording on disk gets none).
+export async function loadRecording(url: string, token: string | null = null): Promise<Recording> {
+  const response = await fetch(url, token && url.startsWith('/api/') ? { headers: { 'X-Office-Panel': token } } : undefined);
+  if (response.status === 401) throw new Error(t('auth.expired'));
+  if (!response.ok) throw await failure(response);
   const data: unknown = await response.json();
   if (!isRecording(data)) throw new Error(t('replay.badFormat'));
   return { ...data, messages: [...data.messages].sort((a, b) => a.t - b.t) };

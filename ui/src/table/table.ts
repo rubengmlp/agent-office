@@ -25,9 +25,11 @@ import {
   stateHint,
 } from '../labels';
 import { documentBadge, openDocument } from '../panel/deliverables';
+import { readJson, writeJson } from '../prefs';
 import type { Store } from '../store';
 import { relativeTime } from '../time';
 import type { AgentState, AgentView, DocumentKind, DocumentStatus, DocumentView, FloorKind, FloorView, GuardAlert, GuardAlertLevel } from '../types';
+import { mountHistory, readTableView, replayHref, VIEW_KEY, type TableView } from './history';
 import { mountUsageBlock } from './usage-block';
 
 const COLUMNS: readonly { col: MessageKey; hint: MessageKey }[] = [
@@ -297,7 +299,12 @@ function alertsSection(store: Store, openAlerts: ReadonlySet<number>, now: numbe
   );
 }
 
-export function mountTable(host: HTMLElement, store: Store, api: OfficeApi | null): void {
+export type TableHandle = {
+  // Shows the history view and puts the keyboard in its query box; false when this panel has no hub to ask.
+  showHistory(): boolean;
+};
+
+export function mountTable(host: HTMLElement, store: Store, api: OfficeApi | null): TableHandle {
   let scheduled = false;
   let scrolledTo: string | null = null;
   const openAlerts = new Set<number>();
@@ -305,7 +312,46 @@ export function mountTable(host: HTMLElement, store: Store, api: OfficeApi | nul
   help.open = readHelpOpen();
   const content = el('div', 'table-content');
   const usage = api ? mountUsageBlock(store, api, () => host.classList.contains('active')) : null;
-  host.replaceChildren(...(usage ? [usage] : []), help, content);
+  const nowView = el('div', 'table-now', ...(usage ? [usage] : []), help, content);
+  host.replaceChildren(nowView);
+  let showHistory = (): boolean => false;
+  if (api) {
+    const historyHost = el('div', 'table-history');
+    const history = mountHistory(historyHost, store, api, {
+      openReplay: (sessionId) => window.open(replayHref(sessionId, location), '_blank', 'noopener'),
+    });
+    const views: readonly { view: TableView; label: MessageKey; button: HTMLButtonElement }[] = [
+      { view: 'now', label: 'table.view.now', button: button('', 'table-switch-option') },
+      { view: 'history', label: 'table.view.history', button: button('', 'table-switch-option') },
+    ];
+    const switcher = el('div', 'table-switch', ...views.map((item) => item.button));
+    switcher.setAttribute('role', 'group');
+    let current = readTableView(readJson(VIEW_KEY));
+    const paintSwitch = (): void => {
+      switcher.setAttribute('aria-label', t('table.view.label'));
+      for (const item of views) {
+        item.button.textContent = t(item.label);
+        item.button.setAttribute('aria-pressed', String(item.view === current));
+        item.button.classList.toggle('active', item.view === current);
+      }
+    };
+    const setView = (next: TableView, focus: boolean): void => {
+      current = next;
+      writeJson(VIEW_KEY, next);
+      nowView.hidden = next !== 'now';
+      historyHost.hidden = next !== 'history';
+      paintSwitch();
+      if (next === 'history') history.activate(focus);
+    };
+    for (const item of views) item.button.addEventListener('click', () => setView(item.view, item.view === 'history'));
+    host.replaceChildren(switcher, nowView, historyHost);
+    setView(current, false);
+    store.watch(['lang'], paintSwitch);
+    showHistory = (): boolean => {
+      setView('history', true);
+      return true;
+    };
+  }
 
   const render = (): void => {
     const now = store.now();
@@ -381,4 +427,6 @@ export function mountTable(host: HTMLElement, store: Store, api: OfficeApi | nul
 
   store.watch(['lang'], () => help.replaceChildren(...helpContent()));
   store.watch(['agents', 'floors', 'questions', 'selection', 'tick', 'alerts', 'documents', 'lang', 'orders'], schedule);
+
+  return { showHistory: () => showHistory() };
 }

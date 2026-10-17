@@ -32,6 +32,6 @@ export function mountPanel(host: HTMLElement, store: Store, actions: Actions, ap
   mountDeliverables(deliverables, store, api);
   mountReport(report, store, api);
   mountMemory(memory, store, api);
-  mountTimeline(timeline, store);
+  mountTimeline(timeline, store, api);
   mountOrders(orders, store, actions);
 }
