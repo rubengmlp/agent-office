@@ -182,9 +182,13 @@ export class CameraRig {
 
   setActive(slug: string | null): void {
     if (slug === this.activeSlug) return;
-    if (this.activeSlug) this.buttons.get(this.activeSlug)?.classList.remove('active');
+    const previous = this.activeSlug === null ? undefined : this.buttons.get(this.activeSlug);
+    previous?.classList.remove('active');
+    previous?.removeAttribute('aria-current');
     this.activeSlug = slug;
-    if (slug) this.buttons.get(slug)?.classList.add('active');
+    const next = slug === null ? undefined : this.buttons.get(slug);
+    next?.classList.add('active');
+    next?.setAttribute('aria-current', 'true');
   }
 
   focusBox(box: Box3, options: { azimuth?: number; elevation?: number; duration?: number; margin?: number } = {}): void {

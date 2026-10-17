@@ -3,7 +3,7 @@ import { orderRows, type Row } from '../agents-order';
 import { stateBadge } from '../badge';
 import { checksBadgeNode } from '../board/badges';
 import { activeOrder } from '../board/columns';
-import { button, el, setStateColor } from '../dom';
+import { button, el, keepFocus, setStateColor } from '../dom';
 import { plural, t, type MessageKey } from '../i18n';
 import { hubText } from '../i18n/hub';
 import {
@@ -146,6 +146,9 @@ function agentRow(store: Store, row: Row, now: number): HTMLTableRowElement {
   const state = store.shownState(agent);
   const tr = el('tr', 'agent-row');
   tr.dataset.key = agent.key;
+  tr.tabIndex = 0;
+  tr.setAttribute('role', 'button');
+  if (store.selectedKey === agent.key) tr.setAttribute('aria-current', 'true');
   tr.classList.toggle('selected', store.selectedKey === agent.key);
   tr.classList.toggle('ended', agent.endedAt !== null);
 
@@ -335,9 +338,17 @@ export function mountTable(host: HTMLElement, store: Store, api: OfficeApi | nul
     scheduled = true;
     requestAnimationFrame(() => {
       scheduled = false;
-      render();
+      keepFocus(content, render);
     });
   };
+
+  host.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    const row = event.target instanceof Element ? event.target.closest<HTMLElement>('tr[data-key]') : null;
+    if (!row || event.target !== row || !row.dataset.key) return;
+    event.preventDefault();
+    store.select(row.dataset.key);
+  });
 
   host.addEventListener('click', (event) => {
     const target = event.target;

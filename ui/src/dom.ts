@@ -28,3 +28,18 @@ export function button(label: string, className = '', title = ''): HTMLButtonEle
 export function setStateColor(node: HTMLElement, color: string): void {
   node.style.setProperty('--c', color);
 }
+
+// Runs a render that replaces the children of a container and keeps the keyboard focus on the same row,
+// the one with the same data-key, when it was inside.
+export function keepFocus(container: HTMLElement, render: () => void): void {
+  const active = document.activeElement;
+  const key = active instanceof HTMLElement && container.contains(active) ? (active.closest<HTMLElement>('[data-key]')?.dataset.key ?? null) : null;
+  render();
+  if (key === null) return;
+  for (const row of container.querySelectorAll<HTMLElement>('[data-key]')) {
+    if (row.dataset.key === key && row.tabIndex >= 0) {
+      row.focus({ preventScroll: true });
+      return;
+    }
+  }
+}

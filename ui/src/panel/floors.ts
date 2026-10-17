@@ -1,6 +1,6 @@
 import { orderRows, type Row } from '../agents-order';
 import type { OfficeApi } from '../api';
-import { el, setStateColor } from '../dom';
+import { el, keepFocus, setStateColor } from '../dom';
 import { plural, t } from '../i18n';
 import { checksBadgeNode } from '../board/badges';
 import { activeOrder } from '../board/columns';
@@ -35,6 +35,7 @@ function agentRow(store: Store, row: Row, times: TimeNode[], now: number): HTMLE
   );
   item.type = 'button';
   item.dataset.key = agent.key;
+  if (store.selectedKey === agent.key) item.setAttribute('aria-current', 'true');
   item.style.paddingLeft = `${8 + depth * 14}px`;
   item.title = agent.task ? t('floors.task', { task: agent.task }) : agentName(agent);
   return el('li', '', item, sessionActions(store, agent, depth, times, now));
@@ -158,7 +159,7 @@ export function mountFloors(host: HTMLElement, store: Store, api: OfficeApi | nu
     scheduled = true;
     requestAnimationFrame(() => {
       scheduled = false;
-      render();
+      keepFocus(section.body, render);
     });
   };
 
