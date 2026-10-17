@@ -311,6 +311,11 @@ export class TokenMeter {
     if (typeof path === 'string' && path.endsWith('.jsonl')) this.seenAgent.set(agentKey, path);
   }
 
+  // The transcript of a main session, if it exists: what `claude --resume` needs to find.
+  transcriptOf(sessionId: string, cwd: string | null): string | null {
+    return this.mainTranscript({ sessionId, cwd });
+  }
+
   totals(agentKey: string): TokenTotals | null {
     const totals = this.totalsByAgent.get(agentKey);
     return totals ? { ...totals } : null;

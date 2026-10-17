@@ -237,6 +237,7 @@ export class Office {
       ...base,
       launch: opts.launch,
       tmux: opts.tmux,
+      hasTranscript: (sessionId) => this.meter.transcriptOf(sessionId) !== null,
       free: (session, ignoreMain) => this.stall.sessionFree(session, ignoreMain),
     });
     this.desk = new QuestionDesk(

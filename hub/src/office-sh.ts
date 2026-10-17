@@ -26,6 +26,18 @@ export const TMUX_SESSION = 'agent-office';
 
 export const RELAUNCH_RESUMES = true;
 
+// A resumed start that dies sooner than this did not find its conversation.
+export const RESUME_FAST_EXIT_S = 10;
+
+// The command a relaunch respawns the window with when it resumes: the launcher with --resume and, when claude
+// exits with an error right away, the launcher again for a fresh session so the window does not close. Wrapped in
+// sh because the default shell of tmux may not be POSIX.
+export function resumeCommand(script: string, sessionId: string): string {
+  const fresh = 'Agent Office: no se pudo reanudar, abriendo sesión nueva';
+  const inner = `t=$(date +%s); ${sq(script)} --resume ${sessionId} || { [ $(($(date +%s) - t)) -lt ${RESUME_FAST_EXIT_S} ] && { echo ${sq(fresh)}; exec ${sq(script)}; }; }`;
+  return `sh -c ${sq(inner)}`;
+}
+
 export const CLONE_PERMISSIONS_FILE = join(PLUGIN_DIR, 'settings', 'clone-permissions.json');
 
 export const STATUSLINE_SCRIPT = join(SCRIPTS_DIR, 'office-statusline.sh');

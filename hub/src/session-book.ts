@@ -2,7 +2,6 @@ import { existsSync, readFileSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
 import { isInside, realPath, type FloorResolver, type ResolvedFloor } from './floors';
 import type { OfficeBus } from './office-bus';
-import { RELAUNCH_RESUMES } from './office-sh';
 import type { SessionRow, Sql } from './office-sql';
 import { PERSIST_EVERY_MS, RESTORE_WINDOW_MS, TEAM_CACHE_MS, remember, teamOfSession, type AgentRuntime, type SessionRuntime } from './office-state';
 import { taskLine } from './office-texts';
@@ -18,7 +17,7 @@ export type SessionBookOpts = {
   config: () => OfficeConfig;
   claudeHome: string;
   tokens: (agentKey: string) => AgentView['tokens'];
-  flags: (session: SessionRuntime) => { rulesPending: boolean; canRelaunch: boolean };
+  flags: (session: SessionRuntime) => { rulesPending: boolean; canRelaunch: boolean; relaunchResumes: boolean };
   restored: (session: SessionRuntime, row: SessionRow) => void;
   floors: FloorResolver;
 };
@@ -223,7 +222,7 @@ export class SessionBook {
   }
 
   sessionView(session: SessionRuntime): SessionView {
-    const { rulesPending, canRelaunch } = this.opts.flags(session);
+    const { rulesPending, canRelaunch, relaunchResumes } = this.opts.flags(session);
     return {
       sessionId: session.sessionId,
       agentKey: session.sessionId,
@@ -235,7 +234,7 @@ export class SessionBook {
       needsRelaunch: session.needsRelaunch,
       rulesPending,
       canRelaunch,
-      relaunchResumes: RELAUNCH_RESUMES,
+      relaunchResumes,
       office: this.sessionInOffice(session),
     };
   }
@@ -549,5 +548,5 @@ export class SessionBook {
 }
 
 function flagsOf(view: SessionView): string {
-  return `${view.needsRelaunch}|${view.rulesPending}|${view.canRelaunch}|${view.canReceive}|${view.office}`;
+  return `${view.needsRelaunch}|${view.rulesPending}|${view.canRelaunch}|${view.relaunchResumes}|${view.canReceive}|${view.office}`;
 }

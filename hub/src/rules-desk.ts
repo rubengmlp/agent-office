@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { writeAtomic } from './config';
 import type { OfficeBus } from './office-bus';
-import { RELAUNCH_RESUMES, TMUX_SESSION, sq } from './office-sh';
+import { RELAUNCH_RESUMES, TMUX_SESSION, resumeCommand, sq } from './office-sh';
 import type { SessionRow, Sql } from './office-sql';
 import {
   LAUNCH_CHECK_MS,
@@ -27,6 +27,8 @@ export type RulesDeskOpts = {
   book: SessionBook;
   launch?: LaunchPaths;
   tmux?: TmuxFn;
+  // Whether the main session has a transcript on disk: without one `claude --resume` exits at once.
+  hasTranscript: (sessionId: string) => boolean;
   free: (session: SessionRuntime | undefined, ignoreMain?: boolean) => boolean;
 };
 
@@ -201,7 +203,7 @@ export class RulesDesk {
     }
     if (windows.code !== 0) return 'no-tmux';
     if (!windows.stdout.split('\n').some((line) => line.trim() === name)) return 'no-window';
-    const command = resume ? `${sq(script)} --resume ${sessionId}` : sq(script);
+    const command = resume && this.opts.hasTranscript(sessionId) ? resumeCommand(script, sessionId) : sq(script);
     try {
       const respawned = await this.tmux(['respawn-window', '-k', '-t', `${TMUX_SESSION}:=${name}`, command]);
       if (respawned.code !== 0) return 'failed';
@@ -222,11 +224,12 @@ export class RulesDesk {
     session.needsRelaunch = this.relaunchNeeded(session);
   }
 
-  flags(session: SessionRuntime): { rulesPending: boolean; canRelaunch: boolean } {
+  flags(session: SessionRuntime): { rulesPending: boolean; canRelaunch: boolean; relaunchResumes: boolean } {
     const script = this.launchFile(session);
     return {
       rulesPending: this.rulesPending(session),
       canRelaunch: session.endedAt === null && script !== null && existsSync(script) && this.opts.free(session),
+      relaunchResumes: RELAUNCH_RESUMES && SAFE_ID.test(session.sessionId) && this.opts.hasTranscript(session.sessionId),
     };
   }
 }

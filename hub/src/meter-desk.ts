@@ -47,6 +47,10 @@ export class MeterDesk {
     this.meter.noteAgent(sessionId, record(raw).transcript_path);
   }
 
+  transcriptOf(sessionId: string): string | null {
+    return this.meter.transcriptOf(sessionId, this.opts.book.sessions.get(sessionId)?.cwd ?? null);
+  }
+
   totals(agentKey: string): ReturnType<TokenMeter['totals']> {
     return this.meter.totals(agentKey);
   }

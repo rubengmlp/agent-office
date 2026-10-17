@@ -3,9 +3,10 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PROFILES_DIR } from '../src/config';
 import { Office, type TmuxFn } from '../src/office';
-import { RELAUNCH_RESUMES, TMUX_SESSION, sq } from '../src/office-sh';
+import { RELAUNCH_RESUMES, TMUX_SESSION, resumeCommand, sq } from '../src/office-sh';
 import { loadProfiles } from '../src/profiles';
 import { createApp } from '../src/server';
+import { projectSlug } from '../src/tokens';
 import type { HookMeta, SessionView } from '../src/types';
 import { ev, floor, harness, keyOf, tempDir, type Harness } from './helpers';
 
@@ -83,6 +84,14 @@ function launched(extra: Partial<ConstructorParameters<typeof Office>[0]> = {}):
   });
 }
 
+// The transcript claude writes once the session has received a message: what `claude --resume` looks for.
+const writeTranscript = (id = LEAD, cwd = repo): string => {
+  const dir = join(h.root, 'claude-home', 'projects', projectSlug(cwd));
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `${id}.jsonl`);
+  writeFileSync(file, '{"type":"user"}\n');
+  return file;
+};
 const prompt = (office: Office = h.office, session = LEAD, cwd = repo): string | null => office.ingest(ev(session, cwd, 'UserPromptSubmit', { prompt: 'Sigue con el login' }));
 const context = (output: string | null): string | null => (output ? (JSON.parse(output) as { hookSpecificOutput: { additionalContext: string } }).hookSpecificOutput.additionalContext : null);
 const rewrite = (file: string, content: string) => {
@@ -198,7 +207,7 @@ describe('launcher changes', () => {
   test('rewriting the launcher flags the session once and emits it; a new SessionStart takes the new baseline', () => {
     setup();
     h.office.tick();
-    expect(sessionOf()).toMatchObject({ needsRelaunch: false, canRelaunch: true, relaunchResumes: RELAUNCH_RESUMES });
+    expect(sessionOf()).toMatchObject({ needsRelaunch: false, canRelaunch: true, relaunchResumes: false });
 
     h.messages.length = 0;
     rewrite(join(sessionsDir, 'lead-mobile.sh'), '#!/bin/sh\nexec claude --model opus "$@"\n');
@@ -249,15 +258,68 @@ describe('relaunch', () => {
     h.office.ingest(ev(LEAD, repo, 'Stop'));
   };
 
-  test('lists the windows and respawns the exact one with --resume', async () => {
+  test('lists the windows and respawns the exact one with --resume, falling back to a fresh start if it dies at once', async () => {
     prepare();
+    writeTranscript();
     expect(RELAUNCH_RESUMES).toBe(true);
     expect(await h.office.relaunch(LEAD)).toBe('ok');
+    const script = sq(join(sessionsDir, 'lead-mobile.sh'));
+    const inner = `t=$(date +%s); ${script} --resume ${LEAD} || { [ $(($(date +%s) - t)) -lt 10 ] && { echo 'Agent Office: no se pudo reanudar, abriendo sesión nueva'; exec ${script}; }; }`;
     expect(calls).toEqual([
       ['list-windows', '-t', TMUX_SESSION, '-F', '#{window_name}'],
-      ['respawn-window', '-k', '-t', `${TMUX_SESSION}:=lead-mobile`, `${sq(join(sessionsDir, 'lead-mobile.sh'))} --resume ${LEAD}`],
+      ['respawn-window', '-k', '-t', `${TMUX_SESSION}:=lead-mobile`, `sh -c ${sq(inner)}`],
     ]);
+    expect(calls[1]?.at(-1)).toBe(resumeCommand(join(sessionsDir, 'lead-mobile.sh'), LEAD));
     expect(h.office.snapshot().activity.map((a) => a.summary)).toContainEqual({ key: 'hub.act.relaunched', params: { who: 'lead-mobile' } });
+  });
+
+  test('a session without a transcript is relaunched fresh, and its view says so until the transcript appears', async () => {
+    prepare();
+    h.office.tick();
+    expect(sessionOf()?.relaunchResumes).toBe(false);
+    expect(await h.office.relaunch(LEAD)).toBe('ok');
+    expect(calls[1]?.at(-1)).toBe(sq(join(sessionsDir, 'lead-mobile.sh')));
+    expect(calls[1]?.at(-1)).not.toContain('--resume');
+
+    h.messages.length = 0;
+    writeTranscript();
+    h.clock.advance(30_000);
+    h.office.tick();
+    expect(sessionOf()?.relaunchResumes).toBe(true);
+    expect(sessionEvents().at(-1)?.relaunchResumes).toBe(true);
+    expect(await h.office.relaunch(LEAD)).toBe('ok');
+    expect(calls.at(-1)?.at(-1)).toContain(`--resume ${LEAD}`);
+  });
+
+  test('an explicit resume still falls back to a fresh start when there is no transcript', async () => {
+    prepare();
+    expect(await h.office.relaunch(LEAD, true)).toBe('ok');
+    expect(calls[1]?.at(-1)).toBe(sq(join(sessionsDir, 'lead-mobile.sh')));
+  });
+
+  test('a transcript the hooks reported counts even outside the project folder of the cwd', async () => {
+    prepare();
+    const elsewhere = join(h.root, 'claude-home', 'projects', 'other-slug');
+    mkdirSync(elsewhere, { recursive: true });
+    const file = join(elsewhere, `${LEAD}.jsonl`);
+    writeFileSync(file, '{}\n');
+    h.office.ingest(ev(LEAD, repo, 'Stop', { transcript_path: file }));
+    expect(sessionOf()?.relaunchResumes).toBe(true);
+    expect(await h.office.relaunch(LEAD)).toBe('ok');
+    expect(calls[1]?.at(-1)).toContain('--resume');
+  });
+
+  test('the wrapper itself starts a fresh session when the resumed one fails at once, and leaves a clean exit alone', () => {
+    setup();
+    const fake = join(h.root, 'fake claude.sh');
+    writeFileSync(fake, '#!/bin/sh\nif [ "$1" = "--resume" ]; then echo "No conversation found"; exit 1; fi\necho "fresh session"\n', { mode: 0o755 });
+    const failing = Bun.spawnSync(['sh', '-c', resumeCommand(fake, LEAD)], { env: { ...process.env, PATH: process.env.PATH ?? '' } });
+    expect(failing.stdout.toString()).toBe('No conversation found\nAgent Office: no se pudo reanudar, abriendo sesión nueva\nfresh session\n');
+    expect(failing.exitCode).toBe(0);
+
+    writeFileSync(fake, '#!/bin/sh\necho "resumed $1 $2"\n', { mode: 0o755 });
+    const working = Bun.spawnSync(['sh', '-c', resumeCommand(fake, LEAD)]);
+    expect(working.stdout.toString()).toBe(`resumed --resume ${LEAD}\n`);
   });
 
   test('without resume the script runs bare', async () => {
@@ -336,6 +398,7 @@ describe('relaunch and status routes', () => {
 
   test('need the key and map every result to its status', async () => {
     setup();
+    writeTranscript();
     h.office.ingest(ev(LEAD, repo, 'Stop'));
     expect((await post(`/api/sessions/${LEAD}/relaunch`, {}, false)).status).toBe(401);
     expect((await post(`/api/sessions/${LEAD}/status`, {}, false)).status).toBe(401);
