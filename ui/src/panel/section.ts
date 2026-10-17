@@ -23,7 +23,7 @@ export type SectionOptions = {
   host?: HTMLElement;
 };
 
-type LiveSection = { id: SectionId; choose(open: boolean): void };
+type LiveSection = { id: SectionId; root: HTMLElement; choose(open: boolean): void };
 
 const live = new Set<LiveSection>();
 
@@ -36,6 +36,19 @@ export function readOpenSection(): SectionId | null {
 
 export function storeOpenSection(id: SectionId | null): void {
   writeJson(OPEN_SECTION_KEY, id ?? '');
+}
+
+// Opens one section of the panel, closing the others, and brings it into view.
+export function openSection(id: SectionId): void {
+  let target: LiveSection | undefined;
+  for (const section of live) {
+    section.choose(section.id === id);
+    if (section.id === id) target = section;
+  }
+  if (target) {
+    storeOpenSection(id);
+    target.root.scrollIntoView?.({ block: 'nearest' });
+  }
 }
 
 export function panelSection({ id, title, host }: SectionOptions): PanelSection {
@@ -57,6 +70,7 @@ export function panelSection({ id, title, host }: SectionOptions): PanelSection 
   show(chosen);
   live.add({
     id,
+    root,
     choose(open: boolean): void {
       chosen = open;
       show(forced || open);

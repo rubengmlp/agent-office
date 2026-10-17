@@ -599,7 +599,7 @@ class OfficeScene {
     );
   }
 
-  private focusFloor(slug: string): void {
+  focusFloor(slug: string): void {
     const box = this.floorBox(slug);
     if (!box) return;
     this.cameraRig.stopFollow();
@@ -626,6 +626,13 @@ class OfficeScene {
       if (point.y >= origin.y - 0.6 && point.y < origin.y + STOREY_H - 0.6) return room.slug;
     }
     return null;
+  }
+
+  focusAgent(key: string): void {
+    const entry = this.entries.get(key);
+    if (!entry) return;
+    const floor = entry.character.floor;
+    this.focusFloor(floor && this.site.room(floor) ? floor : entry.agent.floor);
   }
 
   private follow(key: string): void {
@@ -730,5 +737,9 @@ export async function mountScene(host: HTMLElement, store: Store): Promise<Offic
   const base = `${import.meta.env.BASE_URL}assets/characters/`;
   const manifest = await loadManifest(`${base}manifest.json`);
   const office = new OfficeScene(host, store, new AssetLibrary(base, manifest));
-  return { setActive: (active) => office.setActive(active) };
+  return {
+    setActive: (active) => office.setActive(active),
+    focusAgent: (key) => office.focusAgent(key),
+    focusFloor: (slug) => office.focusFloor(slug),
+  };
 }

@@ -58,7 +58,7 @@ const TALK_LINE_COLOR = 0xf472b6;
 const HEAD_HEIGHT = 20;
 const FALLBACK_BACKGROUND = '#0b0e12';
 
-export type OfficeHandle = { setActive(active: boolean): void };
+export type OfficeHandle = { setActive(active: boolean): void; focusAgent(key: string): void; focusFloor(slug: string): void };
 
 function canvasBackground(): string {
   const value = getComputedStyle(document.documentElement).getPropertyValue('--canvas-bg').trim();
@@ -540,6 +540,20 @@ class OfficeView {
     g.rect(width - 8, thumbY, 4, thumb).fill({ color: 0xffffff, alpha: 0.35 });
   }
 
+  focusAgent(key: string): void {
+    const entry = this.entries.get(key);
+    if (!entry) return;
+    this.scrollY = entry.view.position.y - this.app.screen.height / SCALE / 2;
+    this.clampScroll();
+  }
+
+  focusFloor(slug: string): void {
+    const scene = this.scenes.get(slug);
+    if (!scene) return;
+    this.scrollY = scene.top - FLOOR_GAP;
+    this.clampScroll();
+  }
+
   private focusSelected(): void {
     const key = this.store.selectedKey;
     const entry = key === null ? undefined : this.entries.get(key);
@@ -556,5 +570,9 @@ class OfficeView {
 export async function mountOffice(host: HTMLElement, store: Store): Promise<OfficeHandle> {
   const office = new OfficeView(store);
   await office.mount(host);
-  return { setActive: (active) => office.setActive(active) };
+  return {
+    setActive: (active) => office.setActive(active),
+    focusAgent: (key) => office.focusAgent(key),
+    focusFloor: (slug) => office.focusFloor(slug),
+  };
 }

@@ -6,6 +6,7 @@ import { el } from './dom';
 import { Heartbeat } from './heartbeat';
 import { applyLang, readStoredLang, t, type MessageKey, type Params } from './i18n';
 import { LiveConnection } from './live';
+import { goToNeed, type Nav } from './navigate';
 import { Notifier } from './notify';
 import type { OfficeHandle } from './office/office';
 import { mountSettings } from './settings/settings';
@@ -76,7 +77,7 @@ async function boot(): Promise<void> {
     chat?.setActive(next === 'chat');
   };
 
-  const topbar = mountTopbar(store, showTab);
+  const topbar = mountTopbar(store, showTab, (need) => goToNeed(nav, need));
   root.replaceChildren(topbar.root, el('main', 'main', officeHost, tableHost, boardHost, plansHost, chatHost, settingsHost, notice), panelHost, toastHost, finishedHost);
 
   let live: LiveConnection | null = null;
@@ -107,6 +108,8 @@ async function boot(): Promise<void> {
   mountFinished(finishedHost, store, api, { openBoard: showFinished });
   mountSettings(settingsHost, store, api, notifier);
   mountToasts(toastHost, store);
+
+  const nav: Nav = { store, tab: () => tab, showTab, office: () => office, board: () => board };
 
   const mountView: Promise<OfficeHandle> =
     view === '3d'

@@ -10,8 +10,6 @@ export const es = {
   'topbar.tab.plans': 'Planes',
   'topbar.tab.chat': 'Chat',
   'topbar.tab.settings': 'Ajustes',
-  'topbar.pending': 'Preguntas pendientes',
-  'topbar.pending.title': 'Ir al agente con la pregunta más antigua',
   'topbar.plansPending.one': '{n} plan pendiente de decisión',
   'topbar.plansPending.other': '{n} planes pendientes de decisión',
   'topbar.chatUnread.one': '{n} mensaje sin leer en el chat',
@@ -1077,6 +1075,17 @@ export const es = {
   'hub.floors.liveCopy': '{path} es la copia de la que corre la oficina y no puede ser una planta. Trabaja en un clon: git clone {path} {path}-dev y añade ese clon.',
   'hub.floors.slugTaken': 'El nombre "{slug}" ya es la planta de {path}.',
   'hub.floors.pathTaken': '{path} ya es la planta "{other}".',
+
+  'needs.button': 'Te necesitan',
+  'needs.title': 'Lo que espera por ti, lo más urgente primero',
+  'needs.none': 'Nada espera por ti',
+  'needs.toast': '{n}/{total} · {label}',
+  'needs.kind.permission': 'Permiso de {name}',
+  'needs.kind.question': 'Pregunta de {name}',
+  'needs.kind.blocked': 'Bloqueado: {name}',
+  'needs.kind.stalled': 'Parado: {name}',
+  'needs.kind.plan': 'Plan por decidir: {name}',
+  'needs.kind.checks': 'Checks por confirmar: {name}',
 } as const;
 
 export type Messages = { [K in keyof typeof es]: string };

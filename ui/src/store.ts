@@ -388,14 +388,6 @@ export class Store {
     this.mark('chat');
   }
 
-  oldestQuestion(): QuestionView | undefined {
-    let oldest: QuestionView | undefined;
-    for (const question of this.questions) {
-      if (!oldest || question.createdAt < oldest.createdAt) oldest = question;
-    }
-    return oldest;
-  }
-
   private applySnapshot(snapshot: Snapshot): void {
     this.floors = snapshot.floors;
     this.agents.clear();

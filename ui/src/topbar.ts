@@ -1,5 +1,7 @@
 import { button, el } from './dom';
 import { LANG_NAMES, LANGS, plural, t, type Lang, type MessageKey } from './i18n';
+import { mountNeedsMenu, type NeedsMenu } from './needs-menu';
+import type { Need } from './needs';
 import type { ConnectionStatus, Store } from './store';
 
 export type Tab = 'office' | 'table' | 'board' | 'plans' | 'chat' | 'settings';
@@ -7,6 +9,7 @@ export type Tab = 'office' | 'table' | 'board' | 'plans' | 'chat' | 'settings';
 export type Topbar = {
   root: HTMLElement;
   replayHost: HTMLElement;
+  needs: NeedsMenu;
   setTab(tab: Tab): void;
 };
 
@@ -19,7 +22,7 @@ const STATUS_KEYS: Record<ConnectionStatus, MessageKey> = {
   replay: 'topbar.status.replay',
 };
 
-const TABS: readonly { tab: Tab; labelKey: MessageKey }[] = [
+export const TABS: readonly { tab: Tab; labelKey: MessageKey }[] = [
   { tab: 'office', labelKey: 'topbar.tab.office' },
   { tab: 'table', labelKey: 'topbar.tab.table' },
   { tab: 'board', labelKey: 'topbar.tab.board' },
@@ -28,11 +31,10 @@ const TABS: readonly { tab: Tab; labelKey: MessageKey }[] = [
   { tab: 'settings', labelKey: 'topbar.tab.settings' },
 ];
 
-export function mountTopbar(store: Store, onTab: (tab: Tab) => void): Topbar {
+export function mountTopbar(store: Store, onTab: (tab: Tab) => void, onNeed: (need: Need) => void): Topbar {
   const dot = el('span', 'status-dot');
   const statusText = el('span', 'status-text');
-  const pendingCount = el('b', 'pending-count');
-  const pending = button('', 'pending');
+  const needs = mountNeedsMenu(store, onNeed);
   const replayHost = el('div', 'replay-controls');
 
   const tabButtons = new Map<Tab, HTMLButtonElement>();
@@ -61,20 +63,13 @@ export function mountTopbar(store: Store, onTab: (tab: Tab) => void): Topbar {
     'topbar',
     el('h1', 'brand', 'Agent Office'),
     el('div', 'status', dot, statusText),
-    pending,
+    needs.root,
     replayHost,
     tabs,
     langSelect,
   );
 
-  pending.addEventListener('click', () => {
-    const oldest = store.oldestQuestion();
-    if (oldest) store.select(oldest.agentKey);
-  });
-
   const relabel = (): void => {
-    pending.title = t('topbar.pending.title');
-    pending.replaceChildren(t('topbar.pending'), ' ', pendingCount);
     for (const { tab, labelKey } of TABS) {
       const tabButton = tabButtons.get(tab);
       if (tabButton) tabButton.replaceChildren(t(labelKey), ...(tab === 'plans' ? [plansCount] : tab === 'chat' ? [chatCount] : []));
@@ -103,20 +98,15 @@ export function mountTopbar(store: Store, onTab: (tab: Tab) => void): Topbar {
     tabButtons.get('chat')?.setAttribute('title', count > 0 ? plural('topbar.chatUnread', count) : '');
   });
 
-  store.watch(['questions'], () => {
-    const count = store.questions.length;
-    pendingCount.textContent = String(count);
-    pending.disabled = count === 0;
-    pending.classList.toggle('has-pending', count > 0);
-  });
-
   const setTab = (active: Tab): void => {
     for (const [tab, tabButton] of tabButtons) {
       tabButton.classList.toggle('active', tab === active);
       tabButton.setAttribute('aria-selected', String(tab === active));
+      if (tab === active) tabButton.setAttribute('aria-current', 'page');
+      else tabButton.removeAttribute('aria-current');
     }
   };
   setTab('office');
 
-  return { root, replayHost, setTab };
+  return { root, replayHost, needs, setTab };
 }
