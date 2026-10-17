@@ -2,7 +2,9 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { applyLang } from '../src/i18n/index';
 import { contextFill, contextLevel, contextLine, contextOf } from '../src/labels';
 import { Store, withDefaults } from '../src/store';
-import type { AgentContext, AgentView } from '../src/types';
+import { clockMinutes } from '../src/time';
+import type { AgentContext, AgentView, UsageWindow } from '../src/types';
+import { forecastText } from '../src/usage-card';
 import { agent } from './fixtures';
 
 Object.assign(globalThis, { window: { ...Reflect.get(globalThis, 'window'), setInterval: () => 0, setTimeout: () => 0 } });
@@ -61,5 +63,28 @@ describe('Store and context', () => {
     expect(store.agents.get('a')?.context?.usedPct).toBe(70);
     store.apply({ type: 'tokens', data: { agentKey: 'a', tokens, plan: null, context: null } });
     expect(store.agents.get('a')?.context?.usedPct).toBe(70);
+  });
+});
+
+describe('forecastText', () => {
+  const RESETS = new Date(2030, 0, 1, 18, 0, 0).getTime();
+  const window = (forecast?: UsageWindow['forecast']): UsageWindow => ({ usedPct: 50, resetsAt: RESETS, forecast });
+
+  test('nothing for a recording from before the forecast', () => {
+    expect(forecastText(window())).toBeNull();
+  });
+
+  test('few samples, will not run out, or when it runs out and at what pace', () => {
+    expect(forecastText(window({ rate: 0, exhaustsAt: null, safe: false, basis: 'thin' }))).toEqual({ text: 'pocas muestras', level: 'thin' });
+    expect(forecastText(window({ rate: 0, exhaustsAt: null, safe: true, basis: 'fit' }))).toEqual({ text: 'no se agota antes del reinicio', level: 'safe' });
+    expect(forecastText(window({ rate: 5, exhaustsAt: RESETS + 1000, safe: true, basis: 'fit' }))?.level).toBe('safe');
+    const at = new Date(2030, 0, 1, 15, 40, 20).getTime();
+    expect(forecastText(window({ rate: 12.4, exhaustsAt: at, safe: false, basis: 'fit' }))).toEqual({ text: 'se agota ~15:40 (+12 %/h)', level: 'danger' });
+    applyLang('en');
+    expect(forecastText(window({ rate: 12.6, exhaustsAt: at, safe: false, basis: 'fit' }))?.text).toBe('runs out ~15:40 (+13 %/h)');
+  });
+
+  test('clockMinutes drops the seconds', () => {
+    expect(clockMinutes(new Date(2030, 0, 1, 9, 5, 59).getTime())).toBe('09:05');
   });
 });

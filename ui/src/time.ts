@@ -17,6 +17,10 @@ export function clockTime(ts: number): string {
   return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
+export function clockMinutes(ts: number): string {
+  return clockTime(ts).slice(0, 5);
+}
+
 export function countdown(ms: number): string {
   const total = Math.max(0, Math.ceil(ms / 1000));
   const minutes = Math.floor(total / 60);

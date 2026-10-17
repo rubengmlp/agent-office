@@ -1,4 +1,5 @@
 import type { Database } from 'bun:sqlite';
+import { SAMPLE_RETENTION_MS } from './usage';
 
 const DAY_MS = 86_400_000;
 export const PRUNE_CHUNK = 5000;
@@ -24,11 +25,15 @@ const RULES: readonly [table: string, where: string][] = [
 // The output of a check is the bulkiest thing a run keeps: past the retention it goes, the result stays.
 const CLEAR_OUTPUT = 'UPDATE checks SET output_tail = NULL WHERE output_tail IS NOT NULL AND run_id IN (SELECT id FROM check_runs WHERE started_at < ?)';
 
+// Samples of the limit forecast live a fixed eight days, whatever the retention of the rest.
+const DROP_SAMPLES = 'DELETE FROM usage_samples WHERE ts < ?';
+
 export function prune(db: Database, now: number, retentionDays: number): number {
   const cutoff = now - retentionDays * DAY_MS;
   let removed = 0;
   for (const [table, where] of RULES) removed += db.query(`DELETE FROM ${table} WHERE ${where}`).run(cutoff).changes;
   removed += db.query(CLEAR_OUTPUT).run(cutoff).changes;
+  removed += db.query(DROP_SAMPLES).run(now - SAMPLE_RETENTION_MS).changes;
   return removed;
 }
 
@@ -53,5 +58,6 @@ export async function pruneInChunks(
     }
   }
   removed += db.query(CLEAR_OUTPUT).run(cutoff).changes;
+  removed += db.query(DROP_SAMPLES).run(now - SAMPLE_RETENTION_MS).changes;
   return removed;
 }

@@ -3326,3 +3326,13 @@ button.order-tab-button.active {
   height: 100%;
   background: var(--ok);
 }
+
+.usage-forecast {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.usage-forecast[data-level='danger'] {
+  color: var(--danger);
+}

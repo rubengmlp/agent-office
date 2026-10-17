@@ -170,6 +170,68 @@ describe('desktop notifier', () => {
     expect(FakeNotification.created).toHaveLength(0);
   });
 
+  describe('usage limit', () => {
+    const RESETS = 1_800_000_000_000;
+    const view = (five: number | null, seven: number | null = null, resetsAt = RESETS): ServerMessage => ({
+      type: 'usage',
+      data: {
+        fiveHour: five === null ? null : { usedPct: five, resetsAt },
+        sevenDay: seven === null ? null : { usedPct: seven, resetsAt: resetsAt + 86_400_000 },
+        at: 1,
+      },
+    });
+    const tags = (): (string | undefined)[] => FakeNotification.created.map((n) => n.options.tag);
+
+    test('80 and then 95 notify once each per window, below 80 nothing', () => {
+      notifier.observe(view(40));
+      notifier.observe(view(79.9));
+      expect(FakeNotification.created).toHaveLength(0);
+      notifier.observe(view(81));
+      notifier.observe(view(84));
+      expect(tags()).toEqual([`usage:five:${RESETS}:80`]);
+      expect(FakeNotification.created[0]?.title).toBe(t('notify.usage.five', { pct: 81 }));
+      notifier.observe(view(96));
+      notifier.observe(view(97));
+      expect(tags()).toEqual([`usage:five:${RESETS}:80`, `usage:five:${RESETS}:95`]);
+      expect(FakeNotification.created[1]?.title).toBe(t('notify.usage.five', { pct: 96 }));
+    });
+
+    test('a jump from 50 to 97 notifies both thresholds, and the week has its own tags', () => {
+      notifier.observe(view(50, 85));
+      notifier.observe(view(97, 85));
+      expect(tags()).toEqual([`usage:seven:${RESETS + 86_400_000}:80`, `usage:five:${RESETS}:80`, `usage:five:${RESETS}:95`]);
+      expect(FakeNotification.created[0]?.title).toBe(t('notify.usage.seven', { pct: 85 }));
+    });
+
+    test('the snapshot seeds the thresholds already passed, so a reconnect does not warn again', () => {
+      notifier.observe(snapshot({ usage: { fiveHour: { usedPct: 90, resetsAt: RESETS }, sevenDay: null, at: 1 } }));
+      notifier.observe(view(91));
+      expect(FakeNotification.created).toHaveLength(0);
+      notifier.observe(view(96));
+      expect(tags()).toEqual([`usage:five:${RESETS}:95`]);
+    });
+
+    test('a new window warns again, and the preference turns it off', () => {
+      notifier.observe(view(85));
+      notifier.observe(view(85, null, RESETS + 5 * 3_600_000));
+      expect(tags()).toEqual([`usage:five:${RESETS}:80`, `usage:five:${RESETS + 5 * 3_600_000}:80`]);
+      const prefs = allOn();
+      prefs.events.usage = false;
+      notifier.save(prefs);
+      notifier.observe(view(99, null, RESETS + 10 * 3_600_000));
+      expect(FakeNotification.created).toHaveLength(2);
+    });
+
+    test('the body says the forecast when there is one', () => {
+      const exhausts = RESETS - 3_600_000;
+      notifier.observe({
+        type: 'usage',
+        data: { fiveHour: { usedPct: 82, resetsAt: RESETS, forecast: { rate: 12.4, exhaustsAt: exhausts, safe: false, basis: 'fit' } }, sevenDay: null, at: 1 },
+      });
+      expect(FakeNotification.created[0]?.options.body).toMatch(/^se agota ~\d\d:\d\d \(\+12 %\/h\)$/);
+    });
+  });
+
   test('nothing is notified while the panel is in front and focused', () => {
     page.visible = true;
     page.focused = true;

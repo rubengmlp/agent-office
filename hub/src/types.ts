@@ -868,7 +868,10 @@ export type LessonCreate = { floor: string; role: RoleId; text: string };
 
 export type DocumentContent = { path: string; kind: DocumentKind; markdown: string; notice?: HubText };
 
-export type UsageWindow = { usedPct: number; resetsAt: number };
+// 'fit': pace and moment from a fit of the samples; 'thin': too few samples to say anything yet.
+export type UsageForecast = { rate: number; exhaustsAt: number | null; safe: boolean; basis: 'fit' | 'thin' };
+
+export type UsageWindow = { usedPct: number; resetsAt: number; forecast?: UsageForecast };
 
 export type UsageView = { fiveHour: UsageWindow | null; sevenDay: UsageWindow | null; at: number | null };
 

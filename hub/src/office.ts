@@ -260,7 +260,7 @@ export class Office {
       maxRounds: () => this.config.review.maxRounds,
     });
     this.guards = new GuardDesk({ ...base, git: this.git, claudeHome: opts.claudeHome, docsRoot: () => this.docsRoot() });
-    this.usage = new UsageDesk(this.now, (view) => this.bus.emit({ type: 'usage', data: view }));
+    this.usage = new UsageDesk(this.now, (view) => this.bus.emit({ type: 'usage', data: view }), opts.db);
     this.meter = new MeterDesk({ ...base, db: opts.db, claudeHome: opts.claudeHome });
     this.chat = new ChatDesk({
       db: opts.db,
