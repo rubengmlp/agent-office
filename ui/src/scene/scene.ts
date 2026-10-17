@@ -9,6 +9,7 @@ import {
   Group,
   HemisphereLight,
   Matrix4,
+  Mesh,
   PCFShadowMap,
   PMREMGenerator,
   SRGBColorSpace,
@@ -22,7 +23,8 @@ import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
 import { t } from '../i18n';
 import { agentName, floorLabel } from '../labels';
 import { LiftController, linkLift } from '../lift';
-import type { OfficeHandle } from '../office/office';
+import { boardData, boardInputFor } from '../boards';
+import type { OfficeHandle, OfficeHooks } from '../office/office';
 import type { Store } from '../store';
 import type { AgentView, FloorView } from '../types';
 import { mountUsageCard } from '../usage-card';
@@ -160,6 +162,7 @@ class OfficeScene {
     private readonly host: HTMLElement,
     private readonly store: Store,
     private readonly assets: AssetLibrary,
+    private readonly hooks: OfficeHooks,
   ) {
     this.renderer = new WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     const renderer = this.renderer;
@@ -227,6 +230,7 @@ class OfficeScene {
     this.picker = new Picker(renderer.domElement, this.cameraRig.camera, () => this.pickTargets(), {
       select: (key) => this.store.select(key),
       follow: (key) => this.follow(key),
+      board: (slug) => this.hooks.openTab(this.site.room(slug)?.board?.tab ?? 'table'),
     });
 
     this.unsubscribers.push(
@@ -234,7 +238,10 @@ class OfficeScene {
       store.watch(['agents', 'floors', 'tick', 'lang'], () => {
         this.dirty = true;
       }),
-      store.watch(['lang'], () => this.cameraRig.relabel()),
+      store.watch(['lang'], () => {
+        this.cameraRig.relabel();
+        for (const board of this.site.boards()) board.touch();
+      }),
       store.watch(['messages'], () => {
         this.meetingTimer = MEETING_REFRESH_S;
       }),
@@ -291,6 +298,7 @@ class OfficeScene {
       this.refreshMeetings();
     }
     this.animate(dt);
+    this.paintBoards();
     const followed = this.cameraRig.following;
     const entry = followed === null ? undefined : this.entries.get(followed);
     if (followed !== null && !entry) this.cameraRig.stopFollow();
@@ -451,12 +459,30 @@ class OfficeScene {
     }
   }
 
-  private pickTargets(): Character['proxy'][] {
-    const targets: Character['proxy'][] = [];
+  private pickTargets(): Mesh[] {
+    const targets: Mesh[] = [];
     for (const entry of this.entries.values()) {
       if (entry.character.pickable && entry.character.root.visible) targets.push(entry.character.proxy);
     }
+    for (const board of this.site.boards()) targets.push(board.mesh);
     return targets;
+  }
+
+  // At most one whiteboard is repainted per frame, and only one in view whose text changed.
+  private paintBoards(): void {
+    const boards = this.site.boards();
+    if (boards.length === 0 || !boards.some((board) => board.due(this.elapsed))) return;
+    const camera = this.cameraRig.camera;
+    camera.updateMatrixWorld();
+    _matrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    _frustum.setFromProjectionMatrix(_matrix);
+    for (const board of boards) {
+      if (!board.due(this.elapsed) || !_frustum.intersectsObject(board.mesh)) continue;
+      const room = this.site.room(board.slug);
+      const input = boardInputFor(this.store, board.slug, this.hooks.usageToday());
+      if (!room || !input) continue;
+      if (board.refresh(this.elapsed, boardData(input), room.style.accentCss)) return;
+    }
   }
 
   private canMeet(agent: AgentView): boolean {
@@ -733,10 +759,10 @@ class OfficeScene {
   }
 }
 
-export async function mountScene(host: HTMLElement, store: Store): Promise<OfficeHandle> {
+export async function mountScene(host: HTMLElement, store: Store, hooks: OfficeHooks): Promise<OfficeHandle> {
   const base = `${import.meta.env.BASE_URL}assets/characters/`;
   const manifest = await loadManifest(`${base}manifest.json`);
-  const office = new OfficeScene(host, store, new AssetLibrary(base, manifest));
+  const office = new OfficeScene(host, store, new AssetLibrary(base, manifest), hooks);
   return {
     setActive: (active) => office.setActive(active),
     focusAgent: (key) => office.focusAgent(key),

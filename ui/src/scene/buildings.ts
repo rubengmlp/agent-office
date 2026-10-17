@@ -3,6 +3,7 @@ import { currentLang, t } from '../i18n';
 import { floorLabel, stackLabel } from '../labels';
 import type { FloorView } from '../types';
 import { Batcher, disposeMeshes, transform } from './batch';
+import { BoardScreen } from './boards';
 import {
   AISLE_Z,
   CLEAR_H,
@@ -225,6 +226,7 @@ export class FloorRoom {
   private signature = '';
   private coffeeLed: Mesh | null = null;
   private labLamp: Owned | null = null;
+  board: BoardScreen | null = null;
 
   constructor(view: FloorView) {
     this.view = view;
@@ -275,6 +277,7 @@ export class FloorRoom {
     this.coffeeLed?.removeFromParent();
     this.coffeeLed = null;
     this.labLamp = null;
+    this.board = null;
   }
 
   private rebuild(): void {
@@ -351,7 +354,8 @@ export class FloorRoom {
     const labZ = -HALF_D + 0.36;
     labBench(b, kit, labX, labZ, LAB_BENCH_LEN);
     meetingTable(b, kit, half - MEET_DX, MEET_Z, MEET_W, MEET_D);
-    if (!style.glass) whiteboard(b, kit, half - 3.2, -HALF_D + 0.03, 1.4);
+    const boardX = style.glass ? leadX - 0.2 : half - 3.2;
+    whiteboard(b, kit, boardX, -HALF_D + 0.03, 1.4);
     const led = coffeeCorner(b, kit, half - COFFEE_DX, COFFEE_Z);
     plant(b, kit, half - 0.55, HALF_D - 0.55, 1.3, seed + 11);
     plant(b, kit, half - 3.2, -HALF_D + 0.4, 0.7, seed + 13);
@@ -359,6 +363,11 @@ export class FloorRoom {
     this.meshes = b.build(this.group);
     this.group.add(led);
     this.coffeeLed = led;
+
+    const board = new BoardScreen(this.view.slug, boardX, -HALF_D + 0.03);
+    this.group.add(board.mesh);
+    this.owned.push({ mesh: board.mesh, material: board.material, texture: board.texture });
+    this.board = board;
 
     const screen = labScreen(labX, labZ);
     this.group.add(screen);
@@ -527,6 +536,12 @@ export class Site {
 
   tick(seconds: number, labActive: ReadonlySet<string>): void {
     for (const room of this.order) room.tick(seconds, labActive.has(room.slug));
+  }
+
+  boards(): BoardScreen[] {
+    const boards: BoardScreen[] = [];
+    for (const room of this.order) if (room.board) boards.push(room.board);
+    return boards;
   }
 
   retheme(): void {

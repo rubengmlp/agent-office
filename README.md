@@ -161,6 +161,7 @@ Los lanzadores de los departamentos comprueban `GET /health` y no abren la sesi�
   | `Esc` | Cierra, por este orden, paleta, ayuda, menú y visor |
 
 - **Paleta**: `Cmd/Ctrl+K` busca por letras sueltas, sin importar tildes, entre agentes, plantas, pestañas, planes y acciones (Responder, Pedir estado, Relanzar, Nuevo encargo, Cambiar idioma, Ver historial, Silenciar). En el replay no salen las acciones que escriben.
+- **Pizarras**: cada planta tiene una pizarra con lo que le toca: Dirección, el consumo de hoy y los límites; una planta, sus agentes y el encargo del jefe; Redacción, los planes por estado; Mantenimiento, las skills. Se repintan cada 10 s solo si se ven y han cambiado, y un clic abre la pestaña que corresponde. El consumo de hoy se pide cada minuto solo con la pestaña Oficina activa; en el replay sale «—».
 - **Demo sin sesiones**: <http://127.0.0.1:4747/?replay=/replays/demo.json> (añade `&view=3d` para la 3D).
 
 ## Arquitectura

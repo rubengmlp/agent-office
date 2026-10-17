@@ -61,7 +61,10 @@ export function pulseRings(seconds: number): void {
 export type PickHandlers = {
   select(key: string): void;
   follow(key: string): void;
+  board(slug: string): void;
 };
+
+export type Pick = { kind: 'agent' | 'board'; id: string };
 
 const CLICK_SLOP = 6;
 
@@ -86,19 +89,16 @@ export class Picker {
     element.addEventListener('dblclick', this.onDouble);
   }
 
-  get hoveredKey(): string | null {
-    return this.hovered;
-  }
-
-  pick(clientX: number, clientY: number): string | null {
+  pick(clientX: number, clientY: number): Pick | null {
     const rect = this.element.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return null;
     this.pointer.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(this.pointer, this.camera);
     const hits = this.raycaster.intersectObjects([...this.targets()], false);
     for (const hit of hits) {
-      const key = (hit.object.userData as { agentKey?: unknown }).agentKey;
-      if (typeof key === 'string') return key;
+      const data = hit.object.userData as { agentKey?: unknown; boardSlug?: unknown };
+      if (typeof data.agentKey === 'string') return { kind: 'agent', id: data.agentKey };
+      if (typeof data.boardSlug === 'string') return { kind: 'board', id: data.boardSlug };
     }
     return null;
   }
@@ -106,7 +106,8 @@ export class Picker {
   update(): void {
     if (!this.hoverDirty) return;
     this.hoverDirty = false;
-    const key = this.hover ? this.pick(this.hover.x, this.hover.y) : null;
+    const hit = this.hover ? this.pick(this.hover.x, this.hover.y) : null;
+    const key = hit ? `${hit.kind}:${hit.id}` : null;
     if (key === this.hovered) return;
     this.hovered = key;
     this.element.style.cursor = key ? 'pointer' : '';
@@ -130,8 +131,9 @@ export class Picker {
     this.down = null;
     if (!down || down.button !== 0 || event.button !== 0) return;
     if (Math.hypot(event.clientX - down.x, event.clientY - down.y) > CLICK_SLOP) return;
-    const key = this.pick(event.clientX, event.clientY);
-    if (key) this.handlers.select(key);
+    const hit = this.pick(event.clientX, event.clientY);
+    if (hit?.kind === 'agent') this.handlers.select(hit.id);
+    else if (hit?.kind === 'board') this.handlers.board(hit.id);
   };
 
   private readonly onMove = (event: PointerEvent): void => {
@@ -146,9 +148,9 @@ export class Picker {
   };
 
   private readonly onDouble = (event: MouseEvent): void => {
-    const key = this.pick(event.clientX, event.clientY);
-    if (!key) return;
-    this.handlers.select(key);
-    this.handlers.follow(key);
+    const hit = this.pick(event.clientX, event.clientY);
+    if (hit?.kind !== 'agent') return;
+    this.handlers.select(hit.id);
+    this.handlers.follow(hit.id);
   };
 }

@@ -2,7 +2,9 @@ import { Container, Graphics } from 'pixi.js';
 import { currentLang, t } from '../i18n';
 import { floorLabel, stackLabel } from '../labels';
 import type { FloorView } from '../types';
-import { DESK_BASE_Y, LEAD_SLOT_W, MARGIN, WALL_H } from './constants';
+import type { Tab } from '../topbar';
+import { BoardSprite, BOARD_SPRITE_W, BOARD_SPRITE_Y } from './board-sprite';
+import { DESK_BASE_Y, LEAD_SLOT_W, MARGIN, UTIL_W, WALL_H } from './constants';
 import {
   buildDesk,
   buildMeetingFurniture,
@@ -20,6 +22,7 @@ import { floorPalette, mix, type FloorPalette } from './palette';
 import { makeText, px } from './pixel';
 
 const TABLE_BASE = 15;
+const WINDOW_W = 26;
 
 function plateTitle(view: FloorView): string {
   return view.kind === 'mantenimiento' ? t('scene.plate.annex', { name: floorLabel(view) }) : floorLabel(view);
@@ -36,6 +39,7 @@ function plateSubtitle(view: FloorView): string {
 export class FloorScene {
   readonly background = new Container();
   readonly foreground = new Container();
+  readonly board: BoardSprite;
   top: number;
 
   private readonly bg = new Graphics();
@@ -52,9 +56,11 @@ export class FloorScene {
     public view: FloorView,
     public layout: FloorLayout,
     top: number,
+    onBoard: (tab: Tab) => void,
   ) {
     this.top = top;
-    this.background.addChild(this.bg, this.plate, this.labLamp, this.coffeeLed);
+    this.board = new BoardSprite(onBoard);
+    this.background.addChild(this.bg, this.board.sprite, this.plate, this.labLamp, this.coffeeLed);
     this.foreground.addChild(this.glass);
     this.foreground.eventMode = 'none';
     this.actors.addChild(this.meeting.back, this.meeting.front);
@@ -86,6 +92,7 @@ export class FloorScene {
       this.draw();
     }
 
+    this.board.sprite.position.set(this.boardX(), BOARD_SPRITE_Y);
     this.syncLeadDesk();
     const { table } = layout;
     this.meeting.back.position.set(table.x, top + table.y);
@@ -119,7 +126,12 @@ export class FloorScene {
     this.coffeeLed.visible = Math.floor(seconds / 0.6) % 2 === 0;
   }
 
+  private boardX(): number {
+    return this.layout.width - UTIL_W - 4 - BOARD_SPRITE_W;
+  }
+
   destroy(): void {
+    this.board.destroy();
     this.actors.removeChild(this.meeting.back, this.meeting.front);
     if (this.leadParts) this.actors.removeChild(this.leadParts.back, this.leadParts.front);
     this.background.destroy({ children: true });
@@ -157,7 +169,11 @@ export class FloorScene {
     px(g, 0, 0, width, WALL_H, palette.wall);
     px(g, 0, WALL_H - 9, width, 8, palette.wallDark);
     px(g, 0, WALL_H - 1, width, 1, palette.trim);
-    for (const frame of windows) drawWindow(g, frame.x, frame.y, palette);
+    const boardX = this.boardX();
+    for (const frame of windows) {
+      if (frame.x + WINDOW_W > boardX - 2 && frame.x < boardX + BOARD_SPRITE_W + 2) continue;
+      drawWindow(g, frame.x, frame.y, palette);
+    }
 
     px(g, 0, WALL_H, width, height - WALL_H, palette.floorA);
     for (let y = WALL_H; y < height; y += 8) {

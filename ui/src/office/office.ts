@@ -1,7 +1,9 @@
 import { Application, Container, Graphics } from 'pixi.js';
 import { LiftController, linkLift } from '../lift';
 import type { Store } from '../store';
-import type { AgentView } from '../types';
+import { boardData, boardInputFor } from '../boards';
+import type { Tab } from '../topbar';
+import type { AgentView, FloorView, UsageSummary } from '../types';
 import { mountUsageCard } from '../usage-card';
 import { Backdrop } from './backdrop';
 import { CharacterView, type Target } from './character-view';
@@ -22,6 +24,7 @@ import {
   SIDE_MARGIN,
   SKY_H,
   SLOT_W,
+  WALL_H,
 } from './constants';
 import { FloorScene } from './floor-scene';
 import { buildDesk, type DeskParts } from './furniture';
@@ -39,7 +42,7 @@ import {
 } from './layout';
 import { LiftCabin } from './lift-cabin';
 import { findMeetingPairs } from './meetings';
-import { hashString } from './palette';
+import { floorPalette, hashString } from './palette';
 
 type Entry = {
   view: CharacterView;
@@ -59,6 +62,12 @@ const HEAD_HEIGHT = 20;
 const FALLBACK_BACKGROUND = '#0b0e12';
 
 export type OfficeHandle = { setActive(active: boolean): void; focusAgent(key: string): void; focusFloor(slug: string): void };
+
+export type OfficeHooks = { openTab(tab: Tab): void; usageToday(): UsageSummary | null };
+
+function accentCss(floor: FloorView): string {
+  return `#${floorPalette(floor).accent.toString(16).padStart(6, '0')}`;
+}
 
 function canvasBackground(): string {
   const value = getComputedStyle(document.documentElement).getPropertyValue('--canvas-bg').trim();
@@ -124,7 +133,10 @@ class OfficeView {
   private meetingTimer = 0;
   private dirty = true;
 
-  constructor(private readonly store: Store) {}
+  constructor(
+    private readonly store: Store,
+    private readonly hooks: OfficeHooks,
+  ) {}
 
   async mount(host: HTMLElement): Promise<void> {
     await this.app.init({
@@ -154,6 +166,9 @@ class OfficeView {
       this.dirty = true;
     });
     this.store.watch(['selection'], () => this.focusSelected());
+    this.store.watch(['lang'], () => {
+      for (const scene of this.scenes.values()) scene.board.touch();
+    });
   }
 
   setActive(active: boolean): void {
@@ -192,6 +207,7 @@ class OfficeView {
     this.garden.tick(dt, this.elapsed);
     this.backdrop.tick(this.elapsed);
     this.animate(dt);
+    this.paintBoards();
     this.repath();
     this.cabin.update(this.lift, this.ground()?.layout.lift ?? null);
     this.drawLines();
@@ -226,7 +242,7 @@ class OfficeView {
       if (scene) {
         scene.update(floor, layout, top);
       } else {
-        scene = new FloorScene(this.actors, floor, layout, top);
+        scene = new FloorScene(this.actors, floor, layout, top, (tab) => this.hooks.openTab(tab));
         this.scenes.set(floor.slug, scene);
         this.backgrounds.addChild(scene.background);
         this.foregrounds.addChild(scene.foreground);
@@ -492,6 +508,17 @@ class OfficeView {
     for (const scene of this.sceneOrder) scene.tick(this.elapsed, testingFloors.has(scene.slug));
   }
 
+  // At most one whiteboard is repainted per frame, and only one on screen whose text changed.
+  private paintBoards(): void {
+    const top = this.scrollY;
+    const bottom = top + this.app.screen.height / SCALE;
+    for (const scene of this.sceneOrder) {
+      if (scene.top + WALL_H < top || scene.top > bottom || !scene.board.due(this.elapsed)) continue;
+      const input = boardInputFor(this.store, scene.slug, this.hooks.usageToday());
+      if (input && scene.board.refresh(this.elapsed, boardData(input), accentCss(scene.view))) return;
+    }
+  }
+
   private latestRecipient(fromKey: string): string | null {
     const { messages } = this.store;
     for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -567,8 +594,8 @@ class OfficeView {
   }
 }
 
-export async function mountOffice(host: HTMLElement, store: Store): Promise<OfficeHandle> {
-  const office = new OfficeView(store);
+export async function mountOffice(host: HTMLElement, store: Store, hooks: OfficeHooks): Promise<OfficeHandle> {
+  const office = new OfficeView(store, hooks);
   await office.mount(host);
   return {
     setActive: (active) => office.setActive(active),

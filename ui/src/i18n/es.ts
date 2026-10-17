@@ -1119,6 +1119,23 @@ export const es = {
   'palette.hint.lang': 'Idioma',
   'palette.hint.notifications': 'Avisos de escritorio',
   'palette.muted': 'Notificaciones silenciadas.',
+  'whiteboard.today': 'Hoy: {tokens}',
+  'whiteboard.working': '{working} de {total} trabajando',
+  'whiteboard.task': 'Encargo: {task}',
+  'whiteboard.more': '+{n} más',
+  'whiteboard.order': 'Tarjeta: {title}',
+  'whiteboard.noPlans': 'Sin planes.',
+  'whiteboard.noSkills': 'Sin skills.',
+  'whiteboard.plans.pending.one': '{n} plan por decidir',
+  'whiteboard.plans.pending.other': '{n} planes por decidir',
+  'whiteboard.plans.running.one': '{n} plan en ejecución',
+  'whiteboard.plans.running.other': '{n} planes en ejecución',
+  'whiteboard.plans.drafting.one': '{n} plan en redacción',
+  'whiteboard.plans.drafting.other': '{n} planes en redacción',
+  'whiteboard.skills.total.one': '{n} skill en el taller',
+  'whiteboard.skills.total.other': '{n} skills en el taller',
+  'whiteboard.skills.approved.one': '{n} aprobada',
+  'whiteboard.skills.approved.other': '{n} aprobadas',
 } as const;
 
 export type Messages = { [K in keyof typeof es]: string };

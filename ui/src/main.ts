@@ -11,7 +11,7 @@ import { LiveConnection } from './live';
 import { goToNeed, paletteContext, runKey, runTarget, type Nav } from './navigate';
 import { NeedCursor } from './needs';
 import { Notifier } from './notify';
-import type { OfficeHandle } from './office/office';
+import type { OfficeHandle, OfficeHooks } from './office/office';
 import { mountPalette } from './palette/palette';
 import { mountSettings } from './settings/settings';
 import { closeDocument } from './panel/deliverables';
@@ -20,6 +20,7 @@ import { mountPanel } from './panel/panel';
 import { mountPlans } from './plans/plans';
 import { loadRecording, mountReplayControls, ReplayPlayer } from './replay';
 import { Store } from './store';
+import { UsageToday } from './usage-today';
 import { mountBoard } from './board/board';
 import { mountChat, type ChatHandle } from './chat/chat';
 import { mountTable } from './table/table';
@@ -44,6 +45,7 @@ async function boot(): Promise<void> {
   let tab: Tab = 'office';
   let office: OfficeHandle | null = null;
   let chat: ChatHandle | null = null;
+  let usageToday: UsageToday | null = null;
 
   const officeHost = el('div', 'view office-view active');
   const tableHost = el('div', 'view table-view');
@@ -81,6 +83,7 @@ async function boot(): Promise<void> {
     settingsHost.classList.toggle('active', next === 'settings');
     office?.setActive(next === 'office');
     chat?.setActive(next === 'chat');
+    usageToday?.setActive(next === 'office');
   };
 
   const topbar = mountTopbar(store, showTab, (need) => goToNeed(nav, need));
@@ -105,6 +108,8 @@ async function boot(): Promise<void> {
   };
 
   const api = replayUrl || !token ? null : new OfficeApi(token, expire);
+  usageToday = api ? new UsageToday(api) : null;
+  usageToday?.setActive(tab === 'office');
   const actions: Actions = api ? liveActions(store, api) : replayActions(store);
 
   mountTable(tableHost, store, api);
@@ -140,10 +145,11 @@ async function boot(): Promise<void> {
     modalOpen: () => palette.isOpen() || help.isOpen() || document.querySelector('.dialog-backdrop, .modal-backdrop') !== null,
   });
 
+  const hooks: OfficeHooks = { openTab: showTab, usageToday: () => usageToday?.latest ?? null };
   const mountView: Promise<OfficeHandle> =
     view === '3d'
-      ? import('./scene/scene').then((module) => module.mountScene(officeHost, store))
-      : import('./office/office').then((module) => module.mountOffice(officeHost, store));
+      ? import('./scene/scene').then((module) => module.mountScene(officeHost, store, hooks))
+      : import('./office/office').then((module) => module.mountOffice(officeHost, store, hooks));
   mountView
     .then((handle) => {
       office = handle;
