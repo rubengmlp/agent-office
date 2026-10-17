@@ -21,7 +21,7 @@ import {
   TURN_SPEED,
   WALK_SPEED,
 } from './constants';
-import { buildProps, type Props } from './effects';
+import { buildProps, coffeeLevel, type Props } from './effects';
 import type { Desk } from './furniture';
 import { AgentLabel, type BadgeKind, type LabelIcon, type LabelLod } from './labels';
 import { liftLeg, planPath, STREET, type LiftLeg, type LiftStops, type Nav, type Target, type Waypoint } from './layout';
@@ -45,6 +45,7 @@ export type FrameInput = {
   name: string;
   following: boolean;
   camera: Vector3;
+  context: number | null;
 };
 
 export type Resolver = (floor: string) => Vector3 | null;
@@ -332,7 +333,9 @@ export class Character {
       alpha: alpha > 0.01 && !occluded(_b.copy(this.root.position).addScaledVector(UP, WAIST_HEIGHT * input.scale)) ? alpha : 0,
       lod,
       following: input.following,
+      context: input.context,
     });
+    this.props.coffee.scale.set(coffeeLevel(input.context), 1, coffeeLevel(input.context));
   }
 
   dispose(): void {

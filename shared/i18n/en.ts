@@ -26,6 +26,7 @@ export const hubEn = {
   'hub.detail.verdictNoAgreement': 'verdict: no agreement',
   'hub.detail.waitingFor': 'Waiting for {who}: {what}',
   'hub.act.sessionStart': 'session started ({source})',
+  'hub.act.compacted': '{who} compacted its context ({from} → {to})',
   'hub.act.newTurn': 'new turn',
   'hub.act.permission': 'asks permission for {tool}',
   'hub.act.subagentStart': 'starts {who}',

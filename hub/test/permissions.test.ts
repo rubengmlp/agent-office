@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PROFILES_DIR, REPO_ROOT, normalizeConfig } from '../src/config';
 import { FloorError, planFloor } from '../src/floor-cli';
-import { BASE_SETTINGS, STATUSLINE_SCRIPT, STATUS_LINE, clonePermissions, isOfficeClone, sessionScript, sessionSpecs } from '../src/office-sh';
+import { BASE_SETTINGS, MCP_ALLOW, MCP_SCRIPT, STATUSLINE_SCRIPT, STATUS_LINE, clonePermissions, isOfficeClone, mcpConfig, sessionScript, sessionSpecs } from '../src/office-sh';
 import { loadProfiles } from '../src/profiles';
 import { applySettings, settingsView } from '../src/settings';
 import type { HookMeta } from '../src/types';
@@ -170,8 +170,8 @@ describe('permission modes and clone floors in the launchers', () => {
     expect(lead.extraArgs.slice(0, 2)).toEqual(['--add-dir', plans]);
     const deny = [`Edit(//${plans.slice(1)}/**)`, `Write(//${plans.slice(1)}/**)`];
     expect(deny[0]).toStartWith('Edit(//');
-    expect(lead.settings).toEqual({ ...BASE_SETTINGS, permissions: { deny } });
-    expect(sessionScript(lead, 4747)).toContain(`"permissions":{"deny":["Edit(//${plans.slice(1)}/**)"`);
+    expect(lead.settings).toEqual({ ...BASE_SETTINGS, permissions: { allow: MCP_ALLOW, deny } });
+    expect(sessionScript(lead, 4747)).toContain(`"deny":["Edit(//${plans.slice(1)}/**)"`);
     const director = specs.find((s) => s.name === 'director')!;
     expect(director.extraArgs.flatMap((arg, i) => (arg === '--add-dir' ? [director.extraArgs[i + 1]] : []))).toEqual([mobile, docs, p.skillsDir]);
     expect(director.settings).toEqual(BASE_SETTINGS);
@@ -209,6 +209,42 @@ describe('permission modes and clone floors in the launchers', () => {
     cleanup();
   });
 
+  test('every session loads the office MCP server by absolute path, allows its tools and keeps ask and deny', () => {
+    const { dir, cleanup } = tempDir();
+    const p = fakePaths(dir);
+    const clone = makeRepo(dir, 'agent-office-dev', { 'package.json': '{}' });
+    mkdirSync(join(clone, '.claude-plugin'), { recursive: true });
+    writeFileSync(join(clone, '.claude-plugin', 'marketplace.json'), JSON.stringify({ name: 'agent-office' }));
+    const docs = join(dir, 'docs');
+    mkdirSync(join(docs, 'redaccion', 'planes'), { recursive: true });
+    mkdirSync(p.skillsDir, { recursive: true });
+    const config = testConfig({ docsRepo: docs, departments: { redaccion: true, mantenimiento: true }, floors: { 'agent-office-dev': floor(clone) } });
+    const specs = sessionSpecs(config, p, '/ws');
+    expect(specs.map((s) => s.name)).toEqual(['director', 'lead-agent-office-dev', 'lead-redaccion', 'lead-mantenimiento']);
+    expect(MCP_ALLOW).toEqual(['mcp__office__office_state', 'mcp__office__office_plans', 'mcp__office__office_usage', 'mcp__office__office_search']);
+    const expected = { mcpServers: { office: { command: process.execPath, args: [MCP_SCRIPT], env: { AGENT_OFFICE_HOME: p.home } } } };
+    expect(mcpConfig(p)).toEqual(expected);
+    expect(MCP_SCRIPT.startsWith('/')).toBe(true);
+    expect(MCP_SCRIPT).toEndWith('/hub/src/mcp.ts');
+    for (const spec of specs) {
+      expect(spec.mcpConfig).toEqual(expected);
+      expect((spec.settings.permissions as { allow: string[] }).allow).toEqual(MCP_ALLOW);
+      const script = sessionScript(spec, 4747);
+      expect(script).toContain(`'--mcp-config' '${JSON.stringify(expected)}'`);
+      expect(script).not.toContain('--strict-mcp-config');
+      // A flag with many values goes before another flag, never last, or it would swallow the prompt of "$@".
+      const args = script.slice(script.indexOf('exec claude'));
+      expect(args.indexOf("'--mcp-config'")).toBeLessThan(args.indexOf("'--settings'"));
+    }
+    const lead = specs.find((s) => s.name === 'lead-agent-office-dev')!;
+    const permissions = lead.settings.permissions as { allow: string[]; ask: string[]; deny?: string[] };
+    expect(permissions.allow).toEqual(MCP_ALLOW);
+    expect(permissions.ask).toEqual(clonePermissions());
+    const redaccionLead = sessionSpecs({ ...config, floors: { mobile: floor(makeRepo(dir, 'mobile')) } }, p, '/ws').find((s) => s.name === 'lead-mobile')!;
+    expect(redaccionLead.settings.permissions).toEqual({ allow: MCP_ALLOW, deny: expect.any(Array) });
+    cleanup();
+  });
+
   test('only a clone of Agent Office gets the ask rules, and the live copy cannot become a floor', () => {
     const { dir, cleanup } = tempDir();
     const p = fakePaths(dir);
@@ -227,8 +263,8 @@ describe('permission modes and clone floors in the launchers', () => {
     expect(rules).toContain('Edit(~/.claude/agents/**)');
     const specs = sessionSpecs(testConfig({ floors: { 'agent-office-dev': floor(clone), web: floor(other) } }), p, '/ws');
     const cloneSpec = specs.find((s) => s.name === 'lead-agent-office-dev')!;
-    expect(cloneSpec.settings).toEqual({ ...BASE_SETTINGS, permissions: { ask: rules } });
-    expect(sessionScript(cloneSpec, 4747)).toContain('"permissions":{"ask":["Bash(bun run setup)"');
+    expect(cloneSpec.settings).toEqual({ ...BASE_SETTINGS, permissions: { allow: MCP_ALLOW, ask: rules } });
+    expect(sessionScript(cloneSpec, 4747)).toContain('"ask":["Bash(bun run setup)"');
     expect(specs.find((s) => s.name === 'lead-web')!.settings).toEqual(BASE_SETTINGS);
     expect(() => planFloor(p, loadProfiles(PROFILES_DIR), REPO_ROOT)).toThrow(FloorError);
     cleanup();

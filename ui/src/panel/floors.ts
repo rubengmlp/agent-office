@@ -4,7 +4,7 @@ import { el, keepFocus, setStateColor } from '../dom';
 import { plural, t } from '../i18n';
 import { checksBadgeNode } from '../board/badges';
 import { activeOrder } from '../board/columns';
-import { agentName, doingPhrase, floorLabel, isAway, roleLabel, STATE_COLORS } from '../labels';
+import { agentName, contextFill, contextLevel, contextLine, contextOf, doingPhrase, floorLabel, isAway, roleLabel, STATE_COLORS } from '../labels';
 import type { Store } from '../store';
 import { relativeTime } from '../time';
 import type { AgentView, FloorView } from '../types';
@@ -32,6 +32,7 @@ function agentRow(store: Store, row: Row, times: TimeNode[], now: number): HTMLE
     store.questionFor(agent.key) ? el('span', 'floors-ask', '?') : null,
     time,
     el('span', 'floors-doing', doingPhrase(agent, state)),
+    contextBar(agent),
   );
   item.type = 'button';
   item.dataset.key = agent.key;
@@ -39,6 +40,18 @@ function agentRow(store: Store, row: Row, times: TimeNode[], now: number): HTMLE
   item.style.paddingLeft = `${8 + depth * 14}px`;
   item.title = agent.task ? t('floors.task', { task: agent.task }) : agentName(agent);
   return el('li', '', item, sessionActions(store, agent, depth, times, now));
+}
+
+// Two pixels under the row: how full the context window of the agent is.
+function contextBar(agent: AgentView): HTMLElement | null {
+  const context = contextOf(agent);
+  if (!context) return null;
+  const bar = el('span', 'floors-ctx');
+  bar.dataset.level = contextLevel(context.usedPct);
+  bar.style.width = `${contextFill(context)}%`;
+  bar.setAttribute('role', 'img');
+  bar.setAttribute('aria-label', contextLine(context));
+  return bar;
 }
 
 function sessionActions(store: Store, agent: AgentView, depth: number, times: TimeNode[], now: number): HTMLElement | null {

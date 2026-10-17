@@ -3377,4 +3377,59 @@ button.order-tab-button.active {
 
 .timeline-search {
   margin-bottom: 8px;
+/* Context window of each agent: 2 px under the row of Plantas and a bar in the card Ahora. */
+.floors-row {
+  position: relative;
+}
+
+.floors-ctx {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  max-width: 100%;
+  background: var(--ok);
+  pointer-events: none;
+}
+
+.floors-ctx[data-level='warn'],
+.now-ctx-fill[data-level='warn'] {
+  background: var(--asking);
+}
+
+.floors-ctx[data-level='danger'],
+.now-ctx-fill[data-level='danger'] {
+  background: var(--danger);
+}
+
+.now-ctx {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0;
+  font-size: 11px;
+}
+
+.now-ctx-bar {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--border);
+}
+
+.now-ctx-fill {
+  display: block;
+  height: 100%;
+  background: var(--ok);
+}
+
+.usage-forecast {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.usage-forecast[data-level='danger'] {
+  color: var(--danger);
 }

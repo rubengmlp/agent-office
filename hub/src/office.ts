@@ -274,7 +274,7 @@ export class Office {
       maxRounds: () => this.config.review.maxRounds,
     });
     this.guards = new GuardDesk({ ...base, git: this.git, claudeHome: opts.claudeHome, docsRoot: () => this.docsRoot() });
-    this.usage = new UsageDesk(this.now, (view) => this.bus.emit({ type: 'usage', data: view }));
+    this.usage = new UsageDesk(this.now, (view) => this.bus.emit({ type: 'usage', data: view }), opts.db);
     this.meter = new MeterDesk({ ...base, db: opts.db, claudeHome: opts.claudeHome });
     this.chat = new ChatDesk({
       db: opts.db,
@@ -433,7 +433,11 @@ export class Office {
   }
 
   ingestUsage(raw: unknown): string {
-    if (this.live) this.meter.noteUsage(raw);
+    if (this.live) {
+      this.meter.noteUsage(raw);
+      const context = this.usage.contextOf(raw);
+      if (context) this.meter.noteContext(context);
+    }
     return this.usage.ingest(raw);
   }
 
@@ -557,6 +561,7 @@ export class Office {
     this.book.emitAgent(agent, now);
     if (c.message) this.recordMessage(c.message, agent, session, now);
     this.pushActivity({ ts: now, agentKey: agent.key, event: c.event, tool: c.tool, state: nextState, summary: publicSummary(c, kind) });
+    if (c.event === 'SessionStart' && e.source === 'compact') this.noteCompaction(agent, now);
     if (this.live) {
       this.guards.trackDepartment(agent, c.event, ended);
       this.guards.trackChanges(agent, kind, c.event, ended);
@@ -1001,6 +1006,21 @@ export class Office {
 
   search(query: SearchQuery): SearchResult {
     return this.searches.search(query);
+  }
+
+  private noteCompaction(agent: AgentRuntime, now: number): void {
+    const { from, to } = this.meter.compacted(agent);
+    const pct = (value: number | null): string => (value === null ? '?' : `${value} %`);
+    const who = agent.name ?? agent.role ?? agent.key.slice(0, 8);
+    this.pushActivity({
+      ts: now,
+      agentKey: agent.key,
+      event: 'Compacted',
+      tool: null,
+      state: null,
+      summary: { key: 'hub.act.compacted', params: { who, from: pct(from), to: pct(to) } },
+    });
+    this.book.emitAgent(agent, now);
   }
 
   private pushActivity(entry: ActivityView): void {

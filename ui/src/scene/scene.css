@@ -192,8 +192,35 @@
 }
 
 .scene-tag[data-lod='far'] .scene-tag-chip,
-.scene-tag[data-lod='far'] .scene-tag-progress {
+.scene-tag[data-lod='far'] .scene-tag-progress,
+.scene-tag[data-lod='far'] .scene-tag-ctx {
   display: none;
+}
+
+.scene-tag-ctx {
+  width: 48px;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: rgba(15, 23, 42, 0.6);
+}
+
+.scene-tag-ctx[hidden] {
+  display: none;
+}
+
+.scene-tag-ctx-fill {
+  display: block;
+  height: 100%;
+  background: var(--ok);
+}
+
+.scene-tag-ctx[data-level='warn'] .scene-tag-ctx-fill {
+  background: var(--asking);
+}
+
+.scene-tag-ctx[data-level='danger'] .scene-tag-ctx-fill {
+  background: var(--danger);
 }
 
 .scene-tag.is-selected .scene-tag-chip {

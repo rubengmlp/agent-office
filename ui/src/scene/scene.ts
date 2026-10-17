@@ -21,7 +21,7 @@ import {
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
 import { t } from '../i18n';
-import { agentName, floorLabel } from '../labels';
+import { agentName, contextOf, floorLabel } from '../labels';
 import { LiftController, linkLift } from '../lift';
 import { boardData, boardInputFor } from '../boards';
 import type { OfficeHandle, OfficeHooks } from '../office/office';
@@ -576,6 +576,7 @@ class OfficeScene {
           name: agentName(agent),
           following: following === key,
           camera,
+          context: contextOf(agent)?.usedPct ?? null,
         },
         resolve,
         occluded,

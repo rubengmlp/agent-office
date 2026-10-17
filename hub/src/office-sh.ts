@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { DELIVERY_MARK, managedFloors } from './agents';
 import { PLUGIN_DIR, REPO_ROOT, SCRIPTS_DIR, WORKSPACE_DIR, docsRepoPath, permissionModeFor, roleSettingsFor, writeAtomic, type Paths } from './config';
 import { MANTENIMIENTO, REDACCION, REDACCION_DIR, TALLER_DIR, realPath } from './floors';
+import { ALLOWED_TOOLS, SERVER_NAME } from './mcp';
 import { deliveryOf, profileFor, type Profiles } from './profiles';
 import type { OfficeConfig, PermissionMode, RoleSettings } from './types';
 
@@ -15,7 +16,11 @@ export type SessionSpec = {
   needsHub: boolean;
   permissionMode: PermissionMode;
   settings: Record<string, unknown>;
+  // MCP servers of the session (--mcp-config). Not strict: the servers of the user and the project still load.
+  mcpConfig?: McpConfig;
 };
+
+export type McpConfig = { mcpServers: Record<string, { command: string; args: string[]; env: Record<string, string> }> };
 
 export const TMUX_SESSION = 'agent-office';
 
@@ -25,7 +30,21 @@ export const CLONE_PERMISSIONS_FILE = join(PLUGIN_DIR, 'settings', 'clone-permis
 
 export const STATUSLINE_SCRIPT = join(SCRIPTS_DIR, 'office-statusline.sh');
 export const STATUS_LINE = { type: 'command', command: `sh ${sq(STATUSLINE_SCRIPT)}`, refreshInterval: 60 };
-export const BASE_SETTINGS = { subagentPromptCacheTtl: '1h', statusLine: STATUS_LINE };
+export const MCP_SCRIPT = join(REPO_ROOT, 'hub', 'src', 'mcp.ts');
+// The tools of the read-only MCP server of the office, allowed without asking.
+export const MCP_ALLOW = [...ALLOWED_TOOLS];
+export const BASE_SETTINGS = { subagentPromptCacheTtl: '1h', statusLine: STATUS_LINE, permissions: { allow: MCP_ALLOW } };
+
+// The server of the office as the sessions launch it: this very Bun on hub/src/mcp.ts, with the home of the
+// office so that it finds the key and the port. The key itself never travels in the configuration.
+export function mcpConfig(p: Paths): McpConfig {
+  return { mcpServers: { [SERVER_NAME]: { command: process.execPath, args: [MCP_SCRIPT], env: { AGENT_OFFICE_HOME: p.home } } } };
+}
+
+// BASE_SETTINGS with more permissions: the allow rules of the base stay beside the ask and deny of the session.
+export function withPermissions(extra: { ask?: string[]; deny?: string[] }): Record<string, unknown> {
+  return { ...BASE_SETTINGS, permissions: { allow: MCP_ALLOW, ...extra } };
+}
 
 export function isOfficeClone(dir: string, liveRoot = REPO_ROOT): boolean {
   try {
@@ -78,6 +97,7 @@ export function denyWrites(dirs: readonly string[]): string[] {
 
 export function sessionSpecs(config: OfficeConfig, p: Paths, workspaceDir = WORKSPACE_DIR, liveRoot = REPO_ROOT): SessionSpec[] {
   const addDirs = directorReadDirs(config, p).flatMap((dir) => ['--add-dir', dir]);
+  const mcp = mcpConfig(p);
   const specs: SessionSpec[] = [
     {
       name: 'director',
@@ -88,6 +108,7 @@ export function sessionSpecs(config: OfficeConfig, p: Paths, workspaceDir = WORK
       needsHub: false,
       permissionMode: permissionModeFor(config, 'direccion'),
       settings: BASE_SETTINGS,
+      mcpConfig: mcp,
     },
   ];
   const plans = floorReadDirs(config);
@@ -103,7 +124,8 @@ export function sessionSpecs(config: OfficeConfig, p: Paths, workspaceDir = WORK
       extraArgs: [...plans.flatMap((dir) => ['--add-dir', dir]), ...modelArgs(roleSettingsFor(config, slug, 'lead'))],
       needsHub: false,
       permissionMode: permissionModeFor(config, slug),
-      settings: Object.keys(permissions).length > 0 ? { ...BASE_SETTINGS, permissions } : BASE_SETTINGS,
+      settings: Object.keys(permissions).length > 0 ? withPermissions(permissions) : BASE_SETTINGS,
+      mcpConfig: mcp,
     });
   }
   const docs = docsRepoPath(config);
@@ -117,6 +139,7 @@ export function sessionSpecs(config: OfficeConfig, p: Paths, workspaceDir = WORK
       needsHub: true,
       permissionMode: permissionModeFor(config, REDACCION),
       settings: BASE_SETTINGS,
+      mcpConfig: mcp,
     });
   }
   if (config.departments.mantenimiento) {
@@ -129,6 +152,7 @@ export function sessionSpecs(config: OfficeConfig, p: Paths, workspaceDir = WORK
       needsHub: true,
       permissionMode: permissionModeFor(config, MANTENIMIENTO),
       settings: BASE_SETTINGS,
+      mcpConfig: mcp,
     });
   }
   return specs;
@@ -161,6 +185,8 @@ export function directorFloorsText(config: OfficeConfig, profiles: Profiles): st
 }
 
 export function sessionScript(spec: SessionSpec, port: number): string {
+  // --mcp-config takes any number of values: it goes before another flag, never last.
+  const mcp = spec.mcpConfig ? ['--mcp-config', JSON.stringify(spec.mcpConfig)] : [];
   const args = [
     '--agent',
     spec.agent,
@@ -170,6 +196,7 @@ export function sessionScript(spec: SessionSpec, port: number): string {
     'in-process',
     '--permission-mode',
     spec.permissionMode,
+    ...mcp,
     '--settings',
     JSON.stringify(spec.settings),
     ...spec.extraArgs,

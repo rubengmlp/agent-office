@@ -148,7 +148,12 @@ function kit(): PropKit {
   return propKit;
 }
 
-export type Props = { mug: Group; folder: Group; stamp: Group; pad: Mesh };
+export type Props = { mug: Group; coffee: Mesh; folder: Group; stamp: Group; pad: Mesh };
+
+// The coffee in the mug of an idle agent runs out as its context fills up: purely decorative.
+export function coffeeLevel(context: number | null): number {
+  return context === null ? 1 : Math.max(0.05, 1 - Math.min(100, Math.max(0, context)) / 100);
+}
 
 function part(group: Group, geometry: BoxGeometry | CylinderGeometry | TorusGeometry, material: MeshStandardMaterial, x: number, y: number, z: number): Mesh {
   const mesh = new Mesh(geometry, material);
@@ -162,7 +167,7 @@ export function buildProps(): Props {
   const k = kit();
   const mug = new Group();
   part(mug, k.mug, k.ceramic, 0, 0, 0);
-  part(mug, k.coffeeTop, k.coffee, 0, 0.046, 0);
+  const coffee = part(mug, k.coffeeTop, k.coffee, 0, 0.0515, 0);
   const handle = part(mug, k.handle, k.ceramic, 0.042, 0, 0);
   handle.rotation.set(0, 0, -Math.PI / 2);
   const folder = new Group();
@@ -175,7 +180,7 @@ export function buildProps(): Props {
   pad.position.y = -0.03;
   pad.receiveShadow = true;
   for (const item of [mug, folder, stamp, pad]) item.visible = false;
-  return { mug, folder, stamp, pad };
+  return { mug, coffee, folder, stamp, pad };
 }
 
 export function disposeProps(): void {

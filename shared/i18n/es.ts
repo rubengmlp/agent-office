@@ -26,6 +26,7 @@ export const hubEs = {
   'hub.detail.verdictNoAgreement': 'veredicto: sin acuerdo',
   'hub.detail.waitingFor': 'Esperando a {who}: {what}',
   'hub.act.sessionStart': 'sesión iniciada ({source})',
+  'hub.act.compacted': '{who} compactó su contexto ({from} → {to})',
   'hub.act.newTurn': 'nuevo turno',
   'hub.act.permission': 'pide permiso para {tool}',
   'hub.act.subagentStart': 'empieza {who}',

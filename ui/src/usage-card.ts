@@ -1,27 +1,37 @@
 import { el } from './dom';
 import { t } from './i18n';
 import type { Store } from './store';
-import { duration, relativeTime } from './time';
+import { clockMinutes, duration, relativeTime } from './time';
 import type { UsageWindow } from './types';
 
 export const STALE_USAGE_MS = 15 * 60_000;
 const WARN_PCT = 70;
 const DANGER_PCT = 90;
 
-type Row = { root: HTMLElement; label: HTMLElement; pct: HTMLElement; fill: HTMLElement; reset: HTMLElement };
+type Row = { root: HTMLElement; label: HTMLElement; pct: HTMLElement; fill: HTMLElement; reset: HTMLElement; forecast: HTMLElement };
 
 function row(text: string): Row {
   const label = el('span', 'usage-label', text);
   const pct = el('span', 'usage-pct');
   const fill = el('span', 'usage-fill');
   const reset = el('span', 'usage-reset');
-  const root = el('div', 'usage-row', label, pct, el('span', 'usage-bar', fill), reset);
-  return { root, label, pct, fill, reset };
+  const forecast = el('span', 'usage-forecast');
+  const root = el('div', 'usage-row', label, pct, el('span', 'usage-bar', fill), reset, forecast);
+  return { root, label, pct, fill, reset, forecast };
 }
 
 function level(pct: number): string {
   if (pct >= DANGER_PCT) return 'danger';
   return pct >= WARN_PCT ? 'warn' : 'ok';
+}
+
+// When the window runs dry at the pace of the last minutes, if it does before it resets.
+export function forecastText(sample: UsageWindow): { text: string; level: 'safe' | 'danger' | 'thin' } | null {
+  const forecast = sample.forecast;
+  if (!forecast) return null;
+  if (forecast.basis === 'thin') return { text: t('usage.forecast.thin'), level: 'thin' };
+  if (forecast.safe || forecast.exhaustsAt === null) return { text: t('usage.forecast.safe'), level: 'safe' };
+  return { text: t('usage.forecast.exhausts', { time: clockMinutes(forecast.exhaustsAt), rate: Math.round(forecast.rate) }), level: 'danger' };
 }
 
 function paint(target: Row, sample: UsageWindow | null, now: number): void {
@@ -33,6 +43,10 @@ function paint(target: Row, sample: UsageWindow | null, now: number): void {
   target.fill.style.width = `${Math.min(100, Math.max(0, live.usedPct))}%`;
   target.fill.dataset.level = level(live.usedPct);
   target.reset.textContent = t('usage.resetsIn', { time: duration(live.resetsAt - now) });
+  const forecast = forecastText(live);
+  target.forecast.hidden = forecast === null;
+  target.forecast.textContent = forecast?.text ?? '';
+  target.forecast.dataset.level = forecast?.level ?? '';
 }
 
 export function mountUsageCard(store: Store): { root: HTMLElement; destroy: () => void } {

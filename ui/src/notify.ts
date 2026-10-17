@@ -2,12 +2,16 @@ import { plural, t } from './i18n';
 import { agentName, floorLabel } from './labels';
 import { openDocument } from './panel/deliverables';
 import type { Store } from './store';
+import { forecastText } from './usage-card';
 import { finishedNotice, readFinishedMode, wantsDesktop } from './panel/finished';
-import type { AgentView, DocumentView, FinishedView, GuardAlert, MessageView, QuestionView, ServerMessage } from './types';
+import type { AgentView, DocumentView, FinishedView, GuardAlert, MessageView, QuestionView, ServerMessage, UsageView, UsageWindow } from './types';
 
-export type NotifyEvent = 'permission' | 'question' | 'blocked' | 'done' | 'document' | 'alert' | 'stalled';
+export type NotifyEvent = 'permission' | 'question' | 'blocked' | 'done' | 'document' | 'alert' | 'stalled' | 'usage';
 
-export const NOTIFY_EVENTS: readonly NotifyEvent[] = ['permission', 'question', 'blocked', 'done', 'document', 'alert', 'stalled'];
+export const NOTIFY_EVENTS: readonly NotifyEvent[] = ['permission', 'question', 'blocked', 'done', 'document', 'alert', 'stalled', 'usage'];
+
+// Percentages of a usage window that warn, once each per window.
+export const USAGE_THRESHOLDS: readonly number[] = [80, 95];
 
 export type NotifyPrefs = { enabled: boolean; events: Record<NotifyEvent, boolean> };
 
@@ -26,7 +30,7 @@ function permissionState(): NotificationPermission | 'unsupported' {
 }
 
 function defaultPrefs(): NotifyPrefs {
-  return { enabled: false, events: { permission: true, question: true, blocked: true, done: true, document: true, alert: true, stalled: true } };
+  return { enabled: false, events: { permission: true, question: true, blocked: true, done: true, document: true, alert: true, stalled: true, usage: true } };
 }
 
 function readPrefs(): NotifyPrefs {
@@ -83,6 +87,11 @@ export class Notifier {
         this.seedDocuments(message.data.documents ?? []);
         this.stalled.clear();
         for (const agent of message.data.agents) this.stalled.set(agent.key, agent.stalledSince ?? null);
+        // The thresholds already passed are history, not news.
+        this.usage(message.data.usage ?? null, false);
+        break;
+      case 'usage':
+        this.usage(message.data, true);
         break;
       case 'agent':
         this.agent(message.data);
@@ -158,6 +167,28 @@ export class Notifier {
     if (!wantsDesktop(readFinishedMode())) return;
     const notice = finishedNotice(view);
     this.show('done', `finished:${view.id}`, t(notice.key, notice.params), t('notify.openPanel'), () => this.openFinished?.(view));
+  }
+
+  // 80 % and 95 % of each window warn once; the tag carries the reset of the window, so the next one warns again.
+  private usage(view: UsageView | null, announce: boolean): void {
+    if (!view) return;
+    const windows: [string, UsageWindow | null][] = [
+      ['five', view.fiveHour],
+      ['seven', view.sevenDay],
+    ];
+    for (const [name, sample] of windows) {
+      if (!sample) continue;
+      for (const threshold of USAGE_THRESHOLDS) {
+        if (sample.usedPct < threshold) continue;
+        const tag = `usage:${name}:${sample.resetsAt}:${threshold}`;
+        if (!announce) {
+          this.seen.add(tag);
+          continue;
+        }
+        const title = t(name === 'five' ? 'notify.usage.five' : 'notify.usage.seven', { pct: Math.round(sample.usedPct) });
+        this.show('usage', tag, title, forecastText(sample)?.text ?? '', () => {});
+      }
+    }
   }
 
   private agent(agent: AgentView): void {

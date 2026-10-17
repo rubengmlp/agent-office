@@ -1,4 +1,5 @@
 import type { Database } from 'bun:sqlite';
+import { SAMPLE_RETENTION_MS } from './usage';
 
 const DAY_MS = 86_400_000;
 export const PRUNE_CHUNK = 5000;
@@ -30,6 +31,8 @@ function pruneSearch(db: Database, cutoff: number): void {
     db.query('DELETE FROM search_fts WHERE ts < ?').run(cutoff);
   } catch {}
 }
+// Samples of the limit forecast live a fixed eight days, whatever the retention of the rest.
+const DROP_SAMPLES = 'DELETE FROM usage_samples WHERE ts < ?';
 
 export function prune(db: Database, now: number, retentionDays: number): number {
   const cutoff = now - retentionDays * DAY_MS;
@@ -37,6 +40,7 @@ export function prune(db: Database, now: number, retentionDays: number): number 
   for (const [table, where] of RULES) removed += db.query(`DELETE FROM ${table} WHERE ${where}`).run(cutoff).changes;
   removed += db.query(CLEAR_OUTPUT).run(cutoff).changes;
   pruneSearch(db, cutoff);
+  removed += db.query(DROP_SAMPLES).run(now - SAMPLE_RETENTION_MS).changes;
   return removed;
 }
 
@@ -62,5 +66,6 @@ export async function pruneInChunks(
   }
   removed += db.query(CLEAR_OUTPUT).run(cutoff).changes;
   pruneSearch(db, cutoff);
+  removed += db.query(DROP_SAMPLES).run(now - SAMPLE_RETENTION_MS).changes;
   return removed;
 }

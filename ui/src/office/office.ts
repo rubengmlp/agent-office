@@ -1,5 +1,6 @@
 import { Application, Container, Graphics } from 'pixi.js';
 import { LiftController, linkLift } from '../lift';
+import { contextOf } from '../labels';
 import type { Store } from '../store';
 import { boardData, boardInputFor } from '../boards';
 import type { Tab } from '../topbar';
@@ -503,6 +504,7 @@ class OfficeView {
         away: agent.away,
         hold: agent.away && this.garden.lot.boarding(key),
         lastTest: agent.lastTest,
+        context: contextOf(agent)?.usedPct ?? null,
       });
     }
     for (const scene of this.sceneOrder) scene.tick(this.elapsed, testingFloors.has(scene.slug));
