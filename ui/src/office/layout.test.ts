@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { AgentView, FloorView } from '../types';
-import { FLOOR_GAP } from './constants';
-import { computeFloorLayout, gardenArrival, gardenDoor, gardenRoute, liftGate, liftLeg, liftRoute } from './layout';
+import { FLOOR_GAP, MARGIN, MIN_FLOOR_H, ROW_H, SLOT_H, UTIL_W, WALL_H } from './constants';
+import { computeFloorLayout, gardenArrival, gardenDoor, gardenRoute, liftGate, liftLeg, liftRoute, rowOf } from './layout';
 
 const WIDTH = 400;
 
@@ -125,5 +125,80 @@ describe('the coffee machine', () => {
     expect(left.y).toBeGreaterThan(layout.coffee.y + 24);
     expect(left.x).toBeGreaterThan(layout.coffee.x - 8);
     expect(right.x).toBeLessThan(layout.coffee.x + 30);
+  });
+});
+
+
+describe('the layout override in 2D', () => {
+  const lead = agent('lead-1', 'lead', 'mobile');
+  const devs = [agent('dev-1', 'dev', 'mobile', 'lead-1'), agent('dev-2', 'dev', 'mobile', 'lead-1')];
+  const mobile = floor('mobile', 'managed');
+  const layout = (override?: Parameters<typeof computeFloorLayout>[4]) => computeFloorLayout(mobile, [lead, ...devs], WIDTH, order, override);
+  const areaTop = WALL_H + 8;
+
+  test('with no override, or one that moves nothing, the output is identical', () => {
+    const plain = layout();
+    for (const nothing of [{}, { desks: [null, null] }, { furniture: {} }, { characters: { dev: 'quaternius/punk.glb' } }]) {
+      expect(layout(nothing)).toEqual(plain);
+    }
+    expect(plain.boardShift).toBe(0);
+    expect(plain.coffee).toEqual({ x: WIDTH - UTIL_W + 70, y: WALL_H - 22 });
+    expect(plain.labBench).toEqual({ x: WIDTH - UTIL_W + 4, y: WALL_H - 18 });
+    expect(plain.rug).toEqual({ x: WIDTH - UTIL_W + 4, y: 66, w: 92, h: 52 });
+    expect(plain.height).toBe(MIN_FLOOR_H);
+  });
+
+  test('a desk goes to the nearest of two rows, and the floor grows with the lower one', () => {
+    const base = layout();
+    const moved = layout({ desks: [{ u: 0.6, v: 0.6 }] });
+    const slot = moved.desks.get('dev-1')!;
+    expect(slot.x).toBe(Math.round(0.6 * WIDTH - slot.width / 2));
+    expect(slot.y).toBeCloseTo(areaTop + ROW_H + (1 - slot.scale) * SLOT_H, 5);
+    expect(moved.desks.get('dev-2')).toEqual(base.desks.get('dev-2'));
+    expect(moved.height).toBeGreaterThan(base.height);
+    const upper = layout({ desks: [{ u: 0.6, v: 0.1 }] });
+    expect(upper.desks.get('dev-1')!.y).toBeCloseTo(areaTop + (1 - slot.scale) * SLOT_H, 5);
+    expect(upper.height).toBe(base.height);
+    expect(rowOf(0.2)).toBe(0);
+    expect(rowOf(0.5)).toBe(1);
+  });
+
+  test('a desk that would overlap another one stays where the grid put it', () => {
+    const base = layout();
+    const target = base.desks.get('dev-2')!;
+    const onTop = layout({ desks: [{ u: (target.x + 6 + target.width / 2) / WIDTH, v: 0.2 }] });
+    expect(onTop.desks.get('dev-1')).toEqual(base.desks.get('dev-1'));
+    const sameSpot = { u: 0.6, v: 0.6 };
+    const both = layout({ desks: [sameSpot, sameSpot] });
+    expect(both.desks.get('dev-1')!.x).toBe(Math.round(0.6 * WIDTH - 16));
+    expect(both.desks.get('dev-2')).toEqual(base.desks.get('dev-2'));
+  });
+
+  test('a desk stays inside the floor and out of the utility zone', () => {
+    const edge = layout({ desks: [{ u: 0, v: 0.6 }, { u: 1, v: 0.6 }] });
+    expect(edge.desks.get('dev-1')!.x).toBeGreaterThanOrEqual(MARGIN);
+    const right = edge.desks.get('dev-2')!;
+    expect(right.x + right.width).toBeLessThanOrEqual(WIDTH - UTIL_W - MARGIN);
+  });
+
+  test('the lead desk moves too, along its row', () => {
+    const moved = layout({ lead: { u: 0.5, v: 0.9 } });
+    expect(moved.leadDesk!.x).toBe(Math.round(0.5 * WIDTH - moved.leadDesk!.width / 2));
+    expect(moved.leadDesk!.y).toBe(areaTop);
+    expect(moved.desks.get('lead-1')).toBe(moved.leadDesk);
+  });
+
+  test('the coffee machine, the lab bench and the board slide along the wall; the table moves on the floor', () => {
+    const base = layout();
+    const moved = layout({ furniture: { coffee: { u: 0.2, v: 0.9 }, lab: { u: 0.3, v: 0.9 }, board: { u: 0.4, v: 0.9 }, meeting: { u: 0.5, v: 0.8 } } });
+    expect(moved.coffee).toEqual({ x: Math.round(0.2 * WIDTH - 8) , y: base.coffee.y });
+    expect(moved.coffeeStands.map((point) => point.x)).toEqual(moved.coffeeStands.map((_, index) => moved.coffee.x + [-2, 18][index]!));
+    expect(moved.labBench).toEqual({ x: Math.round(0.3 * WIDTH - 29), y: base.labBench.y });
+    expect(moved.labStands[0]!.x - moved.labBench.x).toBe(base.labStands[0]!.x - base.labBench.x);
+    expect(moved.boardShift).toBe(Math.round(0.4 * WIDTH - (WIDTH - UTIL_W - 4 - 30.5)));
+    expect(moved.rug.x + 46).toBe(Math.round(0.5 * WIDTH));
+    expect(moved.rug.y).toBeGreaterThan(base.rug.y);
+    expect(moved.table).toEqual({ x: moved.rug.x + 24, y: moved.rug.y + 14 });
+    expect(moved.seats[0]!.x - moved.table.x).toBe(base.seats[0]!.x - base.table.x);
   });
 });

@@ -43,6 +43,7 @@ import {
 } from './options';
 import { mountNotifySection } from './notifications';
 import { mountAmbientSection } from './ambient';
+import { LayoutEditor } from './layout-editor';
 import { mountSoundSection } from './sound';
 import { mountProjects } from './projects';
 
@@ -186,6 +187,7 @@ class SettingsPage {
   private readonly status = el('span', 'settings-status');
   private readonly actions = el('div', 'settings-actions', this.saveButton, this.status);
   private readonly projectsHost = el('div', 'settings-projects');
+  private readonly layoutEditor: LayoutEditor;
 
   constructor(
     private readonly host: HTMLElement,
@@ -193,7 +195,9 @@ class SettingsPage {
     private readonly api: OfficeApi | null,
     private readonly notifier: Notifier | null,
     private readonly sound: SoundDesk | null,
-  ) {}
+  ) {
+    this.layoutEditor = new LayoutEditor(store, api);
+  }
 
   start(): void {
     this.saveButton.addEventListener('click', () => void this.submit());
@@ -286,7 +290,7 @@ class SettingsPage {
 
   // What lives in the browser and not in the hub: it can be changed even when the hub settings do not load.
   private browserSections(): HTMLElement[] {
-    return [this.notifier ? mountNotifySection(this.notifier) : null, this.sound ? mountSoundSection(this.sound) : null, mountAmbientSection()].filter(
+    return [this.notifier ? mountNotifySection(this.notifier) : null, this.sound ? mountSoundSection(this.sound) : null, mountAmbientSection(), this.layoutEditor.root].filter(
       (section): section is HTMLElement => section !== null,
     );
   }

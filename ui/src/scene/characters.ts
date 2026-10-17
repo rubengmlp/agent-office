@@ -1,7 +1,8 @@
 import { Color, Group, Mesh, MeshStandardMaterial, SRGBColorSpace, Vector3, type Material } from 'three';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import type { LiftService } from '../lift';
-import type { AgentState, RoleKind, TestResult } from '../types';
+import { modelOverride } from '../layouts';
+import type { AgentState, FloorLayoutOverride, RoleKind, TestResult } from '../types';
 import { buildMannequin, type AssetLibrary, type LoadedModel, type LogicalClip } from './assets';
 import {
   AISLE_Z,
@@ -29,7 +30,7 @@ import { hashString, mute } from './materials';
 import { createProxy, createRings, type Rings } from './picking';
 import { findBones, GltfRig, MannequinRig, type Rig } from './rig';
 
-export type CharacterLook = { roleKind: RoleKind; muted: boolean };
+export type CharacterLook = { roleKind: RoleKind; muted: boolean; override?: FloorLayoutOverride };
 
 export type FrameInput = {
   dt: number;
@@ -230,11 +231,11 @@ export class Character {
   }
 
   setLook(look: CharacterLook): void {
-    const key = `${look.roleKind}|${look.muted ? 1 : 0}`;
+    const key = `${look.roleKind}|${look.muted ? 1 : 0}|${modelOverride(look.override, look.roleKind) ?? ''}`;
     if (key === this.lookKey) return;
     this.lookKey = key;
     const token = ++this.loadToken;
-    void this.assets.modelFor(look.roleKind).then((model) => {
+    void this.assets.modelFor(look.roleKind, look.override).then((model) => {
       if (this.disposed || token !== this.loadToken) return;
       try {
         this.attach(model, look);

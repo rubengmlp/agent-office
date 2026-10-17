@@ -14,7 +14,7 @@ import {
   type Object3D,
 } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import type { RoleKind } from '../types';
+import type { FloorLayoutOverride, RoleKind } from '../types';
 
 export type LogicalClip = 'idle' | 'neutral' | 'walk' | 'run' | 'wave' | 'interact' | 'hit' | 'death' | 'sit' | 'type' | 'talk' | 'think';
 
@@ -235,10 +235,14 @@ function stripRootMotion(clip: AnimationClip, rootName: string): void {
   }
 }
 
+export function modelKey(kind: RoleKind, model: string | undefined): string {
+  return `${kind}|${model ?? ''}`;
+}
+
 export class AssetLibrary {
   private readonly loader = new GLTFLoader();
   private readonly byUrl = new Map<string, Promise<LoadedModel | null>>();
-  private readonly byRole = new Map<RoleKind, Promise<LoadedModel | null>>();
+  private readonly byRole = new Map<string, Promise<LoadedModel | null>>();
   private customList: Promise<Set<string>> | null = null;
 
   constructor(
@@ -250,11 +254,15 @@ export class AssetLibrary {
     return this.manifest.roles[kind] ?? this.manifest.roles.dev;
   }
 
-  modelFor(kind: RoleKind): Promise<LoadedModel | null> {
-    let pending = this.byRole.get(kind);
+  // The model of a role: the one a layout override names, or the custom one and the pack one of the manifest.
+  // Cached by role and model, so changing the model of one role reloads only the characters of that role.
+  modelFor(kind: RoleKind, override?: FloorLayoutOverride): Promise<LoadedModel | null> {
+    const chosen = override?.characters?.[kind];
+    const key = modelKey(kind, chosen);
+    let pending = this.byRole.get(key);
     if (!pending) {
-      pending = this.resolve(kind);
-      this.byRole.set(kind, pending);
+      pending = chosen === undefined ? this.resolve(kind) : this.resolveChosen(kind, chosen);
+      this.byRole.set(key, pending);
     }
     return pending;
   }
@@ -280,6 +288,12 @@ export class AssetLibrary {
   private customNames(): Promise<Set<string>> {
     this.customList ??= listCustom(`${this.base}${this.manifest.custom.dir}index.json`);
     return this.customList;
+  }
+
+  private async resolveChosen(kind: RoleKind, model: string): Promise<LoadedModel | null> {
+    const custom = model.startsWith('custom/');
+    const chosen = await this.load(`${this.base}${model}`, custom);
+    return chosen ?? this.resolve(kind);
   }
 
   private async resolve(kind: RoleKind): Promise<LoadedModel | null> {

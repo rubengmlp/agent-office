@@ -86,7 +86,8 @@ export class FloorScene {
     this.background.position.set(0, top);
     this.foreground.position.set(0, top);
 
-    const signature = [view.kind, view.stack, view.label, currentLang(), layout.width, layout.height].join('|');
+    const { labBench, coffee, rug, boardShift } = layout;
+    const signature = [view.kind, view.stack, view.label, currentLang(), layout.width, layout.height, labBench.x, coffee.x, rug.x, rug.y, boardShift].join('|');
     if (signature !== this.signature) {
       this.signature = signature;
       this.draw();
@@ -127,7 +128,7 @@ export class FloorScene {
   }
 
   private boardX(): number {
-    return this.layout.width - UTIL_W - 4 - BOARD_SPRITE_W;
+    return this.layout.width - UTIL_W - 4 - BOARD_SPRITE_W + this.layout.boardShift;
   }
 
   destroy(): void {

@@ -1,34 +1,28 @@
 import { Box3, CanvasTexture, Group, Mesh, PlaneGeometry, SRGBColorSpace, Vector3, type MeshStandardMaterial } from 'three';
 import { currentLang, t } from '../i18n';
 import { floorLabel, stackLabel } from '../labels';
-import type { FloorView } from '../types';
+import { furnitureSignature } from '../layouts';
+import type { FloorLayoutOverride, FloorView } from '../types';
 import { Batcher, disposeMeshes, transform } from './batch';
 import { BoardScreen } from './boards';
 import {
   AISLE_Z,
   CLEAR_H,
-  COFFEE_DX,
-  COFFEE_Z,
   CORRIDOR_LEN,
   DEPTH,
   DOOR_H,
   DOOR_HALF,
   GARDEN_FAR_Z,
   HALF_D,
-  LAB_BENCH_DX,
   LAB_BENCH_LEN,
   LEAD_DESK_DX,
   LEAD_ZONE,
   LIFT_GAP,
   LIFT_W,
   MEET_D,
-  MEET_DX,
   MEET_W,
-  MEET_Z,
   OFFICE_PARTITION_DX,
   PITCH,
-  PRINTER_DX,
-  PRINTER_Z,
   PLINTH_H,
   SIDEWALK_Y,
   SLAB_T,
@@ -54,7 +48,7 @@ import {
   UNIT_PLANE,
   whiteboard,
 } from './furniture';
-import { buildingOf, STREET, streetNav, type BuildingId, type FloorNav, type Nav } from './layout';
+import { buildingOf, furniturePlaced, STREET, streetNav, type BuildingId, type FloorNav, type Nav } from './layout';
 import { buildingKit, floorStyle, furnitureKit, hashString, std, type FloorStyle } from './materials';
 import { PrintSheet } from './printer';
 
@@ -232,6 +226,7 @@ export class FloorRoom {
   private labLamp: Owned | null = null;
   board: BoardScreen | null = null;
   private sheet: PrintSheet | null = null;
+  private override: FloorLayoutOverride | undefined;
 
   constructor(view: FloorView) {
     this.view = view;
@@ -246,17 +241,18 @@ export class FloorRoom {
     return floorStyle(this.view);
   }
 
-  configure(view: FloorView, width: number, level: number, origin: Vector3): void {
+  configure(view: FloorView, width: number, level: number, origin: Vector3, override?: FloorLayoutOverride): void {
     this.view = view;
     this.building = buildingOf(view);
     this.level = level;
     this.origin.copy(origin);
     this.group.position.copy(origin);
     this.group.updateMatrixWorld(true);
-    const signature = [view.kind, view.stack, view.label, currentLang(), this.building, width.toFixed(2)].join('|');
+    const signature = [view.kind, view.stack, view.label, currentLang(), this.building, width.toFixed(2), furnitureSignature(override)].join('|');
     if (signature === this.signature) return;
     this.signature = signature;
     this.width = width;
+    this.override = override;
     this.rebuild();
   }
 
@@ -332,6 +328,7 @@ export class FloorRoom {
     }
 
     const leadX = -half + LEAD_DESK_DX;
+    const placed = furniturePlaced(this.view, width, this.override);
     switch (this.view.kind) {
       case 'direccion':
         glassOffice(b, width, OFFICE_PARTITION_DX, HALF_D - 0.25, AISLE_Z - 0.7, AISLE_Z + 0.7, HALF_D, CLEAR_H);
@@ -362,28 +359,28 @@ export class FloorRoom {
         plant(b, kit, -half + 3.55, -HALF_D + 0.45, 1.5, seed + 2);
     }
 
-    const labX = half - LAB_BENCH_DX;
-    const labZ = -HALF_D + 0.36;
+    const { x: labX, z: labZ } = placed.lab;
     labBench(b, kit, labX, labZ, LAB_BENCH_LEN);
-    meetingTable(b, kit, half - MEET_DX, MEET_Z, MEET_W, MEET_D);
-    const boardX = style.glass ? leadX - 0.2 : half - 3.2;
-    whiteboard(b, kit, boardX, -HALF_D + 0.03, 1.4);
-    const led = coffeeCorner(b, kit, half - COFFEE_DX, COFFEE_Z);
+    meetingTable(b, kit, placed.meeting.x, placed.meeting.z, MEET_W, MEET_D);
+    const boardX = placed.board.x;
+    const boardZ = placed.board.z;
+    whiteboard(b, kit, boardX, boardZ, 1.4);
+    const led = coffeeCorner(b, kit, placed.coffee.x, placed.coffee.z);
     plant(b, kit, half - 0.55, HALF_D - 0.55, 1.3, seed + 11);
     plant(b, kit, half - 3.2, -HALF_D + 0.4, 0.7, seed + 13);
-    const printerX = half - PRINTER_DX;
-    printer(b, kit, printerX, PRINTER_Z);
+    const { x: printerX, z: printerZ } = placed.printer;
+    printer(b, kit, printerX, printerZ);
 
     this.meshes = b.build(this.group);
     this.group.add(led);
     this.coffeeLed = led;
 
-    const board = new BoardScreen(this.view.slug, boardX, -HALF_D + 0.03);
+    const board = new BoardScreen(this.view.slug, boardX, boardZ);
     this.group.add(board.mesh);
     this.owned.push({ mesh: board.mesh, material: board.material, texture: board.texture });
     this.board = board;
 
-    const sheet = new PrintSheet(printerX, PRINTER_Z);
+    const sheet = new PrintSheet(printerX, printerZ);
     this.group.add(sheet.mesh);
     this.owned.push({ mesh: sheet.mesh, material: sheet.material, texture: null });
     this.sheet = sheet;
@@ -481,7 +478,7 @@ export class Site {
     return false;
   }
 
-  update(floors: readonly FloorView[], mainWidth: number, annexWidth: number): boolean {
+  update(floors: readonly FloorView[], mainWidth: number, annexWidth: number, overrideOf: (slug: string) => FloorLayoutOverride | undefined = () => undefined): boolean {
     const main = floors.filter((floor) => buildingOf(floor) === 'main');
     const annex = floors.filter((floor) => buildingOf(floor) === 'annex');
     const live = new Set(floors.map((floor) => floor.slug));
@@ -515,7 +512,7 @@ export class Site {
         }
         const origin = new Vector3(cx, PLINTH_H + level * STOREY_H, 0);
         if (!room.origin.equals(origin) || room.width !== width || room.level !== level) changed = true;
-        room.configure(view, width, level, origin);
+        room.configure(view, width, level, origin, overrideOf(view.slug));
         order.push(room);
         const exitX = building === 'main' ? width / 2 + LIFT_GAP + LIFT_W / 2 : -width / 2 - WALL_T - 0.7;
         navFloors.set(view.slug, { slug: view.slug, building, level, width, exitX });

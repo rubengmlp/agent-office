@@ -1,5 +1,5 @@
 import type { LiftFace } from '../lift';
-import type { AgentView, FloorView, MessageView, RoleKind } from '../types';
+import type { AgentView, FloorLayoutOverride, FloorView, FurnitureKind, MessageView, RoleKind, Spot } from '../types';
 import {
   AISLE_Z,
   CHILD_SCALE,
@@ -7,7 +7,9 @@ import {
   COFFEE_STAND_DX,
   COFFEE_STAND_DZ,
   COFFEE_Z,
+  DEPTH,
   HALF_D,
+  LAB_BENCH_DX,
   LAB_LANE_DX,
   LAB_QUEUE_STEP,
   LAB_STAND_DX,
@@ -23,6 +25,8 @@ import {
   MEET_Z,
   MEETING_WINDOW_MS,
   PITCH,
+  PRINTER_DX,
+  PRINTER_Z,
   ROAD_Z,
   ROW_DESK_Z,
   ROWS,
@@ -206,6 +210,7 @@ export function computeFloorPlan(
   width: number,
   cols: number,
   order: (key: string) => number,
+  override?: FloorLayoutOverride,
 ): FloorPlan {
   const { ordered, children, roots, leadAgent, leadKind } = splitAgents(floor, agents, order);
   const assignment = new Map<string, DeskSlot>();
@@ -244,7 +249,123 @@ export function computeFloorPlan(
     visited.add(agent.key);
     place(agent.key, false);
   }
+  if (override) applyDeskOverrides(width, leadSlot, slots, override);
   return { slug: floor.slug, view: floor, leadSlot, slots, assignment };
+}
+
+// Two desks closer than this are on top of each other.
+export const MIN_DESK_GAP = PITCH * 0.8;
+const DESK_MARGIN_X = 0.9;
+const LEAD_ROWS: readonly number[] = [LEAD_DESK_Z, ...ROW_DESK_Z];
+
+function nearestRow(z: number, rows: readonly number[]): number {
+  return rows.reduce((best, row) => (Math.abs(row - z) < Math.abs(best - z) ? row : best), rows[0]);
+}
+
+// The z of the row a v belongs to: the nearest of the rows of desks, or of the lead's.
+export function rowFor(v: number, lead: boolean): number {
+  return nearestRow(-HALF_D + v * DEPTH, lead ? LEAD_ROWS : ROW_DESK_Z);
+}
+
+function moveSlot(slot: DeskSlot, x: number, z: number): void {
+  const lead = slot.kind === 'lead';
+  slot.x = x;
+  slot.z = z;
+  slot.standX = x;
+  slot.standZ = z - (lead ? LEAD_STAND_OFFSET : STAND_OFFSET * slot.scale);
+  slot.lane = lead ? x + (LEAD_LANE_DX - LEAD_DESK_DX) : x + PITCH / 2;
+}
+
+// A desk the user moved goes to the nearest row, inside the room, and only if it leaves room for the others;
+// otherwise it stays where the grid put it. The lead goes first, then the desks in order, each against the
+// ones that are already where they will stay.
+function applyDeskOverrides(width: number, leadSlot: DeskSlot | null, slots: DeskSlot[], override: FloorLayoutOverride): void {
+  const half = width / 2;
+  const all = leadSlot ? [leadSlot, ...slots] : slots;
+  const attempt = (slot: DeskSlot, spot: Spot | null | undefined): void => {
+    if (!spot) return;
+    const target = spotToWorld(spot, width);
+    const x = clampRange(target.x, -half + DESK_MARGIN_X, half - DESK_MARGIN_X);
+    const z = nearestRow(target.z, slot.kind === 'lead' ? LEAD_ROWS : ROW_DESK_Z);
+    if (all.some((other) => other !== slot && Math.hypot(other.x - x, other.z - z) < MIN_DESK_GAP)) return;
+    moveSlot(slot, x, z);
+  };
+  if (leadSlot) attempt(leadSlot, override.lead);
+  slots.forEach((slot, index) => attempt(slot, override.desks?.[index]));
+}
+
+
+// Where the user may put a desk or a piece of furniture. A spot is normalised (u across the width, v across the
+// depth); the plan turns it into metres, keeps it inside the room and snaps desks to a row.
+export type Shift = { dx: number; dz: number };
+
+export type Shifts = Record<FurnitureKind, Shift>;
+
+const NO_SHIFT: Shift = { dx: 0, dz: 0 };
+
+export const NO_SHIFTS: Shifts = { coffee: NO_SHIFT, meeting: NO_SHIFT, lab: NO_SHIFT, board: NO_SHIFT, printer: NO_SHIFT };
+
+export type Placed = Record<FurnitureKind, { x: number; z: number }>;
+
+const FURNITURE: readonly FurnitureKind[] = ['coffee', 'meeting', 'lab', 'board', 'printer'];
+
+export function spotToWorld(spot: Spot, width: number): { x: number; z: number } {
+  return { x: -width / 2 + spot.u * width, z: -HALF_D + spot.v * DEPTH };
+}
+
+export function worldToSpot(x: number, z: number, width: number): Spot {
+  const clamp = (value: number): number => Math.round(Math.min(1, Math.max(0, value)) * 10_000) / 10_000;
+  return { u: clamp((x + width / 2) / width), v: clamp((z + HALF_D) / DEPTH) };
+}
+
+// The place of each piece of furniture with no override.
+export function furnitureDefaults(floor: FloorView, width: number): Placed {
+  const half = width / 2;
+  const leadX = -half + LEAD_DESK_DX;
+  return {
+    coffee: { x: half - COFFEE_DX, z: COFFEE_Z },
+    meeting: { x: half - MEET_DX, z: MEET_Z },
+    lab: { x: half - LAB_BENCH_DX, z: -HALF_D + 0.36 },
+    board: { x: floor.kind === 'direccion' ? leadX - 0.2 : half - 3.2, z: -HALF_D + 0.03 },
+    printer: { x: half - PRINTER_DX, z: PRINTER_Z },
+  };
+}
+
+const FURNITURE_MARGIN_X = 1.2;
+const BOARD_MARGIN_X = 0.8;
+const FURNITURE_Z: readonly [number, number] = [-HALF_D + 0.4, HALF_D - 1.2];
+
+function clampRange(value: number, low: number, high: number): number {
+  return Math.min(Math.max(value, low), Math.max(low, high));
+}
+
+// How far each piece of furniture is from its default place; zero for the ones the override does not name, so
+// without an override every position comes out exactly as it always did. The board stays on the back wall.
+export function furnitureShifts(floor: FloorView, width: number, override?: FloorLayoutOverride): Shifts {
+  const moved = override?.furniture;
+  if (!moved) return NO_SHIFTS;
+  const defaults = furnitureDefaults(floor, width);
+  const half = width / 2;
+  const shifts: Shifts = { ...NO_SHIFTS };
+  for (const kind of FURNITURE) {
+    const spot = moved[kind];
+    if (!spot) continue;
+    const target = spotToWorld(spot, width);
+    const margin = kind === 'board' ? BOARD_MARGIN_X : FURNITURE_MARGIN_X;
+    const x = clampRange(target.x, -half + margin, half - margin);
+    const z = kind === 'board' ? defaults.board.z : clampRange(target.z, FURNITURE_Z[0], FURNITURE_Z[1]);
+    shifts[kind] = { dx: x - defaults[kind].x, dz: z - defaults[kind].z };
+  }
+  return shifts;
+}
+
+// Where each piece of furniture ends up.
+export function furniturePlaced(floor: FloorView, width: number, override?: FloorLayoutOverride): Placed {
+  const defaults = furnitureDefaults(floor, width);
+  const shifts = furnitureShifts(floor, width, override);
+  const placed = { ...defaults };
+  for (const kind of FURNITURE) placed[kind] = { x: defaults[kind].x + shifts[kind].dx, z: defaults[kind].z + shifts[kind].dz };
+  return placed;
 }
 
 export function deskTarget(floor: string, slot: DeskSlot): Target {
@@ -260,17 +381,17 @@ export function deskTarget(floor: string, slot: DeskSlot): Target {
   };
 }
 
-export function labTarget(floor: string, width: number, index: number): Target {
+export function labTarget(floor: string, width: number, index: number, shift: Shift = NO_SHIFT): Target {
   const stands = LAB_STAND_DX.length;
   const round = Math.floor(index / stands);
-  const z = LAB_STAND_Z + round * LAB_QUEUE_STEP;
+  const z = LAB_STAND_Z + round * LAB_QUEUE_STEP + shift.dz;
   return {
     id: `lab:${floor}:${index}`,
     kind: 'lab',
     floor,
-    x: width / 2 - LAB_STAND_DX[index % stands],
+    x: width / 2 - LAB_STAND_DX[index % stands] + shift.dx,
     z,
-    lane: width / 2 - LAB_LANE_DX,
+    lane: width / 2 - LAB_LANE_DX + shift.dx,
     facing: Math.PI,
     slot: null,
   };
@@ -278,13 +399,13 @@ export function labTarget(floor: string, width: number, index: number): Target {
 
 export const MEETING_SEATS = 4;
 
-export function meetingTarget(floor: string, width: number, seat: number): Target {
-  const cx = width / 2 - MEET_DX;
+export function meetingTarget(floor: string, width: number, seat: number, shift: Shift = NO_SHIFT): Target {
+  const cx = width / 2 - MEET_DX + shift.dx;
   const spots = [
-    { x: cx - MEET_W / 2 - 0.55, z: MEET_Z, facing: Math.PI / 2 },
-    { x: cx + MEET_W / 2 + 0.55, z: MEET_Z, facing: -Math.PI / 2 },
-    { x: cx - 0.5, z: MEET_Z + MEET_D / 2 + 0.55, facing: Math.PI },
-    { x: cx + 0.5, z: MEET_Z + MEET_D / 2 + 0.55, facing: Math.PI },
+    { x: cx - MEET_W / 2 - 0.55, z: MEET_Z + shift.dz, facing: Math.PI / 2 },
+    { x: cx + MEET_W / 2 + 0.55, z: MEET_Z + shift.dz, facing: -Math.PI / 2 },
+    { x: cx - 0.5, z: MEET_Z + MEET_D / 2 + 0.55 + shift.dz, facing: Math.PI },
+    { x: cx + 0.5, z: MEET_Z + MEET_D / 2 + 0.55 + shift.dz, facing: Math.PI },
   ];
   const spot = spots[((seat % MEETING_SEATS) + MEETING_SEATS) % MEETING_SEATS];
   return { id: `meet:${floor}:${seat}`, kind: 'meeting', floor, x: spot.x, z: spot.z, lane: spot.x, facing: spot.facing, slot: null };
@@ -293,15 +414,15 @@ export function meetingTarget(floor: string, width: number, seat: number): Targe
 export const COFFEE_STANDS = COFFEE_STAND_DX.length;
 
 // Two people at the coffee machine stand a step apart and face each other.
-export function coffeeTarget(floor: string, width: number, seat: number): Target {
+export function coffeeTarget(floor: string, width: number, seat: number, shift: Shift = NO_SHIFT): Target {
   const index = ((seat % COFFEE_STANDS) + COFFEE_STANDS) % COFFEE_STANDS;
-  const x = width / 2 - COFFEE_DX + COFFEE_STAND_DX[index];
+  const x = width / 2 - COFFEE_DX + COFFEE_STAND_DX[index] + shift.dx;
   return {
     id: `coffee:${floor}:${index}`,
     kind: 'coffee',
     floor,
     x,
-    z: COFFEE_Z + COFFEE_STAND_DZ,
+    z: COFFEE_Z + COFFEE_STAND_DZ + shift.dz,
     lane: x,
     facing: index === 0 ? Math.PI / 2 : -Math.PI / 2,
     slot: null,

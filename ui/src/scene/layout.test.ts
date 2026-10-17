@@ -1,6 +1,31 @@
 import { describe, expect, test } from 'bun:test';
 import type { AgentView, FloorView } from '../types';
-import { AISLE_Z, BRIDGE_LANDING_DX, COFFEE_DX, COFFEE_Z, HALF_D, LIFT_GAP, LIFT_W, PARK_AISLE_Z, ROAD_Z, STOREY_H, WALL_T } from './constants';
+import {
+  AISLE_Z,
+  BRIDGE_LANDING_DX,
+  COFFEE_DX,
+  COFFEE_Z,
+  DEPTH,
+  HALF_D,
+  LAB_BENCH_DX,
+  LEAD_DESK_DX,
+  LEAD_DESK_Z,
+  LEAD_LANE_DX,
+  LEAD_STAND_OFFSET,
+  LIFT_GAP,
+  LIFT_W,
+  MEET_DX,
+  MEET_Z,
+  PARK_AISLE_Z,
+  PITCH,
+  PRINTER_DX,
+  PRINTER_Z,
+  ROAD_Z,
+  ROW_DESK_Z,
+  STAND_OFFSET,
+  STOREY_H,
+  WALL_T,
+} from './constants';
 import {
   STREET,
   STREET_DX,
@@ -8,11 +33,20 @@ import {
   computeFloorPlan,
   deskTarget,
   exitTarget,
+  furnitureDefaults,
+  furniturePlaced,
+  furnitureShifts,
+  labTarget,
   liftLeg,
+  meetingTarget,
+  MIN_DESK_GAP,
+  NO_SHIFTS,
   planPath,
   servesLift,
+  spotToWorld,
   streetNav,
   streetPoint,
+  worldToSpot,
   type FloorNav,
   type Nav,
   type Waypoint,
@@ -231,5 +265,151 @@ describe('the coffee machine', () => {
     expect(path.some((point) => Math.abs(point.z - AISLE_Z) < 0.02)).toBe(true);
     expect(path[path.length - 1]).toMatchObject({ floor: 'mobile', x: target.x, z: target.z });
     expect(floorsOf(path)).toEqual(['mobile']);
+  });
+});
+
+
+describe('the layout override', () => {
+  const lead = agent('lead-1', 'lead');
+  const devs = [agent('dev-1', 'dev', 'lead-1'), agent('dev-2', 'dev', 'lead-1'), agent('dev-3', 'dev', 'lead-1')];
+  const order = (key: string): number => ['lead-1', 'dev-1', 'dev-2', 'dev-3'].indexOf(key);
+  const plan = (override?: Parameters<typeof computeFloorPlan>[5]) => computeFloorPlan(MOBILE, [lead, ...devs], MAIN_W, 3, order, override);
+  const half = MAIN_W / 2;
+
+  test('with no override, or one that moves nothing, the output is identical', () => {
+    const plain = plan();
+    for (const nothing of [{}, { desks: [null, null, null] }, { furniture: {} }, { characters: { dev: 'quaternius/punk.glb' } }]) {
+      const same = plan(nothing);
+      expect(same.slots).toEqual(plain.slots);
+      expect(same.leadSlot).toEqual(plain.leadSlot);
+      expect([...same.assignment]).toEqual([...plain.assignment]);
+    }
+    expect(furnitureShifts(MOBILE, MAIN_W)).toBe(NO_SHIFTS);
+    expect(furnitureShifts(MOBILE, MAIN_W, { desks: [{ u: 0.5, v: 0.5 }] })).toBe(NO_SHIFTS);
+    expect(labTarget('mobile', MAIN_W, 4)).toEqual(labTarget('mobile', MAIN_W, 4, NO_SHIFTS.lab));
+    expect(meetingTarget('mobile', MAIN_W, 3)).toEqual(meetingTarget('mobile', MAIN_W, 3, NO_SHIFTS.meeting));
+    expect(coffeeTarget('mobile', MAIN_W, 1)).toEqual(coffeeTarget('mobile', MAIN_W, 1, NO_SHIFTS.coffee));
+  });
+
+  test('the default places of the furniture are the ones the room has always had', () => {
+    const placed = furniturePlaced(MOBILE, MAIN_W);
+    expect(placed.coffee).toEqual({ x: half - COFFEE_DX, z: COFFEE_Z });
+    expect(placed.meeting).toEqual({ x: half - MEET_DX, z: MEET_Z });
+    expect(placed.lab).toEqual({ x: half - LAB_BENCH_DX, z: -HALF_D + 0.36 });
+    expect(placed.board).toEqual({ x: half - 3.2, z: -HALF_D + 0.03 });
+    expect(placed.printer).toEqual({ x: half - PRINTER_DX, z: PRINTER_Z });
+    const direction: FloorView = { ...MOBILE, slug: 'direccion', kind: 'direccion' };
+    expect(furnitureDefaults(direction, MAIN_W).board.x).toBe(-half + LEAD_DESK_DX - 0.2);
+    expect(labTarget('mobile', MAIN_W, 1)).toMatchObject({ x: half - 5.5, lane: half - 7.15 });
+  });
+
+  test('a desk goes where the user put it, on the nearest row, with its stand and lane', () => {
+    const moved = plan({ desks: [{ u: 0.75, v: 0.05 }, null, { u: 0.8, v: 0.9 }] });
+    const [first, second, third] = moved.slots;
+    expect(first.x).toBeCloseTo(-half + 0.75 * MAIN_W, 5);
+    expect(first.z).toBe(ROW_DESK_Z[0]);
+    expect(first.standX).toBe(first.x);
+    expect(first.standZ).toBeCloseTo(first.z - STAND_OFFSET * first.scale, 5);
+    expect(first.lane).toBeCloseTo(first.x + PITCH / 2, 5);
+    expect(second).toEqual(plan().slots[1]);
+    expect(third.x).toBeCloseTo(-half + 0.8 * MAIN_W, 5);
+    expect(third.z).toBe(ROW_DESK_Z[1]);
+    expect(moved.assignment.get('dev-1')).toBe(first);
+  });
+
+  test('a child desk keeps its scale when it moves', () => {
+    const grandchild = agent('dev-4', 'dev', 'dev-1');
+    const tree = computeFloorPlan(MOBILE, [lead, devs[0]!, grandchild], MAIN_W, 3, (key) => ['lead-1', 'dev-1', 'dev-4'].indexOf(key), { desks: [null, { u: 0.6, v: 0.6 }] });
+    const child = tree.slots[1]!;
+    expect(child.kind).toBe('child');
+    expect(child.z).toBe(ROW_DESK_Z[1]);
+    expect(child.standZ).toBeCloseTo(child.z - STAND_OFFSET * child.scale, 5);
+  });
+
+  test('the lead moves along its row, and a desk may not sit on it', () => {
+    const base = plan();
+    const moved = plan({ lead: { u: 0.5, v: 0.5 } });
+    expect(moved.leadSlot!.x).toBeCloseTo(0, 5);
+    expect(moved.leadSlot!.z).toBe(ROW_DESK_Z[1]);
+    expect(moved.leadSlot!.lane).toBeCloseTo(moved.leadSlot!.x + (LEAD_LANE_DX - LEAD_DESK_DX), 5);
+    expect(moved.leadSlot!.standZ).toBeCloseTo(moved.leadSlot!.z - LEAD_STAND_OFFSET, 5);
+    expect(base.leadSlot!.z).toBe(LEAD_DESK_Z);
+    const upper = plan({ lead: { u: 0.2, v: 0.28 } });
+    expect(upper.leadSlot!.z).toBe(LEAD_DESK_Z);
+    const crowded = plan({ lead: { u: 0.5, v: 0.5 }, desks: [{ u: 0.5, v: 0.5 }] });
+    expect(crowded.leadSlot!.x).toBeCloseTo(0, 5);
+    expect(crowded.slots[0]).toEqual(base.slots[0]);
+  });
+
+  test('a desk that would overlap another goes back to the grid', () => {
+    const base = plan();
+    const target = { u: (base.slots[1]!.x + half + MIN_DESK_GAP - 0.1) / MAIN_W, v: 0.2 };
+    const onTop = plan({ desks: [target] });
+    expect(onTop.slots[0]).toEqual(base.slots[0]);
+    const clear = plan({ desks: [{ u: 0.65, v: 0.2 }] });
+    expect(clear.slots[0]!.x).toBeCloseTo(-half + 0.65 * MAIN_W, 5);
+    const onLead = plan({ desks: [{ u: (base.leadSlot!.x + half) / MAIN_W, v: 0.28 }] });
+    expect(onLead.slots[0]).toEqual(base.slots[0]);
+  });
+
+  test('two desks cannot be moved to the same place: the first wins, the second goes back', () => {
+    const base = plan();
+    const spot = { u: 0.5, v: 0.5 };
+    const both = plan({ desks: [spot, spot] });
+    expect(both.slots[0]!.x).toBeCloseTo(0, 5);
+    expect(both.slots[1]).toEqual(base.slots[1]);
+  });
+
+  test('a desk stays inside the room', () => {
+    const edge = plan({ desks: [{ u: 0, v: 0.5 }, { u: 1, v: 0.5 }] });
+    expect(edge.slots[0]!.x).toBeGreaterThanOrEqual(-half + 0.5);
+    expect(edge.slots[1]!.x).toBeLessThanOrEqual(half - 0.5);
+  });
+
+  test('furniture moves with its stands: the coffee machine, the lab and the table take their targets along', () => {
+    const spot = { u: 0.3, v: 0.5 };
+    const override = { furniture: { coffee: spot, lab: spot, meeting: spot } };
+    const placed = furniturePlaced(MOBILE, MAIN_W, override);
+    const target = spotToWorld(spot, MAIN_W);
+    for (const kind of ['coffee', 'meeting', 'lab'] as const) {
+      expect(placed[kind].x).toBeCloseTo(target.x, 5);
+      expect(placed[kind].z).toBeCloseTo(target.z, 5);
+    }
+    expect(placed.printer).toEqual(furniturePlaced(MOBILE, MAIN_W).printer);
+    const shifts = furnitureShifts(MOBILE, MAIN_W, override);
+    const home = coffeeTarget('mobile', MAIN_W, 0);
+    const moved = coffeeTarget('mobile', MAIN_W, 0, shifts.coffee);
+    expect(moved.x - home.x).toBeCloseTo(shifts.coffee.dx, 5);
+    expect(moved.z - home.z).toBeCloseTo(shifts.coffee.dz, 5);
+    expect(moved.lane).toBe(moved.x);
+    expect(labTarget('mobile', MAIN_W, 0, shifts.lab).lane - labTarget('mobile', MAIN_W, 0).lane).toBeCloseTo(shifts.lab.dx, 5);
+    expect(meetingTarget('mobile', MAIN_W, 2, shifts.meeting).z - meetingTarget('mobile', MAIN_W, 2).z).toBeCloseTo(shifts.meeting.dz, 5);
+  });
+
+  test('the whiteboard slides along the back wall and never leaves it; furniture stays inside the room', () => {
+    const board = furniturePlaced(MOBILE, MAIN_W, { furniture: { board: { u: 0.5, v: 0.9 } } }).board;
+    expect(board.x).toBeCloseTo(0, 5);
+    expect(board.z).toBe(furnitureDefaults(MOBILE, MAIN_W).board.z);
+    const corner = furniturePlaced(MOBILE, MAIN_W, { furniture: { coffee: { u: 1, v: 1 }, printer: { u: 0, v: 0 } } });
+    expect(corner.coffee.x).toBeLessThanOrEqual(half);
+    expect(corner.coffee.z).toBeLessThan(HALF_D);
+    expect(corner.printer.x).toBeGreaterThan(-half);
+    expect(corner.printer.z).toBeGreaterThan(-HALF_D);
+  });
+
+  test('spots convert to metres and back', () => {
+    const spot = { u: 0.25, v: 0.75 };
+    const world = spotToWorld(spot, MAIN_W);
+    expect(world).toEqual({ x: -half + 0.25 * MAIN_W, z: -HALF_D + 0.75 * DEPTH });
+    expect(worldToSpot(world.x, world.z, MAIN_W)).toEqual(spot);
+    expect(worldToSpot(-100, 100, MAIN_W)).toEqual({ u: 0, v: 1 });
+  });
+
+  test('the path to a moved desk still goes by the aisle', () => {
+    const moved = plan({ desks: [{ u: 0.5, v: 0.1 }] });
+    const slot = moved.slots[0]!;
+    const path = planPath({ floor: 'mobile', x: 3, z: AISLE_Z, lane: null }, deskTarget('mobile', slot), nav())!;
+    expect(path.some((point) => Math.abs(point.x - slot.lane) < 0.02 && Math.abs(point.z - AISLE_Z) < 0.02)).toBe(true);
+    expect(path[path.length - 1]).toMatchObject({ x: slot.standX, z: slot.standZ });
   });
 });

@@ -1,5 +1,6 @@
 import { StateDebouncer } from './debounce';
 import { deliveryFloors } from './deliveries';
+import { emptyLayouts } from './layouts';
 import { applyLang, currentLang, plural, storeLang, t, type Lang, type MessageKey } from './i18n';
 import type {
   ActivityView,
@@ -12,6 +13,7 @@ import type {
   FloorKind,
   FloorView,
   GuardAlert,
+  LayoutsFile,
   MessageView,
   OrderView,
   QuestionOutcome,
@@ -46,6 +48,7 @@ export type Topic =
   | 'orders'
   | 'finished'
   | 'deliveries'
+  | 'layouts'
   | 'checks'
   | 'worktrees';
 
@@ -87,6 +90,8 @@ export class Store {
   orders: OrderView[] = [];
   // Alerts of finished orders and plans the user has not closed yet; the popup is rebuilt from them.
   finished: FinishedView[] = [];
+  // Where the user moved desks and furniture, and which model each role wears; the hub keeps it in layouts.json.
+  layouts: LayoutsFile = emptyLayouts();
   // The last accepted delivery and the floors it was for; `seq` grows with each, and the printers listen to it.
   delivery: { seq: number; floors: string[] } = { seq: 0, floors: [] };
   readonly checkRuns = new Map<number, CheckRunView>();
@@ -264,6 +269,10 @@ export class Store {
         this.mark('finished');
         this.noteDelivery(message);
         break;
+      case 'layouts':
+        this.layouts = message.data;
+        this.mark('layouts');
+        break;
       case 'chat':
         if (this.chat.some((m) => m.id === message.data.id)) break;
         this.chat.push(message.data);
@@ -286,6 +295,7 @@ export class Store {
     this.chat = [];
     this.orders = [];
     this.finished = [];
+    this.layouts = emptyLayouts();
     this.checkRuns.clear();
     this.chatSeen = 0;
     this.chatSeenIn.clear();
@@ -414,6 +424,7 @@ export class Store {
     this.chat = (snapshot.chat ?? []).slice(-CHAT_LIMIT);
     this.orders = snapshot.orders ?? [];
     this.finished = snapshot.finished ?? [];
+    this.layouts = snapshot.layouts ?? emptyLayouts();
     this.chatSeen = this.chat.at(-1)?.id ?? 0;
     this.chatSeenIn.clear();
     this.markAll();
@@ -435,7 +446,7 @@ export class Store {
   }
 
   private markAll(): void {
-    const all: Topic[] = ['floors', 'agents', 'sessions', 'questions', 'messages', 'activity', 'selection', 'documents', 'alerts', 'memory', 'usage', 'chat', 'orders', 'finished'];
+    const all: Topic[] = ['floors', 'agents', 'sessions', 'questions', 'messages', 'activity', 'selection', 'documents', 'alerts', 'memory', 'usage', 'chat', 'orders', 'finished', 'layouts'];
     for (const topic of all) this.mark(topic);
   }
 

@@ -1,11 +1,12 @@
 import { Application, Container, Graphics } from 'pixi.js';
 import { ambient, coffeePlan, daylightFor, type CoffeeVisit } from '../ambient';
+import { paletteRole, resolveOverride } from '../layouts';
 import { LiftController, linkLift } from '../lift';
 import { contextOf } from '../labels';
 import type { Store } from '../store';
 import { boardData, boardInputFor } from '../boards';
 import type { Tab } from '../topbar';
-import type { AgentView, FloorView, UsageSummary } from '../types';
+import type { AgentView, FloorLayoutOverride, FloorView, UsageSummary } from '../types';
 import { mountUsageCard } from '../usage-card';
 import { Backdrop } from './backdrop';
 import { CharacterView, type Target } from './character-view';
@@ -172,7 +173,7 @@ class OfficeView {
     });
 
     this.app.ticker.add((ticker) => this.update(ticker.deltaMS / 1000));
-    this.store.watch(['agents', 'floors', 'tick', 'lang'], () => {
+    this.store.watch(['agents', 'floors', 'tick', 'lang', 'layouts'], () => {
       this.dirty = true;
     });
     this.store.watch(['selection'], () => this.focusSelected());
@@ -229,6 +230,10 @@ class OfficeView {
     this.applyScroll();
   }
 
+  private overrideOf(slug: string): FloorLayoutOverride | undefined {
+    return resolveOverride(this.store.layouts, slug);
+  }
+
   // The sky is night when the system theme is dark, or when the clock says so if the ambient life follows it.
   private isDark(): boolean {
     return daylightFor(ambient.get(), this.media.matches, new Date()) < 0.5;
@@ -257,7 +262,7 @@ class OfficeView {
     this.sceneOrder = [];
     let top = SKY_H;
     for (const floor of floors) {
-      const layout = computeFloorLayout(floor, byFloor.get(floor.slug) ?? [], width, order);
+      const layout = computeFloorLayout(floor, byFloor.get(floor.slug) ?? [], width, order, this.overrideOf(floor.slug));
       let scene = this.scenes.get(floor.slug);
       if (scene) {
         scene.update(floor, layout, top);
@@ -304,16 +309,17 @@ class OfficeView {
       present.add(agent.key);
       if (!agent.away && this.garden.lot.bayOf(agent.key) !== null) this.garden.lot.release(agent.key);
       const saturation = scene.view.kind === 'observed' ? 0.4 : 1;
-      const look = `${agent.roleKind}|${saturation}`;
+      const outfit = paletteRole(agent.roleKind, this.overrideOf(agent.floor));
+      const look = `${outfit}|${saturation}`;
       if (entry && entry.look !== look) {
         const position = entry.view.position;
         this.liftLink.cancel(agent.key);
         entry.view.destroy();
-        entry.view = this.createView(agent, saturation);
+        entry.view = this.createView(agent, saturation, outfit);
         entry.view.placeAt(position);
         entry.look = look;
       } else if (!entry) {
-        const view = this.createView(agent, saturation);
+        const view = this.createView(agent, saturation, outfit);
         if (this.primed && this.ground()) view.placeAt(this.garden.gate());
         entry = { view, agent, scale: 1, look, ownDesk: null, desk: null, slot: null, goalScene: null };
         this.entries.set(agent.key, entry);
@@ -350,8 +356,8 @@ class OfficeView {
     }
   }
 
-  private createView(agent: AgentView, saturation: number): CharacterView {
-    const look = { roleKind: agent.roleKind, seed: hashString(agent.key), saturation };
+  private createView(agent: AgentView, saturation: number, outfit: AgentView['roleKind']): CharacterView {
+    const look = { roleKind: outfit, seed: hashString(agent.key), saturation };
     const view = new CharacterView(agent.key, look, (key) => this.store.select(key));
     this.actors.addChild(view.root);
     return view;

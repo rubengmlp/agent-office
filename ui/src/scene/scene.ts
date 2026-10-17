@@ -22,12 +22,13 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
 import { ambient, coffeePlan, daylightFor, quantizeDaylight, type CoffeeVisit } from '../ambient';
 import { t } from '../i18n';
+import { resolveOverride } from '../layouts';
 import { agentName, contextOf, floorLabel } from '../labels';
 import { LiftController, linkLift } from '../lift';
 import { boardData, boardInputFor } from '../boards';
 import type { OfficeHandle, OfficeHooks } from '../office/office';
 import type { Store } from '../store';
-import type { AgentView, FloorView } from '../types';
+import type { AgentView, FloorLayoutOverride, FloorView } from '../types';
 import { mountUsageCard } from '../usage-card';
 import { AssetLibrary, loadManifest } from './assets';
 import { Backdrop } from './backdrop';
@@ -66,6 +67,7 @@ import {
   deskTarget,
   exitTarget,
   findMeetingPairs,
+  furnitureShifts,
   labTarget,
   latestRecipient,
   meetingTarget,
@@ -76,6 +78,7 @@ import {
   streetPoint,
   type DeskSlot,
   type FloorPlan,
+  type Shifts,
   type Target,
 } from './layout';
 import { applyDaylight, disposeSharedMaterials, floorStyle, hashString } from './materials';
@@ -148,6 +151,7 @@ class OfficeScene {
   private readonly liftLink: SceneLift & { deliver: ReturnType<typeof linkLift>['deliver'] };
   private readonly garden: Garden;
   private plans = new Map<string, FloorPlan>();
+  private shifts = new Map<string, Shifts>();
   private meetings = new Map<string, MeetingSeat>();
   private coffee = new Map<string, CoffeeVisit>();
   private daylight = -1;
@@ -245,7 +249,7 @@ class OfficeScene {
     this.seenDeliveries = store.delivery.seq;
     this.unsubscribers.push(
       usageCard.destroy,
-      store.watch(['agents', 'floors', 'tick', 'lang'], () => {
+      store.watch(['agents', 'floors', 'tick', 'lang', 'layouts'], () => {
         this.dirty = true;
       }),
       store.watch(['lang'], () => {
@@ -376,7 +380,7 @@ class OfficeScene {
     this.annexCols = Math.max(this.annexCols, annexNeed);
     const mainWidth = LEAD_ZONE + this.mainCols * PITCH + UTIL_ZONE;
     const annexWidth = LEAD_ZONE + this.annexCols * PITCH + UTIL_ZONE;
-    if (this.site.update(floors, mainWidth, annexWidth)) {
+    if (this.site.update(floors, mainWidth, annexWidth, (slug) => this.overrideOf(slug))) {
       this.cameraRig.setBounds(this.site.bounds);
       this.fitShadows();
       this.reframe();
@@ -396,16 +400,24 @@ class OfficeScene {
     );
 
     const plans = new Map<string, FloorPlan>();
+    const shifts = new Map<string, Shifts>();
     for (const floor of floors) {
       const room = this.site.room(floor.slug);
       if (!room) continue;
       const cols = buildingOf(floor) === 'main' ? this.mainCols : this.annexCols;
-      plans.set(floor.slug, computeFloorPlan(floor, byFloor.get(floor.slug) ?? [], room.width, cols, order));
+      const override = this.overrideOf(floor.slug);
+      plans.set(floor.slug, computeFloorPlan(floor, byFloor.get(floor.slug) ?? [], room.width, cols, order, override));
+      shifts.set(floor.slug, furnitureShifts(floor, room.width, override));
     }
     this.plans = plans;
+    this.shifts = shifts;
     this.syncDesks();
     this.syncEntries(agents);
     this.refreshMeetings();
+  }
+
+  private overrideOf(slug: string): FloorLayoutOverride | undefined {
+    return resolveOverride(this.store.layouts, slug);
   }
 
   private syncDesks(): void {
@@ -462,7 +474,7 @@ class OfficeScene {
         this.entries.set(agent.key, entry);
       }
       entry.agent = agent;
-      entry.character.setLook({ roleKind: agent.roleKind, muted: floorStyle(plan.view).muted });
+      entry.character.setLook({ roleKind: agent.roleKind, muted: floorStyle(plan.view).muted, override: this.overrideOf(agent.floor) });
       entry.slot = plan.assignment.get(agent.key) ?? null;
       if (entry.slot) entry.scale = entry.slot.scale;
       entry.character.desk = entry.slot ? (this.desks.get(deskKey(agent.floor, entry.slot)) ?? null) : null;
@@ -571,15 +583,15 @@ class OfficeScene {
     if (!leaving && state === 'testing') {
       const index = labUse.get(agent.floor) ?? 0;
       labUse.set(agent.floor, index + 1);
-      return labTarget(agent.floor, room.width, index);
+      return labTarget(agent.floor, room.width, index, this.shifts.get(agent.floor)?.lab);
     }
     const meeting = leaving ? undefined : this.meetings.get(agent.key);
     if (meeting) {
       const host = this.site.room(meeting.floor);
-      if (host) return meetingTarget(meeting.floor, host.width, meeting.seat);
+      if (host) return meetingTarget(meeting.floor, host.width, meeting.seat, this.shifts.get(meeting.floor)?.meeting);
     }
     const coffee = leaving || state !== 'idle' ? undefined : this.coffee.get(agent.key);
-    if (coffee) return coffeeTarget(agent.floor, room.width, coffee.seat);
+    if (coffee) return coffeeTarget(agent.floor, room.width, coffee.seat, this.shifts.get(agent.floor)?.coffee);
     return entry.slot ? deskTarget(agent.floor, entry.slot) : null;
   }
 

@@ -10,6 +10,7 @@ import type {
   FloorAddRequest,
   FloorAddResult,
   FloorRemoveResult,
+  LayoutsFile,
   LessonCreate,
   LessonView,
   MemoryView,
@@ -98,6 +99,10 @@ export class OfficeApi {
 
   saveSettings(update: SettingsUpdate): Promise<ApiData<SettingsResult>> {
     return this.send('POST', '/api/settings', update);
+  }
+
+  saveLayouts(file: LayoutsFile): Promise<ApiData<{ ok: true; data: LayoutsFile }>> {
+    return this.send('PUT', '/api/layouts', file);
   }
 
   memory(floor: string, role: RoleId): Promise<ApiData<MemoryView>> {
