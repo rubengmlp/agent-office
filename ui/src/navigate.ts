@@ -1,14 +1,25 @@
+import type { OfficeApi } from './api';
 import type { BoardHandle } from './board/board';
 import { t } from './i18n';
+import { agentName } from './labels';
 import { needsOf, needToast, type Need, type NeedCursor, type NeedKind } from './needs';
+import type { Notifier } from './notify';
 import type { OfficeHandle } from './office/office';
+import type { PaletteContext, PaletteTarget } from './palette/entries';
 import { openDocument } from './panel/deliverables';
+import { focusOrders } from './panel/orders';
+import { relaunchable } from './panel/orderable';
 import { openSection, type SectionId } from './panel/section';
+import { requestSession } from './panel/session-controls';
 import type { Store } from './store';
-import type { Tab } from './topbar';
+import { TABS, type Tab } from './topbar';
+import type { AgentView, QuestionView } from './types';
+import type { KeyAction } from './keys';
 
 export type Nav = {
   store: Store;
+  api: OfficeApi | null;
+  notifier: Notifier | null;
   tab(): Tab;
   showTab(tab: Tab): void;
   office(): OfficeHandle | null;
@@ -60,4 +71,116 @@ export function stepNeed(nav: Nav, cursor: NeedCursor, direction: 1 | -1): void 
   }
   goToNeed(nav, step.need);
   nav.store.toast(needToast(step.position, step.total, step.need), 'info', { ttlMs: 2500 });
+}
+
+function oldestQuestion(nav: Nav): QuestionView | undefined {
+  const { store } = nav;
+  const own = store.selectedKey === null ? undefined : store.questionFor(store.selectedKey);
+  if (own) return own;
+  let oldest: QuestionView | undefined;
+  for (const question of store.questions) {
+    if (!oldest || question.createdAt < oldest.createdAt) oldest = question;
+  }
+  return oldest;
+}
+
+function selectedAgent(nav: Nav): AgentView | undefined {
+  return nav.store.selectedKey === null ? undefined : nav.store.agents.get(nav.store.selectedKey);
+}
+
+export function paletteContext(nav: Nav): PaletteContext {
+  const { store } = nav;
+  const selected = selectedAgent(nav);
+  const question = oldestQuestion(nav);
+  const asker = question ? store.agents.get(question.agentKey) : undefined;
+  const session = selected ? store.sessions.get(selected.sessionId) : undefined;
+  const main = selected !== undefined && selected.key === selected.sessionId ? session : undefined;
+  return {
+    agents: store.officeAgents(),
+    floors: store.floorList(),
+    documents: store.documents,
+    tabs: TABS.map(({ labelKey }) => t(labelKey)),
+    live: nav.api !== null,
+    reply: question ? { name: asker ? agentName(asker) : question.agentKey.slice(0, 8) } : null,
+    status: selected && session?.office ? { sessionId: selected.sessionId, name: agentName(selected) } : null,
+    relaunch: selected && main && relaunchable(main) && main.canRelaunch ? { sessionId: selected.sessionId, name: agentName(selected) } : null,
+    newOrder: nav.board().canCreate(),
+    mute: nav.notifier?.preferences.enabled === true,
+  };
+}
+
+export function runTarget(nav: Nav, target: PaletteTarget): void {
+  const { store } = nav;
+  switch (target.type) {
+    case 'agent':
+      goToAgent(nav, target.key);
+      break;
+    case 'floor':
+      nav.showTab('office');
+      nav.office()?.focusFloor(target.slug);
+      break;
+    case 'tab':
+      nav.showTab(TABS[target.index].tab);
+      break;
+    case 'plan': {
+      const doc = store.documents.find((item) => item.path === target.path);
+      nav.showTab('plans');
+      if (doc) openDocument(store, doc);
+      break;
+    }
+    case 'reply': {
+      const question = oldestQuestion(nav);
+      if (question) goToAgent(nav, question.agentKey, 'question');
+      break;
+    }
+    case 'status':
+      void requestSession(nav.api, store, target.sessionId, 'status');
+      break;
+    case 'relaunch':
+      void requestSession(nav.api, store, target.sessionId, 'relaunch');
+      break;
+    case 'newOrder':
+      nav.showTab('board');
+      nav.board().newOrder();
+      break;
+    case 'lang':
+      store.setLang(store.lang === 'es' ? 'en' : 'es');
+      break;
+    case 'history':
+      openSection('timeline');
+      break;
+    case 'mute': {
+      const prefs = nav.notifier?.preferences;
+      if (!nav.notifier || !prefs) break;
+      prefs.enabled = false;
+      nav.notifier.save(prefs);
+      store.toast(t('palette.muted'), 'ok');
+      break;
+    }
+  }
+}
+
+export function runKey(nav: Nav, action: KeyAction, cursor: NeedCursor, extra: { palette(): void; help(): void }): void {
+  switch (action.type) {
+    case 'palette':
+      extra.palette();
+      break;
+    case 'help':
+      extra.help();
+      break;
+    case 'tab':
+      nav.showTab(TABS[action.index].tab);
+      break;
+    case 'need':
+      stepNeed(nav, cursor, action.step);
+      break;
+    case 'history':
+      openSection('timeline');
+      break;
+    case 'orders':
+      focusOrders();
+      break;
+    case 'escape':
+      break;
+  }
 }

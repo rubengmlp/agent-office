@@ -5,7 +5,15 @@ import { agentName, floorLabel } from '../labels';
 import type { Store } from '../store';
 import type { SessionView } from '../types';
 import { orderable, orderableSessions } from './orderable';
-import { panelSection } from './section';
+import { openSection, panelSection } from './section';
+
+let focusText: (() => void) | null = null;
+
+// Opens the orders section and puts the cursor in its text.
+export function focusOrders(): void {
+  openSection('orders');
+  focusText?.();
+}
 
 const DIRECTOR_ROLES: ReadonlySet<string> = new Set(['office-director', 'office:director']);
 
@@ -30,6 +38,8 @@ export function mountOrders(host: HTMLElement, store: Store, actions: Actions): 
 
   const section = panelSection({ id: 'orders', title: () => t('orders.title'), host });
   section.body.append(el('label', 'field', targetLabel, select), textarea, el('div', 'orders-actions', send, status));
+
+  focusText = () => textarea.focus();
 
   let busy = false;
   let manualChoice = false;

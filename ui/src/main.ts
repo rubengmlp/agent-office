@@ -4,12 +4,17 @@ import { OfficeApi } from './api';
 import { browserPanelEnv, forgetPanelToken, panelCredential } from './auth';
 import { el } from './dom';
 import { Heartbeat } from './heartbeat';
+import { mountHelp } from './help';
 import { applyLang, readStoredLang, t, type MessageKey, type Params } from './i18n';
+import { mountKeys } from './keys';
 import { LiveConnection } from './live';
-import { goToNeed, type Nav } from './navigate';
+import { goToNeed, paletteContext, runKey, runTarget, type Nav } from './navigate';
+import { NeedCursor } from './needs';
 import { Notifier } from './notify';
 import type { OfficeHandle } from './office/office';
+import { mountPalette } from './palette/palette';
 import { mountSettings } from './settings/settings';
+import { closeDocument } from './panel/deliverables';
 import { mountFinished } from './panel/finished';
 import { mountPanel } from './panel/panel';
 import { mountPlans } from './plans/plans';
@@ -52,6 +57,7 @@ async function boot(): Promise<void> {
   const panelHost = el('aside', 'panel');
   const toastHost = el('div', 'toasts');
   const finishedHost = el('div', 'finished-host');
+  const overlayHost = el('div', 'overlay-host');
 
   let noticeText: { key: MessageKey; params?: Params } | null = null;
   const paintNotice = (): void => {
@@ -78,7 +84,14 @@ async function boot(): Promise<void> {
   };
 
   const topbar = mountTopbar(store, showTab, (need) => goToNeed(nav, need));
-  root.replaceChildren(topbar.root, el('main', 'main', officeHost, tableHost, boardHost, plansHost, chatHost, settingsHost, notice), panelHost, toastHost, finishedHost);
+  root.replaceChildren(
+    topbar.root,
+    el('main', 'main', officeHost, tableHost, boardHost, plansHost, chatHost, settingsHost, notice),
+    panelHost,
+    toastHost,
+    finishedHost,
+    overlayHost,
+  );
 
   let live: LiveConnection | null = null;
   let expired = false;
@@ -109,7 +122,23 @@ async function boot(): Promise<void> {
   mountSettings(settingsHost, store, api, notifier);
   mountToasts(toastHost, store);
 
-  const nav: Nav = { store, tab: () => tab, showTab, office: () => office, board: () => board };
+  const nav: Nav = {
+    store,
+    api,
+    notifier,
+    tab: () => tab,
+    showTab,
+    office: () => office,
+    board: () => board,
+  };
+  const palette = mountPalette(overlayHost, { context: () => paletteContext(nav), run: (target) => runTarget(nav, target) });
+  const help = mountHelp(overlayHost);
+  const cursor = new NeedCursor();
+  mountKeys({
+    run: (action) => runKey(nav, action, cursor, { palette: palette.open, help: help.toggle }),
+    layers: [palette.close, help.close, topbar.needs.close, closeDocument],
+    modalOpen: () => palette.isOpen() || help.isOpen() || document.querySelector('.dialog-backdrop, .modal-backdrop') !== null,
+  });
 
   const mountView: Promise<OfficeHandle> =
     view === '3d'

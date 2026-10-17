@@ -16,6 +16,9 @@ const FILTER_KEY = 'agent-office.board.floor';
 export type BoardHandle = {
   // Shows the cards of one floor (or all) and opens the drawer of an order when it is named.
   show(floor: string | null, orderSlug?: string): void;
+  // Whether a new order can be started from here, and opens its form.
+  canCreate(): boolean;
+  newOrder(): void;
 };
 
 function readFilter(): string | null {
@@ -207,9 +210,10 @@ export function mountBoard(host: HTMLElement, store: Store, api: OfficeApi | nul
     writeJson(FILTER_KEY, floor);
     render();
   });
-  add.addEventListener('click', () => {
-    if (api) openNewOrder(host, store, api, floor, (order) => openDetail(order));
-  });
+  const newOrder = (): void => {
+    if (api && deliveryFloors(store.floorList()).length > 0) openNewOrder(host, store, api, floor, (order) => openDetail(order));
+  };
+  add.addEventListener('click', newOrder);
   store.watch(['orders', 'lang', 'floors', 'mode'], render);
   // The age of a card moves on its own.
   let ticks = 0;
@@ -218,6 +222,8 @@ export function mountBoard(host: HTMLElement, store: Store, api: OfficeApi | nul
   });
 
   return {
+    canCreate: () => api !== null && deliveryFloors(store.floorList()).length > 0,
+    newOrder,
     show(next, orderSlug) {
       floor = next;
       writeJson(FILTER_KEY, floor);

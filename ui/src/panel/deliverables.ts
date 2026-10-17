@@ -274,6 +274,12 @@ class DocumentViewer {
   }
 }
 
+export function closeDocument(): boolean {
+  if (openViewer === null) return false;
+  openViewer.dispose();
+  return true;
+}
+
 export function openDocument(store: Store, doc: DocumentView): void {
   openViewer?.dispose();
   openViewer = new DocumentViewer(store, doc);

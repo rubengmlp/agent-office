@@ -41,6 +41,7 @@ const SAME_KEYS: MessageKey[] = [
   'board.drawer.checks',
   'board.drawer.plan',
   'needs.toast',
+  'palette.group.plan',
 ];
 
 const SOURCE_DIR = join(import.meta.dir, '../src');

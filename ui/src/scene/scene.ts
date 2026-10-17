@@ -696,7 +696,7 @@ class OfficeScene {
   };
 
   private readonly onKey = (event: KeyboardEvent): void => {
-    if (event.key !== 'Escape' || !this.active || this.cameraRig.following === null) return;
+    if (event.key !== 'Escape' || event.defaultPrevented || !this.active || this.cameraRig.following === null) return;
     this.cameraRig.stopFollow();
   };
 

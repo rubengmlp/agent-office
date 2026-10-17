@@ -148,6 +148,19 @@ Los lanzadores de los departamentos comprueban `GET /health` y no abren la sesi�
 - **Bloqueos**: un agente que envía `BLOQUEADO: <qué falta> — necesito <qué> de <quién>` se pinta bloqueado hasta que vuelve a trabajar. Una pregunta sin respuesta durante 5 minutos también.
 - **Límite de uso**: la tarjeta «Límite de uso» muestra el porcentaje gastado de la ventana de 5 horas y de la semanal con la cuenta atrás hasta su reinicio: bajo el botón «Edificio» en la 3D y arriba a la izquierda en la 2D. Los datos salen de la entrada JSON de la línea de estado de Claude Code (`rate_limits`): las sesiones de la oficina arrancan con una línea de estado propia (`plugin/scripts/office-statusline.sh`, cada 60 s) que la manda a `POST /usage`; el hub guarda solo esos números en memoria y la última muestra de cualquier sesión gana. Límites: solo llega mientras haya una sesión de la oficina abierta que ya haya respondido una vez, y solo en cuentas Pro/Max (con clave de API no hay `rate_limits` y la tarjeta dice «sin datos aún»). Con la oficina parada la tarjeta atenúa la última muestra y dice de cuándo es. Esa línea de estado sustituye a la tuya solo en las sesiones de la oficina.
 - **Te necesitan**: el botón de la cabecera cuenta lo que espera por ti y lo lista, lo más urgente primero: permisos, preguntas, agentes bloqueados, agentes parados, planes por decidir y checks por confirmar. Un agente sale una vez, bajo su motivo más urgente; los que se fueron a casa no salen. Al elegir uno se selecciona el agente, se abre su sección del panel y la cámara va a su planta. `N` y `Mayús+N` recorren la cola con un aviso («2/5 · Permiso de lead-mobile»).
+- **Atajos**: las teclas sueltas no actúan mientras escribes en un campo ni con un diálogo abierto; `?` abre la lista.
+
+  | Tecla | Acción |
+  | --- | --- |
+  | `Cmd/Ctrl+K` | Paleta de comandos (siempre) |
+  | `1`-`6` | Pestañas, en el orden de la cabecera |
+  | `N` / `Mayús+N` | Siguiente / anterior de «Te necesitan» |
+  | `/` | Historial (línea de tiempo del panel) |
+  | `O` | Escribir una orden |
+  | `?` | Ayuda de atajos |
+  | `Esc` | Cierra, por este orden, paleta, ayuda, menú y visor |
+
+- **Paleta**: `Cmd/Ctrl+K` busca por letras sueltas, sin importar tildes, entre agentes, plantas, pestañas, planes y acciones (Responder, Pedir estado, Relanzar, Nuevo encargo, Cambiar idioma, Ver historial, Silenciar). En el replay no salen las acciones que escriben.
 - **Demo sin sesiones**: <http://127.0.0.1:4747/?replay=/replays/demo.json> (añade `&view=3d` para la 3D).
 
 ## Arquitectura

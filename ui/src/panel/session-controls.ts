@@ -34,23 +34,29 @@ export function relaunchButton(session: SessionView): HTMLButtonElement {
   return control;
 }
 
-export async function runSessionAction(api: OfficeApi | null, store: Store, control: HTMLButtonElement): Promise<void> {
-  const sessionId = control.dataset.session;
-  const agent = sessionId === undefined ? undefined : store.agents.get(sessionId);
-  if (api === null || sessionId === undefined || !agent) return;
+export type SessionAction = 'status' | 'relaunch';
+
+export async function requestSession(api: OfficeApi | null, store: Store, sessionId: string, action: SessionAction): Promise<void> {
+  const agent = store.agents.get(sessionId);
+  if (api === null || !agent) return;
   const name = agentName(agent);
-  if (control.dataset.action === 'relaunch') {
+  if (action === 'relaunch') {
     const resumes = store.sessions.get(sessionId)?.relaunchResumes ?? false;
     const question = `${t('floors.relaunchConfirm', { name })} ${t(resumes ? 'floors.relaunchResumes' : 'floors.relaunchFresh')}`;
     if (!window.confirm(question)) return;
   }
-  control.disabled = true;
-  const relaunch = control.dataset.action === 'relaunch';
-  const result = await (relaunch ? api.relaunch(sessionId) : api.requestStatus(sessionId));
-  control.disabled = false;
+  const result = await (action === 'relaunch' ? api.relaunch(sessionId) : api.requestStatus(sessionId));
   if (!result.ok) {
     store.toast(result.message, 'error');
     return;
   }
-  store.toast(t(relaunch ? 'toast.relaunched' : 'toast.statusRequested', { name }), 'ok');
+  store.toast(t(action === 'relaunch' ? 'toast.relaunched' : 'toast.statusRequested', { name }), 'ok');
+}
+
+export async function runSessionAction(api: OfficeApi | null, store: Store, control: HTMLButtonElement): Promise<void> {
+  const sessionId = control.dataset.session;
+  if (api === null || sessionId === undefined || !store.agents.has(sessionId)) return;
+  control.disabled = true;
+  await requestSession(api, store, sessionId, control.dataset.action === 'relaunch' ? 'relaunch' : 'status');
+  control.disabled = false;
 }
