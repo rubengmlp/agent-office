@@ -3,7 +3,7 @@ export type Stack = 'flutter' | 'laravel' | 'node' | 'generic';
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 // Text the hub shows in the panel. A string is raw text shown as is (commands, paths, names, what agents wrote,
-// old recordings); an object is a key of the panel dictionary (ui/src/i18n) with its parameters, which may be
+// old recordings); an object is a key of the hub.* dictionary (shared/i18n) with its parameters, which may be
 // HubText themselves. The panel translates it, so the same payload serves every language.
 export type HubTextParams = {
   'hub.detail.waiting': undefined;
