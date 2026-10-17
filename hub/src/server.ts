@@ -6,6 +6,7 @@ import { bodyLimit } from 'hono/body-limit';
 import { clampWait, errorTextFor } from './chat';
 import type { FloorAdmin } from './floor-admin';
 import { hookResponse, runHook } from './hook';
+import { MAX_LAYOUTS_BYTES } from './layouts';
 import { isRoleId } from './memory';
 import type { Log } from './log';
 import { isHookEvent, type Office, type RelaunchResult } from './office';
@@ -234,6 +235,16 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
   app.get('/api/settings', requirePanel, (c) => {
     if (!opts.settings) return c.json({ error: { key: 'hub.api.settingsUnavailable' } }, 503);
     return c.json(opts.settings.view());
+  });
+
+  app.get('/api/layouts', requirePanel, (c) => c.json(office.layouts()));
+
+  app.put('/api/layouts', requirePanel, bodyLimit({ maxSize: MAX_LAYOUTS_BYTES, onError: tooLarge }), async (c) => {
+    const result = office.saveLayouts(await readJson(c));
+    if (result.ok) return c.json({ ok: true, data: result.data });
+    if (!('failed' in result)) return c.json({ ok: false, error: result.error }, 400);
+    const unavailable = typeof result.error !== 'string' && result.error.key === 'hub.layouts.unavailable';
+    return c.json({ ok: false, error: result.error }, unavailable ? 503 : 500);
   });
 
   app.post('/api/settings', requirePanel, async (c) => {

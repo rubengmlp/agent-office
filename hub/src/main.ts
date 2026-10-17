@@ -16,6 +16,7 @@ import {
 import { configTargets, watchTargets } from './config-watch';
 import { dbRegistry, openDb } from './db';
 import { createFloorAdmin } from './floor-admin';
+import { LayoutStore } from './layouts';
 import { createLog } from './log';
 import { Office } from './office';
 import { newNonce } from './panel-auth';
@@ -53,6 +54,7 @@ export function main(argv: string[]): void {
     claudeHome: p.claudeHome,
     launch: { agentsDir: p.agentsDir, sessionsDir: p.sessionsDir, directorFloors: p.directorFloors },
     registry: dbRegistry(db),
+    layouts: new LayoutStore(p.layouts, logLine),
     rawDir: process.env.AGENT_OFFICE_RAW === '1' ? RAW_FIXTURES_DIR : null,
     log: (text) => {
       console.error(`Agent Office: ${text}`);

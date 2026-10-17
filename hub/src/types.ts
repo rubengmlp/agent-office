@@ -266,6 +266,17 @@ export type HubTextParams = {
   'hub.api.branchUnmerged': undefined;
   'hub.api.worktreeFailed': undefined;
 
+  'hub.layouts.unavailable': undefined;
+  'hub.layouts.invalid': undefined;
+  'hub.layouts.slug': { slug: string };
+  'hub.layouts.tooManyFloors': { max: number };
+  'hub.layouts.tooManyDesks': { max: number };
+  'hub.layouts.spot': { where: string };
+  'hub.layouts.furniture': { name: string };
+  'hub.layouts.role': { role: string };
+  'hub.layouts.model': { role: string };
+  'hub.layouts.saveFailed': undefined;
+
   'hub.doc.tooLarge': undefined;
 
   'hub.floors.pathRequired': undefined;
@@ -921,6 +932,25 @@ export type TokensEvent = {
   context?: AgentContext | null;
 };
 
+// A place on a floor, normalised: u across the width and v across the depth, both from 0 to 1. The 3D and the
+// 2D views turn it into their own coordinates.
+export type Spot = { u: number; v: number };
+
+export type FurnitureKind = 'coffee' | 'meeting' | 'lab' | 'board' | 'printer';
+
+// What the user moved on one floor. A missing field is the default place; desks are by position in the plan, and
+// a null leaves that desk where it is.
+export type FloorLayoutOverride = {
+  lead?: Spot;
+  desks?: (Spot | null)[];
+  furniture?: Partial<Record<FurnitureKind, Spot>>;
+  // Model of the character of each role, `quaternius/<name>.glb` or `custom/<name>.glb`.
+  characters?: Partial<Record<RoleKind, string>>;
+};
+
+// ~/.config/agent-office/layouts.json. `all` is what every floor starts from; a floor's own override wins.
+export type LayoutsFile = { version: 1; floors: Record<string, FloorLayoutOverride>; all?: FloorLayoutOverride };
+
 export type Snapshot = {
   now: number;
   floors: FloorView[];
@@ -935,6 +965,7 @@ export type Snapshot = {
   chat: ChatMessageView[];
   orders: OrderView[];
   finished: FinishedView[];
+  layouts: LayoutsFile;
 };
 
 export type ServerMessage =
@@ -958,7 +989,8 @@ export type ServerMessage =
   | { type: 'order'; data: OrderView }
   | { type: 'checks'; orderId: number; data: CheckRunView }
   | { type: 'worktrees'; floor: string }
-  | { type: 'finished'; data: FinishedView };
+  | { type: 'finished'; data: FinishedView }
+  | { type: 'layouts'; data: LayoutsFile };
 
 export type ClientMessage =
   | { type: 'auth'; token: string }

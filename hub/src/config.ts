@@ -46,6 +46,7 @@ export type Paths = {
   officeSh: string;
   sessionsDir: string;
   directorFloors: string;
+  layouts: string;
 };
 
 export function paths(env: Record<string, string | undefined> = process.env): Paths {
@@ -65,6 +66,7 @@ export function paths(env: Record<string, string | undefined> = process.env): Pa
     officeSh: join(home, 'office.sh'),
     sessionsDir: join(home, 'sessions'),
     directorFloors: join(home, 'director-floors.md'),
+    layouts: join(home, 'layouts.json'),
   };
 }
 

@@ -19,6 +19,7 @@ import { GateDesk } from './gate-desk';
 import { GitQueue, runGit, type GitRunner } from './git';
 import { GuardDesk } from './guard-desk';
 import type { Log } from './log';
+import { emptyLayouts, type LayoutStore, type LayoutsSave } from './layouts';
 import { MeterDesk } from './meter-desk';
 import { OfficeBus } from './office-bus';
 import { prepare, type Sql } from './office-sql';
@@ -78,6 +79,7 @@ import type {
   HookEvent,
   HookMeta,
   HubText,
+  LayoutsFile,
   MemoryView,
   MessageView,
   OfficeConfig,
@@ -156,6 +158,8 @@ export type OfficeOptions = {
   undoMs?: number;
   // How long after a dev says listo the checks of its order start.
   listoDelayMs?: number;
+  // layouts.json: where the user moved the desks and the furniture; none in a replay, which draws the defaults.
+  layouts?: LayoutStore;
   // false builds an office that only lives in memory (the replay of a session): no guard, document watch or
   // refresh, token meter, sync, chat index or raw dump, and the hub never starts anything of its own.
   sideEffects?: boolean;
@@ -429,7 +433,21 @@ export class Office {
       chat: this.chat.recent(SNAPSHOT_LIMIT),
       orders: this.board.list(),
       finished: this.board.finishedAlerts(),
+      layouts: this.layouts(),
     };
+  }
+
+  layouts(): LayoutsFile {
+    return this.opts.layouts?.get() ?? emptyLayouts();
+  }
+
+  // The whole file replaces the previous one; every panel gets the new one.
+  saveLayouts(raw: unknown): LayoutsSave {
+    const store = this.opts.layouts;
+    if (!store) return { ok: false, error: { key: 'hub.layouts.unavailable' }, failed: true };
+    const result = store.save(raw);
+    if (result.ok) this.bus.emit({ type: 'layouts', data: result.data });
+    return result;
   }
 
   ingestUsage(raw: unknown): string {
