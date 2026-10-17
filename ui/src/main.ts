@@ -11,6 +11,7 @@ import { LiveConnection } from './live';
 import { goToNeed, paletteContext, runKey, runTarget, type Nav } from './navigate';
 import { NeedCursor } from './needs';
 import { Notifier } from './notify';
+import { SoundDesk } from './sound';
 import type { OfficeHandle, OfficeHooks } from './office/office';
 import { mountPalette } from './palette/palette';
 import { mountSettings } from './settings/settings';
@@ -118,19 +119,21 @@ async function boot(): Promise<void> {
   mountPlans(plansHost, store, api);
   chat = mountChat(chatHost, store, api);
   const notifier = api ? new Notifier(store) : null;
+  const sound = api ? new SoundDesk(store) : null;
   const showFinished = (view: FinishedView): void => {
     showTab('board');
     board.show(view.floors.length === 1 ? (view.floors[0] ?? null) : null, view.kind === 'order' ? view.slug : undefined);
   };
   if (notifier) notifier.openFinished = showFinished;
   mountFinished(finishedHost, store, api, { openBoard: showFinished });
-  mountSettings(settingsHost, store, api, notifier);
+  mountSettings(settingsHost, store, api, notifier, sound);
   mountToasts(toastHost, store);
 
   const nav: Nav = {
     store,
     api,
     notifier,
+    sound,
     tab: () => tab,
     showTab,
     office: () => office,
@@ -197,6 +200,7 @@ async function boot(): Promise<void> {
     onMessage: (message) => {
       store.apply(message);
       notifier?.observe(message);
+      sound?.observe(message);
     },
     onOpen: () => heartbeat.pulse(),
   });

@@ -4,6 +4,7 @@ import { plural, t } from '../i18n';
 import { hubTexts } from '../i18n/hub';
 import { roleHint, stackLabel } from '../labels';
 import type { Notifier } from '../notify';
+import type { SoundDesk } from '../sound';
 import type { Store } from '../store';
 import type { DepartmentsConfig, Effort, PermissionMode, RoleId, SettingsTarget, SettingsView } from '../types';
 import {
@@ -41,6 +42,7 @@ import {
   type NumberKey,
 } from './options';
 import { mountNotifySection } from './notifications';
+import { mountSoundSection } from './sound';
 import { mountProjects } from './projects';
 
 type Outcome = { text: string; kind: 'ok' | 'error' };
@@ -189,6 +191,7 @@ class SettingsPage {
     private readonly store: Store,
     private readonly api: OfficeApi | null,
     private readonly notifier: Notifier | null,
+    private readonly sound: SoundDesk | null,
   ) {}
 
   start(): void {
@@ -269,8 +272,7 @@ class SettingsPage {
 
   private placeholder(): HTMLElement[] {
     if (this.api === null) return [];
-    // Desktop notifications live in the browser: they can be turned off even when the hub settings do not load.
-    const notify = this.notifier ? [mountNotifySection(this.notifier)] : [];
+    const notify = this.browserSections();
     if (!this.loadError) return [el('p', 'placeholder', t('settings.loading')), ...notify];
     const retry = button(t('settings.retry'));
     retry.addEventListener('click', () => void this.load());
@@ -279,6 +281,13 @@ class SettingsPage {
       el('div', 'settings-retry', retry),
       ...notify,
     ];
+  }
+
+  // What lives in the browser and not in the hub: it can be changed even when the hub settings do not load.
+  private browserSections(): HTMLElement[] {
+    return [this.notifier ? mountNotifySection(this.notifier) : null, this.sound ? mountSoundSection(this.sound) : null].filter(
+      (section): section is HTMLElement => section !== null,
+    );
   }
 
   private buildControls(view: SettingsView): Controls {
@@ -415,9 +424,8 @@ class SettingsPage {
       readonlyRow(t('settings.hub.port'), t('settings.hub.hint.port'), String(view.port)),
     );
 
-    const notify = this.notifier ? mountNotifySection(this.notifier) : null;
     return {
-      root: el('div', 'settings-form', fieldset, this.projectsHost, hub, notify),
+      root: el('div', 'settings-form', fieldset, this.projectsHost, hub, ...this.browserSections()),
       fieldset,
       roles,
       floorRoles,
@@ -572,7 +580,7 @@ class SettingsPage {
   }
 }
 
-export function mountSettings(host: HTMLElement, store: Store, api: OfficeApi | null, notifier: Notifier | null = null): void {
-  const page = new SettingsPage(host, store, api, notifier);
+export function mountSettings(host: HTMLElement, store: Store, api: OfficeApi | null, notifier: Notifier | null = null, sound: SoundDesk | null = null): void {
+  const page = new SettingsPage(host, store, api, notifier, sound);
   page.start();
 }

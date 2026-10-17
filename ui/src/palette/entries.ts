@@ -18,7 +18,8 @@ export type PaletteTarget =
   | { type: 'newOrder' }
   | { type: 'lang' }
   | { type: 'history' }
-  | { type: 'mute' };
+  | { type: 'mute' }
+  | { type: 'muteSound' };
 
 export type PaletteEntry = { id: string; group: PaletteGroup; label: string; hint: string; target: PaletteTarget; write: boolean };
 
@@ -34,6 +35,7 @@ export type PaletteContext = {
   relaunch: { sessionId: string; name: string } | null;
   newOrder: boolean;
   mute: boolean;
+  muteSound: boolean;
 };
 
 export const EMPTY_LIMIT = 30;
@@ -51,6 +53,7 @@ function actions(context: PaletteContext): PaletteEntry[] {
   add('lang', t(currentLang() === 'es' ? 'palette.action.langEn' : 'palette.action.langEs'), t('palette.hint.lang'), { type: 'lang' }, false);
   add('history', t('palette.action.history'), '/', { type: 'history' }, false);
   if (context.mute) add('mute', t('palette.action.mute'), t('palette.hint.notifications'), { type: 'mute' }, false);
+  if (context.muteSound) add('muteSound', t('palette.action.muteSound'), t('palette.hint.sound'), { type: 'muteSound' }, false);
   return out;
 }
 

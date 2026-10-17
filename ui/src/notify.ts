@@ -1,3 +1,4 @@
+import { isBlockedMessage, leadDeliveryFloor } from './deliveries';
 import { plural, t } from './i18n';
 import { agentName, floorLabel } from './labels';
 import { openDocument } from './panel/deliverables';
@@ -17,9 +18,6 @@ export type NotifyPrefs = { enabled: boolean; events: Record<NotifyEvent, boolea
 
 const PREFS_KEY = 'agent-office.notify';
 export const SEEN_LIMIT = 500;
-// Protocol prefixes, as in the hub state machine (which cannot load in the browser). Not translated.
-const BLOCK_PREFIX = /^\s*BLOQUEADO\s*:/i;
-const DONE_PREFIX = /^\s*HECHO\s*:/i;
 
 export function notificationsSupported(): boolean {
   return typeof Notification !== 'undefined';
@@ -150,17 +148,11 @@ export class Notifier {
   private message(message: MessageView): void {
     if (message.text === null) return;
     const agent = this.name(message.fromKey);
-    if (BLOCK_PREFIX.test(message.text)) {
+    if (isBlockedMessage(message)) {
       this.show('blocked', `message:${message.id}`, t('notify.blocked.title', { agent }), t('notify.openPanel'), this.select(message.fromKey));
-    } else if (DONE_PREFIX.test(message.text) && this.store.agents.get(message.fromKey)?.roleKind === 'lead' && !this.tracked(message.fromKey)) {
+    } else if (leadDeliveryFloor(this.store, message) !== null) {
       this.show('done', `message:${message.id}`, t('notify.done.title', { agent }), t('notify.openPanel'), this.select(message.fromKey));
     }
-  }
-
-  // A floor that works with orders says its ends through the alert of the order, which only an accepted HECHO makes.
-  private tracked(agentKey: string): boolean {
-    const floor = this.store.agents.get(agentKey)?.floor;
-    return floor !== undefined && this.store.orders.some((order) => order.floor === floor && order.worktree !== null);
   }
 
   private finished(view: FinishedView): void {

@@ -1201,6 +1201,12 @@ input.setting-number {
   text-align: right;
 }
 
+input.setting-range {
+  flex: none;
+  width: 180px;
+  accent-color: var(--accent);
+}
+
 input.setting-branch {
   flex: none;
   width: 200px;

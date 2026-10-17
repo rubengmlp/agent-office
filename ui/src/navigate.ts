@@ -4,6 +4,7 @@ import { t } from './i18n';
 import { agentName } from './labels';
 import { needsOf, needToast, type Need, type NeedCursor, type NeedKind } from './needs';
 import type { Notifier } from './notify';
+import type { SoundDesk } from './sound';
 import type { OfficeHandle } from './office/office';
 import type { PaletteContext, PaletteTarget } from './palette/entries';
 import { openDocument } from './panel/deliverables';
@@ -21,6 +22,7 @@ export type Nav = {
   store: Store;
   api: OfficeApi | null;
   notifier: Notifier | null;
+  sound: SoundDesk | null;
   tab(): Tab;
   showTab(tab: Tab): void;
   office(): OfficeHandle | null;
@@ -118,6 +120,7 @@ export function paletteContext(nav: Nav): PaletteContext {
     relaunch: selected && main && relaunchable(main) && main.canRelaunch ? { sessionId: selected.sessionId, name: agentName(selected) } : null,
     newOrder: nav.board().canCreate(),
     mute: nav.notifier?.preferences.enabled === true,
+    muteSound: nav.sound?.preferences.enabled === true,
   };
 }
 
@@ -169,6 +172,11 @@ export function runTarget(nav: Nav, target: PaletteTarget): void {
       store.toast(t('palette.muted'), 'ok');
       break;
     }
+    case 'muteSound':
+      if (!nav.sound) break;
+      nav.sound.mute();
+      store.toast(t('palette.mutedSound'), 'ok');
+      break;
   }
 }
 
