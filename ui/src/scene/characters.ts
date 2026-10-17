@@ -46,6 +46,8 @@ export type FrameInput = {
   following: boolean;
   camera: Vector3;
   context: number | null;
+  // At the coffee machine with someone else: they look at each other and talk, without a conversation line.
+  chat?: boolean;
 };
 
 export type Resolver = (floor: string) => Vector3 | null;
@@ -288,7 +290,7 @@ export class Character {
     this.root.scale.setScalar(input.scale);
 
     const moving = this.moving;
-    const activity = this.decide(input.state, moving, t);
+    const activity = this.decide(input.state, moving, t, input.chat === true);
     if (this.rig) {
       this.rig.play(activity.clip, {
         once: activity.once,
@@ -667,12 +669,16 @@ export class Character {
     return out;
   }
 
-  private decide(state: AgentState, moving: boolean, t: number): Activity {
+  private decide(state: AgentState, moving: boolean, t: number, chat: boolean): Activity {
     const rig = this.rig;
     const has = (clip: LogicalClip): boolean => rig !== null && rig.has(clip);
     const pick = (...clips: LogicalClip[]): LogicalClip => clips.find(has) ?? 'idle';
     if (moving) return { ...BASE, clip: this.ride?.phase === 'waiting' || this.ride?.phase === 'riding' ? pick('idle') : pick('walk', 'run') };
     const atDesk = this.target?.kind === 'desk';
+    if (chat && state === 'idle' && this.target?.kind === 'coffee') {
+      const talk = has('talk');
+      return { ...BASE, clip: talk ? 'talk' : pick('idle'), mug: 1, gesture: talk ? 0 : 1, headPitch: talk ? 0 : 0.11 * Math.sin(t * 6.5) };
+    }
     switch (state) {
       case 'done':
         return { ...BASE, clip: pick('wave', 'idle'), once: true };

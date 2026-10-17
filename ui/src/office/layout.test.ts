@@ -114,3 +114,16 @@ describe('leaving the 2D office', () => {
     expect(without.desks.get('dev-2')).toEqual(full.desks.get('dev-1'));
   });
 });
+
+describe('the coffee machine', () => {
+  test('has two places below the machine, side by side', () => {
+    const layout = computeFloorLayout(floor('mobile', 'managed'), [agent('lead-1', 'lead', 'mobile')], WIDTH, order);
+    expect(layout.coffeeStands).toHaveLength(2);
+    const [left, right] = layout.coffeeStands;
+    expect(right.x - left.x).toBeGreaterThan(10);
+    expect(left.y).toBe(right.y);
+    expect(left.y).toBeGreaterThan(layout.coffee.y + 24);
+    expect(left.x).toBeGreaterThan(layout.coffee.x - 8);
+    expect(right.x).toBeLessThan(layout.coffee.x + 30);
+  });
+});

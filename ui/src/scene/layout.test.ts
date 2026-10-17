@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import type { AgentView, FloorView } from '../types';
-import { AISLE_Z, BRIDGE_LANDING_DX, HALF_D, LIFT_GAP, LIFT_W, PARK_AISLE_Z, ROAD_Z, STOREY_H, WALL_T } from './constants';
+import { AISLE_Z, BRIDGE_LANDING_DX, COFFEE_DX, COFFEE_Z, HALF_D, LIFT_GAP, LIFT_W, PARK_AISLE_Z, ROAD_Z, STOREY_H, WALL_T } from './constants';
 import {
   STREET,
   STREET_DX,
+  coffeeTarget,
   computeFloorPlan,
   deskTarget,
   exitTarget,
@@ -201,5 +202,34 @@ describe('desks', () => {
     expect(without.slots).toHaveLength(1);
     expect(without.assignment.get('dev-2')).toEqual(full.assignment.get('dev-1'));
     expect(without.assignment.get('lead-1')).toEqual(full.assignment.get('lead-1'));
+  });
+});
+
+describe('the coffee machine', () => {
+  test('has two places in front of the counter that face each other', () => {
+    const first = coffeeTarget('mobile', MAIN_W, 0);
+    const second = coffeeTarget('mobile', MAIN_W, 1);
+    expect(first).toMatchObject({ kind: 'coffee', floor: 'mobile', id: 'coffee:mobile:0', slot: null });
+    expect(second.id).toBe('coffee:mobile:1');
+    expect(first.z).toBe(second.z);
+    expect(first.z).toBeGreaterThan(COFFEE_Z);
+    expect(first.z).toBeLessThan(AISLE_Z);
+    expect(second.x - first.x).toBeGreaterThan(0.5);
+    expect(second.x - first.x).toBeLessThan(1.2);
+    expect(Math.abs(first.x - (MAIN_W / 2 - COFFEE_DX))).toBeLessThan(1);
+    expect(first.facing).toBeCloseTo(Math.PI / 2, 5);
+    expect(second.facing).toBeCloseTo(-Math.PI / 2, 5);
+    expect(first.lane).toBe(first.x);
+  });
+
+  test('a seat outside the two wraps around, and the path to it goes by the aisle', () => {
+    expect(coffeeTarget('mobile', MAIN_W, 2).id).toBe('coffee:mobile:0');
+    expect(coffeeTarget('mobile', MAIN_W, -1).id).toBe('coffee:mobile:1');
+    const map = nav();
+    const target = coffeeTarget('mobile', MAIN_W, 1);
+    const path = planPath({ floor: 'mobile', x: 0, z: -2.25, lane: 1 }, target, map)!;
+    expect(path.some((point) => Math.abs(point.z - AISLE_Z) < 0.02)).toBe(true);
+    expect(path[path.length - 1]).toMatchObject({ floor: 'mobile', x: target.x, z: target.z });
+    expect(floorsOf(path)).toEqual(['mobile']);
   });
 });

@@ -3,6 +3,10 @@ import type { AgentView, FloorView, MessageView, RoleKind } from '../types';
 import {
   AISLE_Z,
   CHILD_SCALE,
+  COFFEE_DX,
+  COFFEE_STAND_DX,
+  COFFEE_STAND_DZ,
+  COFFEE_Z,
   HALF_D,
   LAB_LANE_DX,
   LAB_QUEUE_STEP,
@@ -48,7 +52,7 @@ export type FloorPlan = {
   assignment: Map<string, DeskSlot>;
 };
 
-export type TargetKind = 'desk' | 'lab' | 'meeting' | 'exit';
+export type TargetKind = 'desk' | 'lab' | 'meeting' | 'coffee' | 'exit';
 
 export type Target = {
   id: string;
@@ -284,6 +288,24 @@ export function meetingTarget(floor: string, width: number, seat: number): Targe
   ];
   const spot = spots[((seat % MEETING_SEATS) + MEETING_SEATS) % MEETING_SEATS];
   return { id: `meet:${floor}:${seat}`, kind: 'meeting', floor, x: spot.x, z: spot.z, lane: spot.x, facing: spot.facing, slot: null };
+}
+
+export const COFFEE_STANDS = COFFEE_STAND_DX.length;
+
+// Two people at the coffee machine stand a step apart and face each other.
+export function coffeeTarget(floor: string, width: number, seat: number): Target {
+  const index = ((seat % COFFEE_STANDS) + COFFEE_STANDS) % COFFEE_STANDS;
+  const x = width / 2 - COFFEE_DX + COFFEE_STAND_DX[index];
+  return {
+    id: `coffee:${floor}:${index}`,
+    kind: 'coffee',
+    floor,
+    x,
+    z: COFFEE_Z + COFFEE_STAND_DZ,
+    lane: x,
+    facing: index === 0 ? Math.PI / 2 : -Math.PI / 2,
+    slot: null,
+  };
 }
 
 const EPS = 0.02;

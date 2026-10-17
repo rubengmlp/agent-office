@@ -16,7 +16,7 @@ import { Overlay, type BadgeKind, type IconKind } from './effects';
 import type { DeskParts } from './furniture';
 import { liftLeg, type LiftLeg, type Point } from './layout';
 
-export type TargetKind = 'desk' | 'lab' | 'meeting' | 'exit';
+export type TargetKind = 'desk' | 'lab' | 'meeting' | 'coffee' | 'exit';
 
 export type Target = {
   id: string;
@@ -39,6 +39,8 @@ export type FrameInput = {
   hold: boolean;
   lastTest: TestResult | null;
   context: number | null;
+  // At the coffee machine with someone else: the mouths move, without a conversation line.
+  chat?: boolean;
 };
 
 type Ride = { leg: LiftLeg; phase: 'approach' | 'waiting' | 'boarding' | 'riding' };
@@ -72,6 +74,7 @@ export class CharacterView {
   private replanAfterRide = false;
   private pathWanted = false;
   private walking = false;
+  private chatting = false;
 
   constructor(
     readonly key: string,
@@ -183,6 +186,7 @@ export class CharacterView {
     this.trackState(input.state);
     this.trackTest(input);
     this.resetPose();
+    this.chatting = input.chat === true && this.goal?.kind === 'coffee';
 
     if (this.walking) this.poseWalking();
     else if (!this.moving) this.poseFor(input.state, t);
@@ -368,6 +372,7 @@ export class CharacterView {
     p.cup.rotation = -p.armR.rotation;
     p.steam.alpha = 0.5 + 0.5 * Math.sin(t * 3);
     p.steam.y = -Math.floor((t * 2) % 2);
+    if (this.chatting) p.mouth.scale.y = Math.floor(t * 6) % 3 === 0 ? 2 : 1;
   }
 
   private poseWorking(t: number): void {

@@ -927,5 +927,13 @@ export const en: Messages = {
   'palette.action.muteSound': 'Mute sounds',
   'palette.hint.sound': 'Audible cues',
   'palette.mutedSound': 'Sounds muted.',
+  'settings.ambient.title': 'Office life',
+  'settings.ambient.hint': 'Details that only change how the office looks: they never hide the real state of an agent, which the label keeps showing.',
+  'settings.ambient.dayNight.label': 'Day and night',
+  'settings.ambient.dayNight.hint': 'In 3D the sky, the lights, the street lamps and the windows follow the day; in 2D, the sky.',
+  'settings.ambient.dayNight.theme': 'Follow the system theme',
+  'settings.ambient.dayNight.clock': 'Follow the clock (dawn 6-8, dusk 19-21)',
+  'settings.ambient.coffee': 'Coffee breaks',
+  'settings.ambient.coffeeHint': 'An agent that has been free for 90 s may go to the coffee machine for 40-90 s; in any other state it goes back to its desk. Stalled and blocked agents never go.',
   ...hubEn,
 };

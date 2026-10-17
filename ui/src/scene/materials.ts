@@ -264,15 +264,40 @@ export function gardenKit(): GardenKit {
   return gardenKitCache;
 }
 
-export function applyTheme(dark: boolean): void {
+const GROUND = [0x23282f, 0xc3cad2] as const;
+const SIDEWALK = [0x5b6169, 0xe2e6ea] as const;
+const GRASS = [0x2f5a2c, 0x5f9a45] as const;
+const ASPHALT = [0x25282d, 0x3a3e45] as const;
+const BLOCKS = [
+  [0x2c323b, 0x8d949c],
+  [0x323943, 0x9aa1a8],
+  [0x272c34, 0x7f868e],
+] as const;
+const WINDOW_NIGHT = 0xffd9a0;
+const WINDOW_DAY = 0x9fc9ea;
+const _from = new Color();
+const _to = new Color();
+
+// night and day are the colors at daylight 0 and 1; exactly those at the ends.
+function between(target: Color, night: number, day: number, k: number): void {
+  if (k <= 0) target.set(night);
+  else if (k >= 1) target.set(day);
+  else target.copy(_from.set(night)).lerp(_to.set(day), k);
+}
+
+// Daylight k runs from 0 (night) to 1 (day): the ground, the lawn, the skyline, the street lamps and the lit
+// windows follow it. The colors of the site are baked into its meshes, so the caller rebuilds them afterwards.
+export function applyDaylight(k: number): void {
   const kit = buildingKit();
-  kit.ground.color.set(dark ? 0x23282f : 0xc3cad2);
-  kit.sidewalk.color.set(dark ? 0x5b6169 : 0xe2e6ea);
+  between(kit.ground.color, GROUND[0], GROUND[1], k);
+  between(kit.sidewalk.color, SIDEWALK[0], SIDEWALK[1], k);
+  between(kit.windowGlass.emissive, WINDOW_NIGHT, WINDOW_DAY, k);
+  kit.windowGlass.emissiveIntensity = 0.35 + (1 - k) * 0.75;
   const garden = gardenKit();
-  garden.grass.color.set(dark ? 0x2f5a2c : 0x5f9a45);
-  garden.asphalt.color.set(dark ? 0x25282d : 0x3a3e45);
-  garden.lamp.emissiveIntensity = dark ? 1.6 : 0.6;
-  garden.blocks.forEach((block, index) => block.color.set(dark ? [0x2c323b, 0x323943, 0x272c34][index] : [0x8d949c, 0x9aa1a8, 0x7f868e][index]));
+  between(garden.grass.color, GRASS[0], GRASS[1], k);
+  between(garden.asphalt.color, ASPHALT[0], ASPHALT[1], k);
+  garden.lamp.emissiveIntensity = 0.6 + (1 - k) * 1.0;
+  garden.blocks.forEach((block, index) => between(block.color, BLOCKS[index][0], BLOCKS[index][1], k));
 }
 
 export type FurnitureKit = {

@@ -549,3 +549,18 @@ export function glassOffice(b: Batcher, width: number, partitionX: number, front
   for (const z of [doorFrom, doorTo, frontZ]) b.box(kit.frame, 0.06, height, 0.06, x, height / 2, z, { cast: false });
   b.box(kit.frame, 0.06, 0.08, doorTo - doorFrom, x, 2.3, (doorFrom + doorTo) / 2, { cast: false });
 }
+
+// A copier on a cabinet that faces -x; the sheet comes out of the slot at PRINTER_SLOT_DX, PRINTER_SLOT_Y.
+export function printer(b: Batcher, kit: FurnitureKit, cx: number, cz: number): void {
+  b.box(kit.cabinet, 0.62, 0.7, 0.52, cx, 0.35, cz);
+  b.box(kit.metal, 0.006, 0.6, 0.4, cx - 0.311, 0.36, cz, { cast: false });
+  b.box(kit.laminate, 0.58, 0.24, 0.46, cx, 0.82, cz);
+  b.box(kit.plastic, 0.3, 0.03, 0.4, cx + 0.05, 0.955, cz);
+  b.box(kit.plastic, 0.1, 0.02, 0.16, cx - 0.16, 0.945, cz + 0.14);
+  b.box(kit.ledGreen, 0.02, 0.01, 0.02, cx - 0.2, 0.96, cz + 0.2, { cast: false });
+  b.box(kit.plastic, 0.02, 0.012, 0.3, cx - 0.292, 0.76, cz);
+  b.box(kit.steel, 0.2, 0.012, 0.3, cx - 0.39, 0.745, cz, { rz: 0.12 });
+}
+
+export const PRINTER_SLOT_Y = 0.77;
+export const PRINTER_SLOT_DX = -0.29;

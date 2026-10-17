@@ -1,4 +1,5 @@
 import { StateDebouncer } from './debounce';
+import { deliveryFloors } from './deliveries';
 import { applyLang, currentLang, plural, storeLang, t, type Lang, type MessageKey } from './i18n';
 import type {
   ActivityView,
@@ -44,6 +45,7 @@ export type Topic =
   | 'chat'
   | 'orders'
   | 'finished'
+  | 'deliveries'
   | 'checks'
   | 'worktrees';
 
@@ -85,6 +87,8 @@ export class Store {
   orders: OrderView[] = [];
   // Alerts of finished orders and plans the user has not closed yet; the popup is rebuilt from them.
   finished: FinishedView[] = [];
+  // The last accepted delivery and the floors it was for; `seq` grows with each, and the printers listen to it.
+  delivery: { seq: number; floors: string[] } = { seq: 0, floors: [] };
   readonly checkRuns = new Map<number, CheckRunView>();
   worktreeVersion = 0;
   // Last id seen with the Chat tab open, per channel; what came in the snapshot counts as seen.
@@ -192,6 +196,7 @@ export class Store {
         this.messages.push(message.data);
         if (this.messages.length > MESSAGE_LIMIT) this.messages.splice(0, this.messages.length - MESSAGE_LIMIT);
         this.mark('messages');
+        this.noteDelivery(message);
         break;
       case 'activity':
         this.activity.push(message.data);
@@ -257,6 +262,7 @@ export class Store {
         if (this.finished.some((item) => item.id === message.data.id)) break;
         this.finished = [...this.finished, message.data];
         this.mark('finished');
+        this.noteDelivery(message);
         break;
       case 'chat':
         if (this.chat.some((m) => m.id === message.data.id)) break;
@@ -419,6 +425,13 @@ export class Store {
     this.questions = this.questions.filter((q) => q.id !== id);
     this.mark('questions');
     this.toast(t(OUTCOME_KEYS[outcome]),outcome === 'answered' ? 'ok' : 'info');
+  }
+
+  private noteDelivery(message: ServerMessage): void {
+    const floors = deliveryFloors(this, message);
+    if (floors.length === 0) return;
+    this.delivery = { seq: this.delivery.seq + 1, floors };
+    this.mark('deliveries');
   }
 
   private markAll(): void {

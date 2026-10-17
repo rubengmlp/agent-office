@@ -44,6 +44,12 @@ export const MEET_D = 1.0;
 
 export const COFFEE_DX = 1.35;
 export const COFFEE_Z = -3.6;
+export const COFFEE_STAND_DX: readonly number[] = [-0.15, 0.65];
+export const COFFEE_STAND_DZ = 0.85;
+
+export const PRINTER_DX = 0.65;
+export const PRINTER_Z = 0.4;
+export const PRINT_S = 2;
 
 export const DOOR_HALF = 0.6;
 export const DOOR_H = 2.3;

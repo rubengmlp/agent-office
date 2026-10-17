@@ -27,6 +27,8 @@ import {
   MEET_Z,
   OFFICE_PARTITION_DX,
   PITCH,
+  PRINTER_DX,
+  PRINTER_Z,
   PLINTH_H,
   SIDEWALK_Y,
   SLAB_T,
@@ -46,6 +48,7 @@ import {
   meetingTable,
   pegboard,
   plant,
+  printer,
   sofa,
   toolShelf,
   UNIT_PLANE,
@@ -53,6 +56,7 @@ import {
 } from './furniture';
 import { buildingOf, STREET, streetNav, type BuildingId, type FloorNav, type Nav } from './layout';
 import { buildingKit, floorStyle, furnitureKit, hashString, std, type FloorStyle } from './materials';
+import { PrintSheet } from './printer';
 
 type Opening = { x0: number; x1: number };
 
@@ -227,6 +231,7 @@ export class FloorRoom {
   private coffeeLed: Mesh | null = null;
   private labLamp: Owned | null = null;
   board: BoardScreen | null = null;
+  private sheet: PrintSheet | null = null;
 
   constructor(view: FloorView) {
     this.view = view;
@@ -258,6 +263,12 @@ export class FloorRoom {
   tick(seconds: number, labActive: boolean): void {
     if (this.coffeeLed) this.coffeeLed.visible = Math.floor(seconds / 0.6) % 2 === 0;
     if (this.labLamp) this.labLamp.material.emissiveIntensity = labActive ? 1.6 + Math.sin(seconds * 6) * 1.2 : 0.25;
+    this.sheet?.tick(seconds);
+  }
+
+  // An accepted delivery: the printer pushes a sheet out for two seconds.
+  print(seconds: number): void {
+    this.sheet?.start(seconds);
   }
 
   dispose(): void {
@@ -278,6 +289,7 @@ export class FloorRoom {
     this.coffeeLed = null;
     this.labLamp = null;
     this.board = null;
+    this.sheet = null;
   }
 
   private rebuild(): void {
@@ -359,6 +371,8 @@ export class FloorRoom {
     const led = coffeeCorner(b, kit, half - COFFEE_DX, COFFEE_Z);
     plant(b, kit, half - 0.55, HALF_D - 0.55, 1.3, seed + 11);
     plant(b, kit, half - 3.2, -HALF_D + 0.4, 0.7, seed + 13);
+    const printerX = half - PRINTER_DX;
+    printer(b, kit, printerX, PRINTER_Z);
 
     this.meshes = b.build(this.group);
     this.group.add(led);
@@ -368,6 +382,11 @@ export class FloorRoom {
     this.group.add(board.mesh);
     this.owned.push({ mesh: board.mesh, material: board.material, texture: board.texture });
     this.board = board;
+
+    const sheet = new PrintSheet(printerX, PRINTER_Z);
+    this.group.add(sheet.mesh);
+    this.owned.push({ mesh: sheet.mesh, material: sheet.material, texture: null });
+    this.sheet = sheet;
 
     const screen = labScreen(labX, labZ);
     this.group.add(screen);

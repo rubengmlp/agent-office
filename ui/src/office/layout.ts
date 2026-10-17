@@ -28,6 +28,7 @@ export type FloorLayout = {
   labBench: Point;
   labStands: Point[];
   coffee: Point;
+  coffeeStands: Point[];
   rug: Rect;
   table: Point;
   seats: Seat[];
@@ -128,6 +129,7 @@ export function computeFloorLayout(
     labBench,
     labStands: [12, 29, 46].map((dx) => ({ x: labBench.x + dx, y: WALL_H + 16 })),
     coffee: { x: unitX + 70, y: WALL_H - 22 },
+    coffeeStands: [-2, 18].map((dx) => ({ x: unitX + 70 + dx, y: WALL_H + 16 })),
     rug,
     table,
     seats: [

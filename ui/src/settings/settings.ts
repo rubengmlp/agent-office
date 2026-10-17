@@ -42,6 +42,7 @@ import {
   type NumberKey,
 } from './options';
 import { mountNotifySection } from './notifications';
+import { mountAmbientSection } from './ambient';
 import { mountSoundSection } from './sound';
 import { mountProjects } from './projects';
 
@@ -271,7 +272,7 @@ class SettingsPage {
   }
 
   private placeholder(): HTMLElement[] {
-    if (this.api === null) return [];
+    if (this.api === null) return this.browserSections();
     const notify = this.browserSections();
     if (!this.loadError) return [el('p', 'placeholder', t('settings.loading')), ...notify];
     const retry = button(t('settings.retry'));
@@ -285,7 +286,7 @@ class SettingsPage {
 
   // What lives in the browser and not in the hub: it can be changed even when the hub settings do not load.
   private browserSections(): HTMLElement[] {
-    return [this.notifier ? mountNotifySection(this.notifier) : null, this.sound ? mountSoundSection(this.sound) : null].filter(
+    return [this.notifier ? mountNotifySection(this.notifier) : null, this.sound ? mountSoundSection(this.sound) : null, mountAmbientSection()].filter(
       (section): section is HTMLElement => section !== null,
     );
   }

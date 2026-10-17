@@ -19,7 +19,7 @@ export class Backdrop {
   private ring: Group[] = [];
   private far = 0;
   private radius = 0;
-  private dark = false;
+  private k = 1;
 
   constructor() {
     this.canvas.width = 4;
@@ -43,8 +43,9 @@ export class Backdrop {
     for (const block of this.ring) block.visible = block.position.x * eye.x + block.position.z * eye.z < 0;
   }
 
-  retheme(dark: boolean): void {
-    this.dark = dark;
+  // Daylight from 0 (night) to 1 (day); the skyline blocks come from the shared kit, already at that daylight.
+  retheme(k: number): void {
+    this.k = k;
     this.paint();
     const horizon = this.horizon;
     for (const block of gardenKit().blocks) block.color.lerp(horizon, BLOCKS_HAZE);
@@ -66,7 +67,10 @@ export class Backdrop {
   }
 
   private colors(): SkyColors {
-    return this.dark ? NIGHT : DAY;
+    if (this.k >= 1) return DAY;
+    if (this.k <= 0) return NIGHT;
+    const mix = (night: string, day: string): string => `#${new Color(night).lerp(new Color(day), this.k).getHexString()}`;
+    return { zenith: mix(NIGHT.zenith, DAY.zenith), horizon: mix(NIGHT.horizon, DAY.horizon), ground: mix(NIGHT.ground, DAY.ground) };
   }
 
   private paint(): void {

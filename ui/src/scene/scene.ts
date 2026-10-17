@@ -20,6 +20,7 @@ import {
 } from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
+import { ambient, coffeePlan, daylightFor, quantizeDaylight, type CoffeeVisit } from '../ambient';
 import { t } from '../i18n';
 import { agentName, contextOf, floorLabel } from '../labels';
 import { LiftController, linkLift } from '../lift';
@@ -59,6 +60,7 @@ import { Desk, disposeDeskTemplates, type DeskVariant } from './furniture';
 import { Garden } from './garden';
 import {
   buildingOf,
+  coffeeTarget,
   computeFloorPlan,
   deskCount,
   deskTarget,
@@ -76,7 +78,7 @@ import {
   type FloorPlan,
   type Target,
 } from './layout';
-import { applyTheme as applyMaterialTheme, disposeSharedMaterials, floorStyle, hashString } from './materials';
+import { applyDaylight, disposeSharedMaterials, floorStyle, hashString } from './materials';
 import { LiftCabin } from './lift-cabin';
 import { Picker, pulseRings } from './picking';
 
@@ -85,6 +87,9 @@ type Entry = { character: Character; agent: AgentView; slot: DeskSlot | null; sc
 type MeetingSeat = { floor: string; seat: number };
 
 const FALLBACK_BACKGROUND = '#0b0e12';
+const DAYLIGHT_CHECK_S = 10;
+const SUN_DAY = new Color(0xfff0dc);
+const SUN_NIGHT = new Color(0xaec2ff);
 const SUN_DIRECTION = new Vector3(0.35, 0.62, 1).normalize();
 const _from = new Vector3();
 const _to = new Vector3();
@@ -144,6 +149,10 @@ class OfficeScene {
   private readonly garden: Garden;
   private plans = new Map<string, FloorPlan>();
   private meetings = new Map<string, MeetingSeat>();
+  private coffee = new Map<string, CoffeeVisit>();
+  private daylight = -1;
+  private daylightTimer = 0;
+  private seenDeliveries = 0;
   private seenCounter = 0;
   private primed = false;
   private mainCols = 0;
@@ -233,6 +242,7 @@ class OfficeScene {
       board: (slug) => this.hooks.openTab(this.site.room(slug)?.board?.tab ?? 'table'),
     });
 
+    this.seenDeliveries = store.delivery.seq;
     this.unsubscribers.push(
       usageCard.destroy,
       store.watch(['agents', 'floors', 'tick', 'lang'], () => {
@@ -243,6 +253,11 @@ class OfficeScene {
         for (const board of this.site.boards()) board.touch();
       }),
       store.watch(['messages'], () => {
+        this.meetingTimer = MEETING_REFRESH_S;
+      }),
+      store.watch(['deliveries'], () => this.printDeliveries()),
+      ambient.subscribe(() => {
+        this.updateDaylight(true);
         this.meetingTimer = MEETING_REFRESH_S;
       }),
       store.watch(['selection'], () => this.onSelection()),
@@ -296,6 +311,11 @@ class OfficeScene {
     if (this.meetingTimer >= MEETING_REFRESH_S) {
       this.meetingTimer = 0;
       this.refreshMeetings();
+    }
+    this.daylightTimer += dt;
+    if (this.daylightTimer >= DAYLIGHT_CHECK_S) {
+      this.daylightTimer = 0;
+      this.updateDaylight(false);
     }
     this.animate(dt);
     this.paintBoards();
@@ -514,12 +534,29 @@ class OfficeScene {
       seats.set(b.key, { floor, seat: (count * 2 + 1) % MEETING_SEATS });
     }
     this.meetings = seats;
+    this.coffee = this.planCoffee();
     const labUse = new Map<string, number>();
     for (const [key, entry] of this.entries) {
       const agent = this.store.agents.get(key) ?? entry.agent;
       const target = this.resolveTarget(agent, entry, labUse);
       if (target) entry.character.setTarget(target, this.site.nav, this.liftLink);
     }
+  }
+
+  // Who is at the coffee machine now. Only agents the panel still shows idle, at their desk and not in a
+  // meeting go; anything else sends them back at the next refresh, and the chip always says the real state.
+  private planCoffee(): Map<string, CoffeeVisit> {
+    const visits = new Map<string, CoffeeVisit>();
+    if (!ambient.get().coffee) return visits;
+    const candidates: AgentView[] = [];
+    for (const [key, entry] of this.entries) {
+      const agent = this.store.agents.get(key) ?? entry.agent;
+      if (entry.slot === null || this.meetings.has(key) || this.store.shownState(agent) !== 'idle') continue;
+      if (this.site.room(agent.floor)?.view.kind === 'observed') continue;
+      candidates.push(agent);
+    }
+    for (const visit of coffeePlan(candidates, this.store.now())) visits.set(visit.key, visit);
+    return visits;
   }
 
   private resolveTarget(agent: AgentView, entry: Entry, labUse: Map<string, number>): Target | null {
@@ -541,6 +578,8 @@ class OfficeScene {
       const host = this.site.room(meeting.floor);
       if (host) return meetingTarget(meeting.floor, host.width, meeting.seat);
     }
+    const coffee = leaving || state !== 'idle' ? undefined : this.coffee.get(agent.key);
+    if (coffee) return coffeeTarget(agent.floor, room.width, coffee.seat);
     return entry.slot ? deskTarget(agent.floor, entry.slot) : null;
   }
 
@@ -553,6 +592,7 @@ class OfficeScene {
     const resolve = (floor: string): Vector3 | null => this.site.origin(floor);
     const occluded = (point: Vector3): boolean => this.site.occludes(point, camera);
     let loading = false;
+    const chatting = this.coffeeChats();
     this.liftLink.deliver(this.lift.tick(dt));
     this.garden.tick(dt);
     for (const [key, entry] of this.entries) {
@@ -577,6 +617,7 @@ class OfficeScene {
           following: following === key,
           camera,
           context: contextOf(agent)?.usedPct ?? null,
+          chat: chatting.has(key),
         },
         resolve,
         occluded,
@@ -595,6 +636,30 @@ class OfficeScene {
     pulseRings(this.elapsed);
     this.drawTalkLines();
     this.setStatus(loading ? t('scene.loadingCharacters') : this.site.floors.length === 0 ? t('scene.waiting') : '');
+  }
+
+  // Two people who have both reached the coffee machine of a floor look at each other and talk.
+  private coffeeChats(): Set<string> {
+    const settled = new Map<string, string[]>();
+    for (const [key, entry] of this.entries) {
+      const { character } = entry;
+      if (character.target?.kind !== 'coffee' || character.moving) continue;
+      const list = settled.get(character.target.floor) ?? [];
+      list.push(key);
+      settled.set(character.target.floor, list);
+    }
+    const chatting = new Set<string>();
+    for (const keys of settled.values()) {
+      if (keys.length >= 2) for (const key of keys) chatting.add(key);
+    }
+    return chatting;
+  }
+
+  private printDeliveries(): void {
+    const { seq, floors } = this.store.delivery;
+    if (seq === this.seenDeliveries) return;
+    this.seenDeliveries = seq;
+    for (const slug of floors) this.site.room(slug)?.print(this.elapsed);
   }
 
   private drawTalkLines(): void {
@@ -707,15 +772,30 @@ class OfficeScene {
   }
 
   private applyTheme(): void {
-    const background = new Color(canvasBackground());
-    this.scene.background = background;
-    applyMaterialTheme(this.media.matches);
-    this.backdrop.retheme(this.media.matches);
+    this.scene.background = new Color(canvasBackground());
+    this.updateDaylight(true);
+  }
+
+  // Daylight moves the sky, the lawn, the street lamps, the lit windows and the strength of the lights. The
+  // theme pins it to day or night; the clock lets it run through dawn and dusk. The buildings are rebuilt only
+  // when it crosses one of its steps.
+  private updateDaylight(force: boolean): void {
+    const k = quantizeDaylight(daylightFor(ambient.get(), this.media.matches, new Date()));
+    if (!force && k === this.daylight) return;
+    this.daylight = k;
+    applyDaylight(k);
+    this.backdrop.retheme(k);
     const horizon = this.backdrop.horizon;
     if (this.scene.fog instanceof Fog) this.scene.fog.color.copy(horizon);
     else this.scene.fog = new Fog(horizon, 90, 220);
+    this.sun.intensity = 0.35 + 1.75 * k;
+    this.sun.color.lerpColors(SUN_NIGHT, SUN_DAY, k);
+    this.fill.intensity = 0.5 + 0.45 * k;
+    this.hemi.intensity = 0.42 + 0.13 * k;
+    this.scene.environmentIntensity = 0.3 + 0.15 * k;
     this.site.retheme();
     this.garden.retheme();
+    this.dirty = true;
   }
 
   private readonly onThemeChange = (): void => {

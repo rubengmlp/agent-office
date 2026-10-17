@@ -928,6 +928,14 @@ export const es = {
   'palette.action.muteSound': 'Silenciar sonidos',
   'palette.hint.sound': 'Avisos sonoros',
   'palette.mutedSound': 'Sonidos silenciados.',
+  'settings.ambient.title': 'Vida de la oficina',
+  'settings.ambient.hint': 'Detalles que solo cambian cómo se ve la oficina: nunca ocultan el estado real de un agente, que el rótulo sigue mostrando.',
+  'settings.ambient.dayNight.label': 'Día y noche',
+  'settings.ambient.dayNight.hint': 'En 3D, el cielo, las luces, las farolas y las ventanas siguen el día; en 2D, el cielo.',
+  'settings.ambient.dayNight.theme': 'Según el tema del sistema',
+  'settings.ambient.dayNight.clock': 'Según la hora (amanece de 6 a 8, anochece de 19 a 21)',
+  'settings.ambient.coffee': 'Pausas para el café',
+  'settings.ambient.coffeeHint': 'Un agente libre desde hace 90 s puede ir a la cafetera 40-90 s; con cualquier otro estado vuelve a su mesa. Los parados y bloqueados nunca van.',
   ...hubEs,
 } as const;
 

@@ -1,4 +1,5 @@
 import { Application, Container, Graphics } from 'pixi.js';
+import { ambient, coffeePlan, daylightFor, type CoffeeVisit } from '../ambient';
 import { LiftController, linkLift } from '../lift';
 import { contextOf } from '../labels';
 import type { Store } from '../store';
@@ -61,6 +62,7 @@ type MeetingSeat = { floor: string; seat: number };
 const TALK_LINE_COLOR = 0xf472b6;
 const HEAD_HEIGHT = 20;
 const FALLBACK_BACKGROUND = '#0b0e12';
+const DARK_CHECK_S = 10;
 
 export type OfficeHandle = { setActive(active: boolean): void; focusAgent(key: string): void; focusFloor(slug: string): void };
 
@@ -125,6 +127,9 @@ class OfficeView {
   private backdropKey = '';
   private sceneOrder: FloorScene[] = [];
   private meetings = new Map<string, MeetingSeat>();
+  private coffee = new Map<string, CoffeeVisit>();
+  private dark = false;
+  private darkTimer = 0;
   private seenCounter = 0;
   private primed = false;
   private scrollY = 0;
@@ -160,6 +165,10 @@ class OfficeView {
     this.media.addEventListener('change', () => {
       this.app.renderer.background.color = canvasBackground();
       this.dirty = true;
+    });
+    ambient.subscribe(() => {
+      this.dirty = true;
+      this.meetingTimer = MEETING_REFRESH_S;
     });
 
     this.app.ticker.add((ticker) => this.update(ticker.deltaMS / 1000));
@@ -199,6 +208,11 @@ class OfficeView {
       this.dirty = false;
       this.sync();
     }
+    this.darkTimer += dt;
+    if (this.darkTimer >= DARK_CHECK_S) {
+      this.darkTimer = 0;
+      if (this.isDark() !== this.dark) this.dirty = true;
+    }
     this.meetingTimer += dt;
     if (this.meetingTimer >= MEETING_REFRESH_S) {
       this.meetingTimer = 0;
@@ -213,6 +227,11 @@ class OfficeView {
     this.cabin.update(this.lift, this.ground()?.layout.lift ?? null);
     this.drawLines();
     this.applyScroll();
+  }
+
+  // The sky is night when the system theme is dark, or when the clock says so if the ambient life follows it.
+  private isDark(): boolean {
+    return daylightFor(ambient.get(), this.media.matches, new Date()) < 0.5;
   }
 
   private ground(): FloorScene | undefined {
@@ -260,7 +279,8 @@ class OfficeView {
     const ground = this.ground();
     this.gardenTop = top;
     this.worldHeight = top + GARDEN_H;
-    const dark = this.media.matches;
+    const dark = this.isDark();
+    this.dark = dark;
     const backdropKey = [width, top, dark].join('|');
     if (backdropKey !== this.backdropKey) {
       this.backdropKey = backdropKey;
@@ -346,7 +366,23 @@ class OfficeView {
 
   private refreshMeetings(): void {
     this.meetings = this.computeMeetings();
+    this.coffee = this.planCoffee();
     this.assignTargets();
+  }
+
+  // Only agents still shown idle, at their desk and not in a meeting go for coffee; anything else sends them back.
+  private planCoffee(): Map<string, CoffeeVisit> {
+    const visits = new Map<string, CoffeeVisit>();
+    if (!ambient.get().coffee) return visits;
+    const candidates: AgentView[] = [];
+    for (const [key, entry] of this.entries) {
+      const agent = this.store.agents.get(key) ?? entry.agent;
+      if (entry.slot === null || this.meetings.has(key) || this.store.shownState(agent) !== 'idle') continue;
+      if (this.scenes.get(agent.floor)?.view.kind === 'observed') continue;
+      candidates.push(agent);
+    }
+    for (const visit of coffeePlan(candidates, this.store.now())) visits.set(visit.key, visit);
+    return visits;
   }
 
   private canMeet(agent: AgentView): boolean {
@@ -441,6 +477,13 @@ class OfficeView {
       };
     }
 
+    const coffee = leaving || state !== 'idle' ? undefined : this.coffee.get(agent.key);
+    if (coffee) {
+      const stands = scene.layout.coffeeStands;
+      const world = scene.toWorld(stands[coffee.seat % stands.length]);
+      return { scene, target: { id: `coffee:${scene.slug}:${coffee.seat}`, kind: 'coffee', x: world.x, y: world.y, z: world.y, desk: entry.desk } };
+    }
+
     const slot = entry.slot;
     if (!slot || !entry.desk) return null;
     const seatX = slot.lead ? LEAD_SEAT_X : DESK_SEAT_X;
@@ -488,6 +531,7 @@ class OfficeView {
     const now = this.store.now();
     const asking = new Set(this.store.questions.map((question) => question.agentKey));
     const testingFloors = new Set<string>();
+    const chatting = this.coffeeChats();
     for (const [key, entry] of this.entries) {
       const agent = this.store.agents.get(key) ?? entry.agent;
       const state = this.store.shownState(agent);
@@ -505,9 +549,28 @@ class OfficeView {
         hold: agent.away && this.garden.lot.boarding(key),
         lastTest: agent.lastTest,
         context: contextOf(agent)?.usedPct ?? null,
+        chat: chatting.has(key),
       });
     }
     for (const scene of this.sceneOrder) scene.tick(this.elapsed, testingFloors.has(scene.slug));
+  }
+
+  // Two people who have both reached the coffee machine of a floor talk.
+  private coffeeChats(): Set<string> {
+    const settled = new Map<string, string[]>();
+    for (const [key, entry] of this.entries) {
+      const goal = entry.view.target;
+      if (goal?.kind !== 'coffee' || entry.view.moving) continue;
+      const floor = entry.goalScene?.slug ?? entry.agent.floor;
+      const list = settled.get(floor) ?? [];
+      list.push(key);
+      settled.set(floor, list);
+    }
+    const chatting = new Set<string>();
+    for (const keys of settled.values()) {
+      if (keys.length >= 2) for (const key of keys) chatting.add(key);
+    }
+    return chatting;
   }
 
   // At most one whiteboard is repainted per frame, and only one on screen whose text changed.
