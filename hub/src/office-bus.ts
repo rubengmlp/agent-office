@@ -7,7 +7,11 @@ export class OfficeBus {
   private readonly activity: ActivityView[] = [];
   private readonly pending = new Set<Promise<unknown>>();
 
-  constructor(private readonly log: Log) {}
+  // onActivity sees every line of activity before the panels do: the office persists it there.
+  constructor(
+    private readonly log: Log,
+    private readonly onActivity?: (entry: ActivityView) => void,
+  ) {}
 
   async idle(): Promise<void> {
     while (this.pending.size > 0) await Promise.allSettled([...this.pending]);
@@ -29,6 +33,7 @@ export class OfficeBus {
   pushActivity(entry: ActivityView): void {
     this.activity.push(entry);
     if (this.activity.length > MAX_ACTIVITY) this.activity.splice(0, this.activity.length - MAX_ACTIVITY);
+    this.onActivity?.(entry);
     this.emit({ type: 'activity', data: entry });
   }
 

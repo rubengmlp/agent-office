@@ -57,6 +57,9 @@ export function purgeFloorData(db: Database, slug: string, realPath: string): nu
     }
     for (const table of ORDER_TABLES) rows += db.query(`DELETE FROM ${table} WHERE order_id IN (SELECT id FROM orders WHERE floor = ?)`).run(slug).changes;
     for (const table of FLOOR_TABLES) rows += db.query(`DELETE FROM ${table} WHERE floor = ?`).run(slug).changes;
+    try {
+      db.query('DELETE FROM search_fts WHERE floor = ?').run(slug);
+    } catch {}
     rows += db.query('DELETE FROM orders WHERE floor = ?').run(slug).changes;
     rows += db.query('DELETE FROM floors WHERE slug = ? OR path = ?').run(slug, realPath).changes;
     return rows;

@@ -57,6 +57,7 @@ import { ProtocolDesk } from './protocol-desk';
 import { QuestionDesk } from './questions';
 import { RulesDesk } from './rules-desk';
 import { isDepartmentFloor, remembers, roleKind } from './scope';
+import { SearchDesk, type SearchQuery } from './search';
 import { SessionBook } from './session-book';
 import { settingsView } from './settings';
 import { StallDesk } from './stall-desk';
@@ -85,6 +86,7 @@ import type {
   RoleId,
   ServerMessage,
   SkippedFile,
+  SearchResult,
   Snapshot,
   Stack,
   UsageRange,
@@ -153,6 +155,9 @@ export type OfficeOptions = {
   undoMs?: number;
   // How long after a dev says listo the checks of its order start.
   listoDelayMs?: number;
+  // false builds an office that only lives in memory (the replay of a session): no guard, document watch or
+  // refresh, token meter, sync, chat index or raw dump, and the hub never starts anything of its own.
+  sideEffects?: boolean;
 };
 
 export class Office {
@@ -186,6 +191,8 @@ export class Office {
   private readonly checkpoints: CheckpointDesk;
   private readonly checks: ChecksDesk;
   private readonly board: BoardDesk;
+  private readonly searches: SearchDesk;
+  private readonly live: boolean;
   readonly chat: ChatDesk;
 
   constructor(private readonly opts: OfficeOptions) {
@@ -193,7 +200,11 @@ export class Office {
     this.profiles = opts.profiles;
     this.now = opts.now ?? Date.now;
     this.deliverFn = opts.deliverFn ?? deliver;
-    this.bus = new OfficeBus(opts.log ?? ((text) => console.error(`Agent Office: ${text}`)));
+    this.live = opts.sideEffects !== false;
+    this.bus = new OfficeBus(
+      opts.log ?? ((text) => console.error(`Agent Office: ${text}`)),
+      (entry) => this.searches.recordActivity(entry),
+    );
     this.git = opts.git ?? runGit;
     this.floors = new FloorResolver(
       () => this.config,
@@ -203,6 +214,8 @@ export class Office {
       opts.stackOf ?? detectStack,
     );
     this.sql = prepare(opts.db);
+    this.searches = new SearchDesk({ db: opts.db, resolve: (key) => this.activityOwner(key) });
+    if (this.live) this.searches.ensureIndex();
     this.book = new SessionBook({
       sql: this.sql,
       now: this.now,
@@ -267,7 +280,10 @@ export class Office {
       now: this.now,
       channels: () => [GLOBAL_CHANNEL, ...managedFloors(this.config).map(([slug]) => slug)],
       roleLabel,
-      onMessage: (message) => this.bus.emit({ type: 'chat', data: message }),
+      onMessage: (message) => {
+        this.searches.recordChat(message);
+        this.bus.emit({ type: 'chat', data: message });
+      },
     });
     this.context = new ContextDesk({
       ...base,
@@ -319,7 +335,7 @@ export class Office {
       undoMs: opts.undoMs ?? UNDO_MS,
       instructed: (sessionId, now) => this.gates.userInstructed(sessionId, now),
       allowBriefs: (sessionId, floors) => this.gates.allowBriefs(sessionId, floors),
-      setPlan: (agent, slug) => this.meter.setPlan(agent, slug),
+      setPlan: (agent, slug) => this.setPlan(agent, slug),
       openTask: (agent, now) => this.stall.openTask(agent, now),
       planExecuting: (plan) => this.board.planExecuting(plan),
     });
@@ -367,10 +383,11 @@ export class Office {
       },
     });
     this.book.restoreSessions();
-    this.docs.refresh();
+    if (this.live) this.docs.refresh();
   }
 
   start(): void {
+    if (!this.live) return;
     // A question still pending in the database lost the request that held it when the hub went down.
     this.sql.releaseStalePending.run(this.now());
     this.checks.sweepStale();
@@ -378,6 +395,7 @@ export class Office {
     this.refreshDocuments();
     this.bus.background(this.sync.cleanup(this.docs.finishedPlanSlugs()));
     this.bus.background(this.worktrees.cleanup());
+    this.bus.background(this.searches.backfill());
   }
 
   stop(): void {
@@ -414,7 +432,7 @@ export class Office {
   }
 
   ingestUsage(raw: unknown): string {
-    this.meter.noteUsage(raw);
+    if (this.live) this.meter.noteUsage(raw);
     return this.usage.ingest(raw);
   }
 
@@ -429,7 +447,7 @@ export class Office {
     this.dumpRaw(e, now);
     const session = this.book.touchSession(e, meta, now);
     this.board.touch(e.cwd, now);
-    if (e.hook_event_name === 'SessionStart' && (e.source === 'startup' || e.source === 'resume')) this.rules.setBaseline(session);
+    if (this.live && e.hook_event_name === 'SessionStart' && (e.source === 'startup' || e.source === 'resume')) this.rules.setBaseline(session);
     const kind = visibleKind(session.floorKind, this.book.sessionInOffice(session, text(e.team_name)));
     const matchers = isDepartmentFloor(session.floorKind) ? NO_TESTS : profileFor(this.profiles, session.stack);
     const c = withoutChatCalls(classify(e, matchers), e, matchers);
@@ -441,7 +459,7 @@ export class Office {
       return null;
     }
     this.stall.trackOpenTools(e, c, session, now);
-    this.meter.noteTranscripts(e, c.agentKey);
+    if (this.live) this.meter.noteTranscripts(e, c.agentKey);
     const agent = this.book.touchAgent(e, c, session, now);
     if (this.book.isRetired(agent)) {
       this.ingestRetired(e, c, agent, session, now);
@@ -497,7 +515,7 @@ export class Office {
         this.stall.openTask(agent, now);
       }
       const plan = planSlugIn(text(e.prompt));
-      if (plan) this.meter.setPlan(agent, plan);
+      if (plan) this.setPlan(agent, plan);
       if (isUserPrompt(text(e.prompt))) this.gates.userInstructed(session.sessionId, now);
     }
     if (c.event === 'PostToolUse' && isMain && c.tool === 'AskUserQuestion') this.gates.userInstructed(session.sessionId, now);
@@ -514,7 +532,7 @@ export class Office {
       this.sql.insertEdit.run(now, agent.key, session.floor, publicText(c.edit, kind) ?? '');
       this.board.editOutside(agent, c.filePath);
     }
-    this.guards.bashWrites(e, c, agent, session, kind, matchers, now);
+    if (this.live) this.guards.bashWrites(e, c, agent, session, kind, matchers, now);
     if (c.test === 'pass' || c.test === 'fail') {
       const ok = c.test === 'pass';
       const command = publicText(c.command, kind) ?? '';
@@ -538,12 +556,14 @@ export class Office {
     this.book.emitAgent(agent, now);
     if (c.message) this.recordMessage(c.message, agent, session, now);
     this.pushActivity({ ts: now, agentKey: agent.key, event: c.event, tool: c.tool, state: nextState, summary: publicSummary(c, kind) });
-    this.guards.trackDepartment(agent, c.event, ended);
-    this.guards.trackChanges(agent, kind, c.event, ended);
+    if (this.live) {
+      this.guards.trackDepartment(agent, c.event, ended);
+      this.guards.trackChanges(agent, kind, c.event, ended);
+    }
     this.asks.settlePermissions(agent.key, c.event, c.tool, e.tool_input);
     if (c.event === 'SubagentStop' || c.event === 'Stop' || c.event === 'SessionEnd') this.context.storeReport(agent, now);
 
-    if (TURN_OVER.has(c.event)) this.meter.later(agent);
+    if (TURN_OVER.has(c.event)) this.measure(agent);
     if (c.sessionEnded) this.endSession(session, now);
     if (c.event === 'SubagentStart' || c.event === 'SessionStart' || c.event === 'UserPromptSubmit') return this.context.injection(c.event, agent, session);
     if (c.event === 'PreToolUse' && c.tool && EDIT_TOOLS.has(c.tool) && c.filePath) return this.context.chatReminder(agent, session, c.filePath, now);
@@ -678,14 +698,14 @@ export class Office {
       }
       if (this.book.view(agent, now).state !== agent.sentState) this.book.emitAgent(agent, now);
     }
-    this.meter.sweep(now);
+    if (this.live) this.meter.sweep(now);
     for (const session of [...this.book.sessions.values()]) {
       if (session.endedAt === null && session.socket && !existsSync(session.socket)) this.endSession(session, now);
       else if (this.stall.isGhost(session, now)) this.endSession(session, now, true);
       if (session.endedAt !== null && now - session.endedAt > FORGET_ENDED_MS) this.book.sessions.delete(session.sessionId);
     }
     this.stall.detectStalls(now);
-    this.rules.refreshSessionFlags(now);
+    if (this.live) this.rules.refreshSessionFlags(now);
   }
 
   floorInUse(slug: string): string[] {
@@ -806,7 +826,7 @@ export class Office {
     this.rules.refreshSessionFlags(now, true);
     this.bus.emit({ type: 'floors', data: this.floors.views() });
     this.bus.emit({ type: 'settings', data: settingsView(config, profiles) });
-    this.docs.watch();
+    if (this.live) this.docs.watch();
     this.refreshDocuments();
   }
 
@@ -819,7 +839,7 @@ export class Office {
   }
 
   refreshDocuments(): void {
-    this.docs.refresh();
+    if (this.live) this.docs.refresh();
   }
 
   private retire(agent: AgentRuntime, detail: HubText, now: number): void {
@@ -833,11 +853,11 @@ export class Office {
     }
     if (agent.endedAt === null) agent.endedAt = now;
     agent.updatedAt = now;
-    this.guards.finish(agent.key);
+    this.finishGuards(agent.key);
     this.book.persistAgent(agent);
     this.book.emitAgent(agent, now);
     this.context.storeReport(agent, now);
-    this.meter.later(agent);
+    this.measure(agent);
   }
 
   private ingestRetired(e: HookEvent, c: Classified, agent: AgentRuntime, session: SessionRuntime, now: number): void {
@@ -845,7 +865,7 @@ export class Office {
     this.sql.insertEvent.run(now, e.session_id, agent.key, session.floor, c.event, c.tool, null, c.filePath, storedPayload(e, kind));
     if (TURN_OVER.has(c.event)) {
       agent.retiredAwake = false;
-      this.meter.later(agent);
+      this.measure(agent);
     } else if (!agent.retiredAwake) {
       agent.retiredAwake = true;
       this.pushActivity({
@@ -875,6 +895,7 @@ export class Office {
     const id = Number(this.sql.insertMessage.run(now, from.key, message.to, toKey, body, session.floor).lastInsertRowid);
     const view: MessageView = { id, ts: now, fromKey: from.key, toName: message.to, toKey, text: body, floor: session.floor };
     this.messages.push(view);
+    this.searches.recordMessage(view);
     if (this.messages.length > MAX_MESSAGES) this.messages.splice(0, this.messages.length - MAX_MESSAGES);
     this.bus.emit({ type: 'message', data: view });
     const recipient = toKey ? this.book.agents.get(toKey) : undefined;
@@ -887,7 +908,7 @@ export class Office {
   private messageReceived(agent: AgentRuntime, body: string | null, now: number): void {
     if (agent.retiredAt !== null || agent.endedAt !== null) return;
     const plan = planSlugIn(body);
-    if (plan) this.meter.setPlan(agent, plan);
+    if (plan) this.setPlan(agent, plan);
     const task = taskLine(body);
     if (!task && !agent.away) return;
     if (task) {
@@ -941,10 +962,36 @@ export class Office {
       this.book.persistAgent(agent);
       this.book.emitAgent(agent, now);
       this.context.storeReport(agent, now);
-      this.meter.later(agent);
-      this.guards.finish(agent.key);
+      this.measure(agent);
+      this.finishGuards(agent.key);
     }
     for (const q of this.desk.list()) if (q.sessionId === session.sessionId) this.desk.release(q.id);
+  }
+
+  // Reading the transcript of an agent is the meter's job, and a replay has no transcripts.
+  private measure(agent: AgentRuntime): void {
+    if (this.live) this.meter.later(agent);
+  }
+
+  private setPlan(agent: AgentRuntime, slug: string): void {
+    if (this.live) this.meter.setPlan(agent, slug);
+    else agent.planSlug = slug;
+  }
+
+  private finishGuards(agentKey: string): void {
+    if (this.live) this.guards.finish(agentKey);
+  }
+
+  // Where a line of activity happened: the agent, or the session when the line is about one that has no agent.
+  private activityOwner(key: string): { floor: string | null; sessionId: string | null } {
+    const agent = this.book.agents.get(key);
+    if (agent) return { floor: agent.floor, sessionId: agent.sessionId };
+    const session = this.book.sessions.get(key);
+    return session ? { floor: session.floor, sessionId: session.sessionId } : { floor: null, sessionId: null };
+  }
+
+  search(query: SearchQuery): SearchResult {
+    return this.searches.search(query);
   }
 
   private pushActivity(entry: ActivityView): void {
@@ -952,7 +999,7 @@ export class Office {
   }
 
   private dumpRaw(e: HookEvent, now: number): void {
-    const dir = this.opts.rawDir;
+    const dir = this.live ? this.opts.rawDir : null;
     if (!dir) return;
     try {
       mkdirSync(dir, { recursive: true });

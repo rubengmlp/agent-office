@@ -24,11 +24,19 @@ const RULES: readonly [table: string, where: string][] = [
 // The output of a check is the bulkiest thing a run keeps: past the retention it goes, the result stays.
 const CLEAR_OUTPUT = 'UPDATE checks SET output_tail = NULL WHERE output_tail IS NOT NULL AND run_id IN (SELECT id FROM check_runs WHERE started_at < ?)';
 
+// The full-text index is created apart from the migrations (it may not exist, or FTS5 may be missing).
+function pruneSearch(db: Database, cutoff: number): void {
+  try {
+    db.query('DELETE FROM search_fts WHERE ts < ?').run(cutoff);
+  } catch {}
+}
+
 export function prune(db: Database, now: number, retentionDays: number): number {
   const cutoff = now - retentionDays * DAY_MS;
   let removed = 0;
   for (const [table, where] of RULES) removed += db.query(`DELETE FROM ${table} WHERE ${where}`).run(cutoff).changes;
   removed += db.query(CLEAR_OUTPUT).run(cutoff).changes;
+  pruneSearch(db, cutoff);
   return removed;
 }
 
@@ -53,5 +61,6 @@ export async function pruneInChunks(
     }
   }
   removed += db.query(CLEAR_OUTPUT).run(cutoff).changes;
+  pruneSearch(db, cutoff);
   return removed;
 }

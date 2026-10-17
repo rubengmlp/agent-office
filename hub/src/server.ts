@@ -11,6 +11,7 @@ import type { Log } from './log';
 import { isHookEvent, type Office, type RelaunchResult } from './office';
 import { claimLaunchToken, mintPanelToken, verifyPanelToken } from './panel-auth';
 import { hostAllowed, keyMatches, originAllowed } from './security';
+import { parseSearchParams } from './search';
 import type { SettingsService } from './settings';
 import { record, text } from './state-machine';
 import type { ChatKind, ChatPostRequest, ClientMessage, HookMeta, HubText, HubTextKey, OrderStatus, PlanDecision, ServerMessage } from './types';
@@ -389,6 +390,11 @@ export function createApp(opts: ServerOptions, holdRequest: (req: Request) => vo
   app.get('/api/reports/:agentKey', requirePanel, (c) => {
     const report = office.report(c.req.param('agentKey') ?? '');
     return report ? c.json(report) : c.json({ error: { key: 'hub.api.noReport' } }, 404);
+  });
+
+  app.get('/api/search', requirePanel, (c) => {
+    const query = parseSearchParams((name) => c.req.query(name));
+    return query ? c.json(office.search(query)) : c.json({ error: { key: 'hub.api.searchBad' } }, 400);
   });
 
   app.get('/api/documents', requirePanel, (c) => c.json(office.documents()));

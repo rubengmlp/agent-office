@@ -212,6 +212,9 @@ export type HubTextParams = {
   'hub.api.badId': undefined;
   'hub.api.lessonNotFound': undefined;
   'hub.api.noReport': undefined;
+  'hub.api.searchBad': undefined;
+  'hub.api.noRecording': undefined;
+  'hub.api.recordingTooLarge': { max: number };
   'hub.api.documentNotFound': undefined;
   'hub.api.pathRequired': undefined;
   'hub.api.planClosed': undefined;
@@ -565,6 +568,25 @@ export type ActivityView = {
   state: AgentState | null;
   summary: HubText;
 };
+
+export const SEARCH_KINDS = ['activity', 'message', 'chat', 'agent'] as const;
+export type SearchKind = (typeof SEARCH_KINDS)[number];
+
+// One thing the office remembers: a line of activity, a message between agents, a chat message or an agent.
+// id is the row of its table (the key of the agent); text is what the panel shows for it.
+export type SearchHit = {
+  kind: SearchKind;
+  id: string;
+  ts: number;
+  floor: string | null;
+  agent: string | null;
+  sessionId: string | null;
+  text: HubText;
+};
+
+// next is the cursor ("ts:id") to ask for the following page, null at the end. indexed is false when the
+// full-text index is not available and the search ran as a plain substring match.
+export type SearchResult = { hits: SearchHit[]; next: string | null; indexed: boolean };
 
 export type VerdictKind = 'tests' | 'approved' | 'improve' | 'no-agreement';
 
