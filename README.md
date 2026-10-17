@@ -155,12 +155,13 @@ Los lanzadores de los departamentos comprueban `GET /health` y no abren la sesi�
   | `Cmd/Ctrl+K` | Paleta de comandos (siempre) |
   | `1`-`6` | Pestañas, en el orden de la cabecera |
   | `N` / `Mayús+N` | Siguiente / anterior de «Te necesitan» |
-  | `/` | Historial (línea de tiempo del panel) |
+  | `/` | Tabla › Historial, con el cuadro de búsqueda enfocado (en un replay, la búsqueda de la línea de tiempo) |
   | `O` | Escribir una orden |
   | `?` | Ayuda de atajos |
   | `Esc` | Cierra, por este orden, paleta, ayuda, menú y visor |
 
 - **Paleta**: `Cmd/Ctrl+K` busca por letras sueltas, sin importar tildes, entre agentes, plantas, pestañas, planes y acciones (Responder, Pedir estado, Relanzar, Nuevo encargo, Cambiar idioma, Ver historial, Silenciar). En el replay no salen las acciones que escriben.
+- **Búsqueda, Historial y replay**: el hub guarda cada línea de actividad (`activity_log`) y mantiene un índice de texto (SQLite FTS5, sin tildes ni mayúsculas, por prefijo y con hasta 8 palabras a la vez) de la actividad, los mensajes entre agentes y el chat; si la compilación de Bun no trae FTS5, busca por coincidencia simple. La sección **Línea de tiempo** del panel tiene un buscador (250 ms de retardo) sobre el agente seleccionado; en un replay filtra en el navegador lo que la grabación ya entregó. La pestaña **Tabla** tiene el conmutador **Ahora | Historial** (se recuerda): el Historial busca en toda la oficina con filtros de planta, agente, tipo (actividad, mensajes, chat, agentes) y fechas, carga más al bajar, selecciona el agente al hacer clic y **Reproducir sesión** abre `?replay=/api/replay/<sesión>&compress=1` (conserva `view=3d`). El hub reconstruye la sesión desde los eventos guardados con una `Office` en memoria, sin guardia, documentos, medidor, sincronización, chat ni git; las plantas observadas, que no guardan contenido, salen en gris con lo que sí se guarda (herramienta y fichero). Los silencios de más de 60 s duran 5 s, y una sesión de más de 20 000 eventos no se reproduce (413). Las rutas son `GET /api/search` (`q`, `floor`, `agent`, `kind`, `from`, `to`, `before`, `limit` ≤ 100) y `GET /api/replay/:sessionId`, ambas con credencial de panel. Los mensajes de plantas observadas no se indexan, y la retención (`retentionDays`) y el borrado de una planta se llevan también el índice.
 - **Pizarras**: cada planta tiene una pizarra con lo que le toca: Dirección, el consumo de hoy y los límites; una planta, sus agentes y el encargo del jefe; Redacción, los planes por estado; Mantenimiento, las skills. Se repintan cada 10 s solo si se ven y han cambiado, y un clic abre la pestaña que corresponde. El consumo de hoy se pide cada minuto solo con la pestaña Oficina activa; en el replay sale «—».
 - **Demo sin sesiones**: <http://127.0.0.1:4747/?replay=/replays/demo.json> (añade `&view=3d` para la 3D).
 
@@ -169,6 +170,7 @@ Los lanzadores de los departamentos comprueban `GET /health` y no abren la sesi�
 ```
 plugin/   plugin "office": hook único (office-hook.sh), office-sync.sh, office-chat.sh, office-encargo.sh, protocolo, perfiles y plantillas de todos los agentes
 hub/      Bun + Hono + SQLite: estado de los agentes, puertas, guardia, memoria, informes, documentos y fuentes de Redacción, y el ciclo de entrega (tarjetas, carpetas, comprobaciones y puntos de control)
+shared/   los textos hub.* (es y en), sin dependencias: los importan la interfaz y el hub, que nunca importa `ui/`
 ui/       Vite + TypeScript: tabla, tablero, oficina 2D (PixiJS) y 3D (Three.js), panel, ajustes y replay
 ```
 
