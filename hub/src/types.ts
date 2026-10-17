@@ -34,6 +34,7 @@ export type HubTextParams = {
   'hub.detail.waitingFor': { who: string; what: string };
 
   'hub.act.sessionStart': { source: string };
+  'hub.act.compacted': { who: string; from: string; to: string };
   'hub.act.newTurn': undefined;
   'hub.act.permission': { tool: string };
   'hub.act.subagentStart': { who: HubText };
@@ -441,6 +442,19 @@ export type Building = 'principal' | 'mantenimiento';
 
 export type TestResult = { ok: boolean; ts: number; command: string };
 
+export type ContextSource = 'statusline' | 'transcript';
+
+// How full the window of an agent is. Main sessions report it through the status line; teammates and
+// subagents are measured from the last turn of their transcript.
+export type AgentContext = {
+  usedPct: number;
+  tokens: number;
+  window: number;
+  compactions: number;
+  source: ContextSource;
+  at: number;
+};
+
 export type AgentView = {
   key: string;
   sessionId: string;
@@ -464,6 +478,7 @@ export type AgentView = {
   tokens: TokenTotals | null;
   waiting: { who: string; what: string; since: number } | null;
   stalledSince: number | null;
+  context: AgentContext | null;
 };
 
 export type FloorView = {
@@ -874,7 +889,12 @@ export type UsageSummary = {
   byPlan: TokenRow[];
 };
 
-export type TokensEvent = { agentKey: string; tokens: TokenTotals; plan: { slug: string; tokens: TokenTotals } | null };
+export type TokensEvent = {
+  agentKey: string;
+  tokens: TokenTotals;
+  plan: { slug: string; tokens: TokenTotals } | null;
+  context?: AgentContext | null;
+};
 
 export type Snapshot = {
   now: number;

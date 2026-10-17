@@ -1,9 +1,16 @@
 import { Container, Graphics } from 'pixi.js';
+import { contextLevel } from '../labels';
 import { CHAR_H, CHAR_W } from './constants';
 import { bitmap, px } from './pixel';
 
 export type IconKind = 'ask' | 'talk' | 'lock' | 'check' | 'cross' | 'stamp';
 export type BadgeKind = 'ok' | 'fail';
+
+const CONTEXT_COLORS = { ok: 0x22c55e, warn: 0xeab308, danger: 0xef4444 } as const;
+
+function contextColor(pct: number): number {
+  return CONTEXT_COLORS[contextLevel(pct)];
+}
 
 const GLYPH_QUESTION = ['.###.', '#...#', '....#', '...#.', '..#..', '.....', '..#..'] as const;
 const GLYPH_CHECK = ['......#', '.....##', '#...##.', '##.##..', '.###...', '..#....'] as const;
@@ -102,6 +109,8 @@ export class Overlay {
   private readonly dots: Graphics[] = [];
   private readonly bar = new Container();
   private readonly barFill = new Graphics();
+  private readonly ctxBar = new Container();
+  private readonly ctxFill = new Graphics();
   private readonly badges: Record<BadgeKind, Container>;
   private readonly selectOutline = outline(1, 0xffffff);
   private readonly askOutline = outline(2, 0xfb923c);
@@ -122,6 +131,13 @@ export class Overlay {
     this.bar.addChild(barBack, this.barFill);
     this.bar.visible = false;
 
+    const ctxBack = new Graphics();
+    px(ctxBack, 2, CHAR_H + 1, 12, 2, INK);
+    this.ctxFill.position.set(2, CHAR_H + 1);
+    px(this.ctxFill, 0, 0, 12, 2, 0xffffff);
+    this.ctxBar.addChild(ctxBack, this.ctxFill);
+    this.ctxBar.visible = false;
+
     this.badges = { ok: buildBadge(0x22c55e, MINI_CHECK), fail: buildBadge(0xdc2626, MINI_CROSS) };
 
     this.root.addChild(
@@ -129,6 +145,7 @@ export class Overlay {
       this.selectOutline,
       this.iconLayer,
       this.bar,
+      this.ctxBar,
       this.badges.ok,
       this.badges.fail,
     );
@@ -151,6 +168,15 @@ export class Overlay {
     if (!visible) return;
     const filled = Math.max(1, Math.round(((seconds * 0.5) % 1) * 10));
     this.barFill.scale.x = filled / 10;
+  }
+
+  // 12 by 2 pixels under the feet: green, then amber, then red as the window fills up.
+  setContext(pct: number | null): void {
+    this.ctxBar.visible = pct !== null;
+    if (pct === null) return;
+    const share = Math.min(1, Math.max(0, pct / 100));
+    this.ctxFill.scale.x = Math.max(1 / 12, share);
+    this.ctxFill.tint = contextColor(pct);
   }
 
   setBadge(kind: BadgeKind | null): void {

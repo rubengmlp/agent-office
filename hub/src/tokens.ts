@@ -1,14 +1,33 @@
 import type { Database } from 'bun:sqlite';
 import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs';
 import { basename, dirname, join, sep } from 'node:path';
+import { agentContext, contextOf, isCompaction, windowFor as defaultWindow } from './context';
 import { realPath } from './floors';
-import type { FloorKind, RoleId, TokenRow, TokenTotals, TokensEvent, UsageRange, UsageSummary } from './types';
+import type { AgentContext, FloorKind, RoleId, TokenRow, TokenTotals, TokensEvent, UsageRange, UsageSummary } from './types';
 
-export type TokenCursor = { transcript: string; offset: number; lastMsgId: string | null; lastOut: number; skipped: number };
+export type TokenCursor = {
+  transcript: string;
+  offset: number;
+  lastMsgId: string | null;
+  lastOut: number;
+  skipped: number;
+  // Tokens the last turn held in the window, and the compactions seen in this transcript.
+  lastContext: number | null;
+  compactions: number;
+};
 
 export type TokenDelta = { day: string; model: string; tokens: TokenTotals };
 
-export type ChunkResult = { consumed: number; deltas: TokenDelta[]; lastMsgId: string | null; lastOut: number; skipped: number };
+export type ChunkResult = {
+  consumed: number;
+  deltas: TokenDelta[];
+  lastMsgId: string | null;
+  lastOut: number;
+  skipped: number;
+  lastContext: number | null;
+  compactions: number;
+  lastModel: string | null;
+};
 
 export type MeterAgent = {
   key: string;
@@ -46,6 +65,8 @@ type CursorRow = {
   last_msg_id: string | null;
   last_out: number;
   skipped_lines: number;
+  last_context: number | null;
+  compactions: number | null;
 };
 
 type TotalsRow = { turns: number; input: number; cache_read: number; cache_create: number; output: number };
@@ -112,14 +133,21 @@ function count(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
-export function parseChunk(buf: Uint8Array, cursor: Pick<TokenCursor, 'lastMsgId' | 'lastOut'>, now: number): ChunkResult {
+export function parseChunk(
+  buf: Uint8Array,
+  cursor: Pick<TokenCursor, 'lastMsgId' | 'lastOut'> & { lastContext?: number | null },
+  now: number,
+): ChunkResult {
   const bytes = Buffer.from(buf.buffer, buf.byteOffset, buf.byteLength);
   const end = bytes.lastIndexOf(LF);
   const rows = new Map<string, TokenDelta>();
   let lastMsgId = cursor.lastMsgId;
   let lastOut = cursor.lastOut;
+  let lastContext = cursor.lastContext ?? null;
+  let lastModel: string | null = null;
+  let compactions = 0;
   let skipped = 0;
-  if (end < 0) return { consumed: 0, deltas: [], lastMsgId, lastOut, skipped };
+  if (end < 0) return { consumed: 0, deltas: [], lastMsgId, lastOut, skipped, lastContext, compactions, lastModel };
 
   let start = 0;
   while (start <= end) {
@@ -128,8 +156,15 @@ export function parseChunk(buf: Uint8Array, cursor: Pick<TokenCursor, 'lastMsgId
     if (stop - start > MAX_LINE) {
       skipped += 1;
     } else if (stop > start) {
-      const parsed = lineUsage(bytes.toString('utf8', start, stop));
+      const line = bytes.toString('utf8', start, stop);
+      const boundary = compactBoundary(line);
+      const parsed = boundary ? null : lineUsage(line);
+      if (boundary) {
+        compactions += 1;
+        lastContext = boundary.postTokens;
+      }
       if (parsed) {
+        lastModel = parsed.model || lastModel;
         const day = parsed.timestamp === null ? localDay(now) : localDay(parsed.timestamp);
         const key = `${day}\n${parsed.model}`;
         const row = rows.get(key) ?? { day, model: parsed.model, tokens: zeroTotals() };
@@ -137,6 +172,7 @@ export function parseChunk(buf: Uint8Array, cursor: Pick<TokenCursor, 'lastMsgId
         if (parsed.id === lastMsgId) {
           row.tokens.output += Math.max(0, parsed.output - lastOut);
           lastOut = Math.max(lastOut, parsed.output);
+          if (parsed.context > 0) lastContext = parsed.context;
         } else {
           row.tokens.turns += 1;
           row.tokens.input += parsed.input;
@@ -145,15 +181,44 @@ export function parseChunk(buf: Uint8Array, cursor: Pick<TokenCursor, 'lastMsgId
           row.tokens.output += parsed.output;
           lastMsgId = parsed.id;
           lastOut = parsed.output;
+          if (parsed.context > 0) {
+            if (isCompaction(lastContext, parsed.context)) compactions += 1;
+            lastContext = parsed.context;
+          }
         }
       }
     }
     start = stop + 1;
   }
-  return { consumed: end + 1, deltas: [...rows.values()], lastMsgId, lastOut, skipped };
+  return { consumed: end + 1, deltas: [...rows.values()], lastMsgId, lastOut, skipped, lastContext, compactions, lastModel };
 }
 
-type LineUsage = { id: string; model: string; timestamp: number | null; input: number; cacheRead: number; cacheCreate: number; output: number };
+type LineUsage = {
+  id: string;
+  model: string;
+  timestamp: number | null;
+  input: number;
+  cacheRead: number;
+  cacheCreate: number;
+  output: number;
+  context: number;
+};
+
+// The line Claude Code writes when it compacts a conversation: {type: 'system', subtype: 'compact_boundary',
+// compactMetadata: {preTokens, postTokens}}.
+function compactBoundary(line: string): { postTokens: number | null } | null {
+  if (!line.includes('"compact_boundary"')) return null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  const entry = asRecord(raw);
+  if (entry.type !== 'system' || entry.subtype !== 'compact_boundary') return null;
+  const post = count(asRecord(entry.compactMetadata).postTokens);
+  return { postTokens: post > 0 ? post : null };
+}
 
 function lineUsage(line: string): LineUsage | null {
   if (!line.includes('"assistant"') || !line.includes('"usage"')) return null;
@@ -170,14 +235,18 @@ function lineUsage(line: string): LineUsage | null {
   const model = message.model;
   if (typeof id !== 'string' || id === '' || model === '<synthetic>') return null;
   const stamp = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : Number.NaN;
+  const input = count(usage.input_tokens);
+  const cacheRead = count(usage.cache_read_input_tokens);
+  const cacheCreate = count(usage.cache_creation_input_tokens);
   return {
     id,
     model: typeof model === 'string' ? model : '',
     timestamp: Number.isFinite(stamp) ? stamp : null,
-    input: count(usage.input_tokens),
-    cacheRead: count(usage.cache_read_input_tokens),
-    cacheCreate: count(usage.cache_creation_input_tokens),
+    input,
+    cacheRead,
+    cacheCreate,
     output: count(usage.output_tokens),
+    context: contextOf({ input, cacheRead, cacheCreate }),
   };
 }
 
@@ -209,6 +278,8 @@ export type MeterOptions = {
   claudeHome: string;
   now: () => number;
   onRead: (event: TokensEvent) => void;
+  // Window of the model an agent runs on, given the biggest context it has held. Default: the table.
+  windowFor?: (agent: MeterAgent, model: string | null, observed: number) => number;
 };
 
 export class TokenMeter {
@@ -222,6 +293,8 @@ export class TokenMeter {
   private readonly more = new Set<string>();
   private readonly scheduled = new Map<string, Promise<void>>();
   private readonly oversized = new Set<string>();
+  private readonly modelOf = new Map<string, string>();
+  private readonly sentContext = new Map<string, string>();
 
   constructor(private readonly opts: MeterOptions) {
     const rows = opts.db
@@ -250,6 +323,11 @@ export class TokenMeter {
     return new Map(rows.map((row) => [row.plan_slug, toTotals(row)]));
   }
 
+  // Compactions the transcript of an agent has shown so far, as persisted.
+  compactions(agentKey: string): number {
+    return this.cursorOf(agentKey)?.compactions ?? 0;
+  }
+
   lastRead(agentKey: string): number {
     return this.readAt.get(agentKey) ?? 0;
   }
@@ -262,6 +340,8 @@ export class TokenMeter {
     for (const key of agentKeys) {
       this.totalsByAgent.delete(key);
       this.cursors.delete(key);
+      this.modelOf.delete(key);
+      this.sentContext.delete(key);
       this.seenAgent.delete(key);
       this.readAt.delete(key);
       this.more.delete(key);
@@ -307,7 +387,15 @@ export class TokenMeter {
     }
     let cursor = this.cursorOf(agent.key);
     if (!cursor || cursor.transcript !== file || size < cursor.offset) {
-      cursor = { transcript: file, offset: 0, lastMsgId: null, lastOut: 0, skipped: cursor && cursor.transcript === file ? cursor.skipped : 0 };
+      cursor = {
+        transcript: file,
+        offset: 0,
+        lastMsgId: null,
+        lastOut: 0,
+        skipped: cursor && cursor.transcript === file ? cursor.skipped : 0,
+        lastContext: null,
+        compactions: 0,
+      };
     }
 
     let spent = 0;
@@ -322,7 +410,16 @@ export class TokenMeter {
       const result = this.readChunk(file, cursor, size, budget - spent);
       if (result.consumed === 0) break;
       spent += result.consumed;
-      cursor = { ...cursor, offset: cursor.offset + result.consumed, lastMsgId: result.lastMsgId, lastOut: result.lastOut, skipped: cursor.skipped + result.skipped };
+      cursor = {
+        ...cursor,
+        offset: cursor.offset + result.consumed,
+        lastMsgId: result.lastMsgId,
+        lastOut: result.lastOut,
+        skipped: cursor.skipped + result.skipped,
+        lastContext: result.lastContext,
+        compactions: cursor.compactions + result.compactions,
+      };
+      if (result.lastModel) this.modelOf.set(agent.key, result.lastModel);
       changed = true;
       for (const delta of result.deltas) {
         this.addRow(subject, delta);
@@ -332,15 +429,22 @@ export class TokenMeter {
     if (changed) this.saveCursor(agent, cursor);
     this.cursors.set(agent.key, cursor);
 
-    if (added.turns > 0 || added.output > 0) {
+    const context = this.contextOf(agent, cursor);
+    const signature = context ? `${context.tokens}:${context.compactions}` : '';
+    const contextChanged = context !== null && this.sentContext.get(agent.key) !== signature;
+    if (added.turns > 0 || added.output > 0 || contextChanged) {
       const total = this.totalsByAgent.get(agent.key) ?? zeroTotals();
-      addTotals(total, added);
-      this.totalsByAgent.set(agent.key, total);
+      if (added.turns > 0 || added.output > 0) {
+        addTotals(total, added);
+        this.totalsByAgent.set(agent.key, total);
+      }
+      if (context) this.sentContext.set(agent.key, signature);
       const slug = plan ?? '';
       this.opts.onRead({
         agentKey: agent.key,
         tokens: { ...total },
         plan: slug === '' ? null : { slug, tokens: this.planTotals().get(slug) ?? zeroTotals() },
+        context,
       });
     }
     return spent;
@@ -377,6 +481,13 @@ export class TokenMeter {
     };
   }
 
+  private contextOf(agent: MeterAgent, cursor: TokenCursor): AgentContext | null {
+    if (cursor.lastContext === null) return null;
+    const model = this.modelOf.get(agent.key) ?? null;
+    const window = this.opts.windowFor?.(agent, model, cursor.lastContext) ?? defaultWindow(model, { observed: cursor.lastContext });
+    return agentContext(cursor.lastContext, window, cursor.compactions, 'transcript', this.opts.now());
+  }
+
   private readChunk(file: string, cursor: TokenCursor, size: number, room: number): ChunkResult {
     const left = size - cursor.offset;
     let result: ChunkResult | null = null;
@@ -387,7 +498,16 @@ export class TokenMeter {
       if (result.consumed > 0 || left <= length) break;
     }
     if (result && result.consumed === 0 && length >= MAX_LINE_READ) {
-      return { consumed: length, deltas: [], lastMsgId: cursor.lastMsgId, lastOut: cursor.lastOut, skipped: 1 };
+      return {
+        consumed: length,
+        deltas: [],
+        lastMsgId: cursor.lastMsgId,
+        lastOut: cursor.lastOut,
+        skipped: 1,
+        lastContext: cursor.lastContext,
+        compactions: 0,
+        lastModel: null,
+      };
     }
     return result as ChunkResult;
   }
@@ -424,22 +544,45 @@ export class TokenMeter {
   private saveCursor(agent: MeterAgent, cursor: TokenCursor): void {
     this.opts.db
       .query(
-        `INSERT INTO token_cursor (agent_key, session_id, floor, transcript, byte_offset, last_msg_id, last_out, skipped_lines, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO token_cursor (agent_key, session_id, floor, transcript, byte_offset, last_msg_id, last_out, skipped_lines, last_context, compactions, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(agent_key) DO UPDATE SET session_id = excluded.session_id, floor = excluded.floor, transcript = excluded.transcript,
            byte_offset = excluded.byte_offset, last_msg_id = excluded.last_msg_id, last_out = excluded.last_out,
-           skipped_lines = excluded.skipped_lines, updated_at = excluded.updated_at`,
+           skipped_lines = excluded.skipped_lines, last_context = excluded.last_context, compactions = excluded.compactions,
+           updated_at = excluded.updated_at`,
       )
-      .run(agent.key, agent.sessionId, agent.floor, cursor.transcript, cursor.offset, cursor.lastMsgId, cursor.lastOut, cursor.skipped, this.opts.now());
+      .run(
+        agent.key,
+        agent.sessionId,
+        agent.floor,
+        cursor.transcript,
+        cursor.offset,
+        cursor.lastMsgId,
+        cursor.lastOut,
+        cursor.skipped,
+        cursor.lastContext,
+        cursor.compactions,
+        this.opts.now(),
+      );
   }
 
   private cursorOf(agentKey: string): TokenCursor | null {
     if (this.cursors.has(agentKey)) return this.cursors.get(agentKey) ?? null;
     const row = this.opts.db
-      .query<CursorRow, [string]>('SELECT transcript, byte_offset, last_msg_id, last_out, skipped_lines FROM token_cursor WHERE agent_key = ?')
+      .query<CursorRow, [string]>(
+        'SELECT transcript, byte_offset, last_msg_id, last_out, skipped_lines, last_context, compactions FROM token_cursor WHERE agent_key = ?',
+      )
       .get(agentKey);
-    const cursor = row
-      ? { transcript: row.transcript, offset: row.byte_offset, lastMsgId: row.last_msg_id, lastOut: row.last_out, skipped: row.skipped_lines }
+    const cursor: TokenCursor | null = row
+      ? {
+          transcript: row.transcript,
+          offset: row.byte_offset,
+          lastMsgId: row.last_msg_id,
+          lastOut: row.last_out,
+          skipped: row.skipped_lines,
+          lastContext: row.last_context,
+          compactions: row.compactions ?? 0,
+        }
       : null;
     this.cursors.set(agentKey, cursor);
     return cursor;

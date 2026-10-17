@@ -1,6 +1,6 @@
 import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { currentLang, type Lang } from '../i18n';
-import { STATE_COLORS, stateLabel } from '../labels';
+import { contextLevel, STATE_COLORS, stateLabel } from '../labels';
 import type { AgentState } from '../types';
 
 export type LabelIcon = 'ask' | 'talk' | 'lock' | 'stamp' | 'check' | 'cross';
@@ -18,6 +18,8 @@ export type LabelInput = {
   alpha: number;
   lod: LabelLod;
   following: boolean;
+  // How full the context window is, in percent; null when nothing is known.
+  context: number | null;
 };
 
 const CHECK_SVG =
@@ -57,6 +59,8 @@ export class AgentLabel {
   private readonly progress = div('scene-tag-progress');
   private readonly badge = div('scene-tag-badge');
   private readonly chip = div('scene-tag-chip');
+  private readonly ctx = div('scene-tag-ctx');
+  private readonly ctxFill = span('scene-tag-ctx-fill');
   private readonly nameEl = span('scene-tag-name');
   private readonly stateEl = span('scene-tag-state');
   private name = '';
@@ -65,6 +69,7 @@ export class AgentLabel {
   private icon: LabelIcon | null | undefined = undefined;
   private badgeKind: BadgeKind | null | undefined = undefined;
   private progressOn: boolean | undefined = undefined;
+  private ctxShown: number | null | undefined = undefined;
   private flags = '';
   private alpha = -1;
 
@@ -75,7 +80,9 @@ export class AgentLabel {
     this.bubble.hidden = true;
     this.progress.hidden = true;
     this.badge.hidden = true;
-    this.root.append(this.bubble, this.progress, this.badge, this.chip);
+    this.ctx.append(this.ctxFill);
+    this.ctx.hidden = true;
+    this.root.append(this.bubble, this.progress, this.badge, this.chip, this.ctx);
     this.chip.addEventListener('click', (event) => {
       event.stopPropagation();
       onSelect(key);
@@ -111,6 +118,15 @@ export class AgentLabel {
     if (input.progress !== this.progressOn) {
       this.progressOn = input.progress;
       this.progress.hidden = !input.progress;
+    }
+    const context = input.context === null ? null : Math.round(Math.min(100, Math.max(0, input.context)));
+    if (context !== this.ctxShown) {
+      this.ctxShown = context;
+      this.ctx.hidden = context === null;
+      if (context !== null) {
+        this.ctxFill.style.width = `${context}%`;
+        this.ctx.dataset.level = contextLevel(context);
+      }
     }
     if (input.badge !== this.badgeKind) {
       this.badgeKind = input.badge;

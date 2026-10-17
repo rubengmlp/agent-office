@@ -38,6 +38,7 @@ export type FrameInput = {
   away: boolean;
   hold: boolean;
   lastTest: TestResult | null;
+  context: number | null;
 };
 
 type Ride = { leg: LiftLeg; phase: 'approach' | 'waiting' | 'boarding' | 'riding' };
@@ -190,6 +191,7 @@ export class CharacterView {
     this.overlay.setProgress(input.state === 'testing', t);
     this.overlay.setSelected(input.selected);
     this.overlay.setAsking(input.asking, t);
+    this.overlay.setContext(input.context);
     this.overlay.setBadge(this.badgeUntil > t ? this.badge : null);
 
     this.applyDeskGlow(input.state, t);

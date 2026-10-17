@@ -2,7 +2,7 @@ import type { OfficeApi } from '../api';
 import { append, el, setStateColor } from '../dom';
 import { t } from '../i18n';
 import { hubText } from '../i18n/hub';
-import { AWAY_ICON, doingPhrase, isAway, STATE_COLORS, STATE_ICONS, tokensLine } from '../labels';
+import { AWAY_ICON, contextFill, contextLevel, contextLine, contextOf, doingPhrase, isAway, STATE_COLORS, STATE_ICONS, tokensLine } from '../labels';
 import type { Store } from '../store';
 import { clockTime, relativeTime } from '../time';
 import type { ActivityView, AgentView } from '../types';
@@ -55,6 +55,18 @@ function tokensRow(agent: AgentView): HTMLElement | null {
   return row;
 }
 
+// The window of the agent: a bar and the numbers, with the source of the measure as a tooltip.
+function contextRow(agent: AgentView): HTMLElement | null {
+  const context = contextOf(agent);
+  if (!context) return null;
+  const fill = el('span', 'now-ctx-fill');
+  fill.dataset.level = contextLevel(context.usedPct);
+  fill.style.width = `${contextFill(context)}%`;
+  const row = el('div', 'now-ctx', el('span', 'now-ctx-bar', fill), el('span', 'now-ctx-text muted', contextLine(context)));
+  row.title = `${t('context.hint')} ${t(`context.source.${context.source}`)}`;
+  return row;
+}
+
 function stalledLine(store: Store, agent: AgentView, now: number, times: TimeNode[]): HTMLElement | null {
   const since = agent.stalledSince;
   if (since === null) return null;
@@ -96,6 +108,7 @@ export function mountNow(host: HTMLElement, store: Store, api: OfficeApi | null)
     append(section.body, [
       el('div', 'now-head', icon, el('div', 'now-headline', el('p', 'now-title', doing), since)),
       chips(agent, now, times),
+      contextRow(agent),
       tokensRow(agent),
       stalledLine(store, agent, now, times),
       agent.task ? el('p', 'now-task', el('span', 'muted', `${t('now.task')} `), agent.task) : null,

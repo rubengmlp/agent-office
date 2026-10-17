@@ -1,6 +1,7 @@
 import { currentLang, plural, t } from './i18n';
 import { hubText } from './i18n/hub';
 import type {
+  AgentContext,
   AgentState,
   AgentView,
   DocumentKind,
@@ -261,6 +262,28 @@ export function formatTokens(n: number): string {
   if (n < 1000) return String(Math.round(n));
   if (n < 999_950) return shorten(n / 1000, 'k');
   return shorten(n / 1_000_000, 'm');
+}
+
+export type ContextLevel = 'ok' | 'warn' | 'danger';
+
+// ok under 60 %, warn from 60 to 80 %, danger above 80 %.
+export function contextLevel(pct: number): ContextLevel {
+  if (pct > 80) return 'danger';
+  return pct >= 60 ? 'warn' : 'ok';
+}
+
+// The context an agent shows, if any: a finished agent has nothing left to fill.
+export function contextOf(agent: Pick<AgentView, 'context' | 'endedAt'>): AgentContext | null {
+  return agent.endedAt === null ? (agent.context ?? null) : null;
+}
+
+export function contextFill(context: Pick<AgentContext, 'usedPct'>): number {
+  return Math.min(100, Math.max(0, context.usedPct));
+}
+
+export function contextLine(context: AgentContext): string {
+  const line = t('context.line', { pct: Math.round(context.usedPct), used: formatTokens(context.tokens), window: formatTokens(context.window) });
+  return context.compactions > 0 ? `${line} · ${plural('context.compactions', context.compactions)}` : line;
 }
 
 export function tokensTotal(tokens: TokenTotals): number {

@@ -467,7 +467,7 @@ describe('Office', () => {
     await slow();
 
     const expected = { turns: 2, input: 4, cacheRead: 2000, cacheCreate: 200, output: 40 };
-    expect(tokenMessages()).toEqual([{ agentKey: 'ared-1', tokens: expected, plan: { slug: 'login', tokens: expected } }]);
+    expect(tokenMessages()).toMatchObject([{ agentKey: 'ared-1', tokens: expected, plan: { slug: 'login', tokens: expected } }]);
     expect(agent('ared-1')?.tokens).toEqual(expected);
     expect(h.office.documents().find((d) => d.path === PLAN)?.tokens).toEqual(expected);
     expect(h.office.snapshot().documents.find((d) => d.path === PLAN)?.tokens).toEqual(expected);

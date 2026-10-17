@@ -230,7 +230,7 @@ export class Store {
       case 'tokens': {
         const agent = this.agents.get(message.data.agentKey);
         if (!agent) break;
-        this.agents.set(agent.key, { ...agent, tokens: message.data.tokens });
+        this.agents.set(agent.key, { ...agent, tokens: message.data.tokens, context: message.data.context ?? agent.context ?? null });
         this.mark('agents');
         break;
       }
@@ -442,7 +442,7 @@ export class Store {
 }
 
 export function withDefaults(agent: AgentView): AgentView {
-  const partial: Partial<Pick<AgentView, 'file' | 'task' | 'away' | 'tokens' | 'waiting' | 'stalledSince'>> = agent;
+  const partial: Partial<Pick<AgentView, 'file' | 'task' | 'away' | 'tokens' | 'waiting' | 'stalledSince' | 'context'>> = agent;
   return {
     ...agent,
     file: partial.file ?? null,
@@ -451,6 +451,7 @@ export function withDefaults(agent: AgentView): AgentView {
     tokens: partial.tokens ?? null,
     waiting: partial.waiting ?? null,
     stalledSince: partial.stalledSince ?? null,
+    context: partial.context ?? null,
   };
 }
 

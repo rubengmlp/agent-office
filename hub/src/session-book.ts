@@ -218,6 +218,7 @@ export class SessionBook {
       tokens: this.opts.tokens(agent.key),
       waiting: agent.waiting,
       stalledSince: agent.stalledSince,
+      context: agent.context,
     };
   }
 
@@ -363,6 +364,7 @@ export class SessionBook {
         waiting: null,
         taskOpenSince: null,
         stalledSince: null,
+        context: null,
       };
       this.agents.set(agent.key, agent);
     }
@@ -492,6 +494,7 @@ export class SessionBook {
         waiting: null,
         taskOpenSince: row.task_open_since,
         stalledSince: null,
+        context: null,
       });
       const session: SessionRuntime = {
         sessionId: row.session_id,

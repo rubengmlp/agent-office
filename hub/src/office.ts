@@ -415,6 +415,8 @@ export class Office {
 
   ingestUsage(raw: unknown): string {
     this.meter.noteUsage(raw);
+    const context = this.usage.contextOf(raw);
+    if (context) this.meter.noteContext(context);
     return this.usage.ingest(raw);
   }
 
@@ -538,6 +540,7 @@ export class Office {
     this.book.emitAgent(agent, now);
     if (c.message) this.recordMessage(c.message, agent, session, now);
     this.pushActivity({ ts: now, agentKey: agent.key, event: c.event, tool: c.tool, state: nextState, summary: publicSummary(c, kind) });
+    if (c.event === 'SessionStart' && e.source === 'compact') this.noteCompaction(agent, now);
     this.guards.trackDepartment(agent, c.event, ended);
     this.guards.trackChanges(agent, kind, c.event, ended);
     this.asks.settlePermissions(agent.key, c.event, c.tool, e.tool_input);
@@ -945,6 +948,21 @@ export class Office {
       this.guards.finish(agent.key);
     }
     for (const q of this.desk.list()) if (q.sessionId === session.sessionId) this.desk.release(q.id);
+  }
+
+  private noteCompaction(agent: AgentRuntime, now: number): void {
+    const { from, to } = this.meter.compacted(agent);
+    const pct = (value: number | null): string => (value === null ? '?' : `${value} %`);
+    const who = agent.name ?? agent.role ?? agent.key.slice(0, 8);
+    this.pushActivity({
+      ts: now,
+      agentKey: agent.key,
+      event: 'Compacted',
+      tool: null,
+      state: null,
+      summary: { key: 'hub.act.compacted', params: { who, from: pct(from), to: pct(to) } },
+    });
+    this.book.emitAgent(agent, now);
   }
 
   private pushActivity(entry: ActivityView): void {

@@ -1,5 +1,5 @@
 import { EDIT_TOOLS, record, type Matchers } from './state-machine';
-import type { AgentState, DocumentStatus, DocumentView, FloorKind, HookEvent, HookMeta, HubText, LessonView, PlanDecision, Stack, TestResult } from './types';
+import type { AgentContext, AgentState, DocumentStatus, DocumentView, FloorKind, HookEvent, HookMeta, HubText, LessonView, PlanDecision, Stack, TestResult } from './types';
 
 export type AgentRuntime = {
   key: string;
@@ -34,6 +34,7 @@ export type AgentRuntime = {
   waiting: { who: string; what: string; since: number } | null;
   taskOpenSince: number | null;
   stalledSince: number | null;
+  context: AgentContext | null;
 };
 
 export type SessionRuntime = {
