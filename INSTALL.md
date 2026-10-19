@@ -12,7 +12,7 @@ Agent Office es un hub local (Bun + Hono + SQLite) que escucha solo en `127.0.0.
 - **`curl` y `sh`**, que usan los hooks y los scripts del plugin.
 - **La CLI `claude` (Claude Code) en el `PATH` y con la sesión iniciada**: `bun run setup` ejecuta `claude plugin marketplace add` y `claude plugin install`, y las sesiones de la oficina son sesiones de `claude`. Se recomienda 2.1.290 o superior (con versiones anteriores `TaskCreated`, `TaskCompleted` y `TeammateIdle` llegan sin `agent_id`).
 - **tmux**, para **Relanzar** sesiones desde el panel. Sin tmux el hub contesta «sin tmux» (501) al relanzar.
-- **`gh` (GitHub CLI)**, opcional: solo hace falta para abrir pull requests de los encargos con carpeta propia; con `gh auth login` hecho.
+- **`gh` (GitHub CLI)**, opcional y todavía sin uso: el hub tiene preparado el comando para abrir pull requests de los encargos con carpeta propia, pero aún no hay ninguna ruta ni botón que lo invoque; la PR se abre a mano. Cuando se conecte, hará falta `gh auth login`.
 
 ## 1. Clonar e instalar dependencias
 
