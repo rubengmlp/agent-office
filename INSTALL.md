@@ -75,6 +75,8 @@ bun run floor remove <nombre>             # la planta pasa a observada y se borr
 
 `floor add` detecta el stack (flutter, laravel, node o generic), escribe tres agentes (jefe, desarrollador, tester) en `~/.claude/agents/` y regenera los lanzadores. Todas las plantas se ven también sin gestionarlas: cualquier sesión de Claude Code abierta en un repositorio git aparece como planta observada. No se puede añadir como planta la copia en la que corre la oficina (ver `CLAUDE.md`).
 
+Los perfiles `flutter` y `laravel` (`plugin/profiles/*.json`) hacen que los agentes de la planta inviten a una skill de usuario, `senior-flutter` y `laravel-senior-backend` respectivamente, que **no están en este repositorio**. Si no las tienes instaladas en `~/.claude/skills/`, pon `"skill": null` en el perfil que uses y ejecuta `bun run floor add --all`; con `null` los agentes leen el `CLAUDE.md` del repositorio en su lugar. Los perfiles `node` y `generic` no piden ninguna.
+
 ## 5. Arrancar
 
 ```sh
@@ -132,7 +134,7 @@ Después reinicia el hub (Ctrl+C y `bun run office` o `bun run hub`) y abre un p
 
 - **El panel dice «Bloqueado» o «Acceso caducado».** El panel no tiene un token válido: no ha abierto nunca un enlace, el token de 30 días caducó o rotaste la key. Ejecuta `bun run panel` (en Linux, `bun run panel --print` y abre el enlace). El enlace vale una sola vez y 10 minutos: si ya lo abriste, pide otro.
 - **«No hay key de Agent Office. Ejecuta primero: bun run setup».** Aún no has hecho el paso 3, o `AGENT_OFFICE_HOME` apunta a otra carpeta.
-- **El puerto 4747 está ocupado.** Otro hub (o programa) lo usa. Busca el proceso con `lsof -nP -iTCP:4747 -sTCP:LISTEN`, párralo, o cambia `port` en `~/.config/agent-office/config.json` y reinicia el hub; el hub reescribe `port` al arrancar y `bun run panel` lo lee de ahí. Las sesiones de la oficina ya abiertas deben abrirse de nuevo para usar el puerto nuevo.
+- **El puerto 4747 está ocupado.** El hub sale con «Failed to start server. Is port 4747 in use?». Otro hub (o programa) lo usa. Busca el proceso con `lsof -nP -iTCP:4747 -sTCP:LISTEN`, párralo, o cambia `port` en `~/.config/agent-office/config.json` y reinicia el hub; el hub reescribe `port` al arrancar y `bun run panel` lo lee de ahí. Las sesiones de la oficina ya abiertas deben abrirse de nuevo para usar el puerto nuevo.
 - **«La interfaz no está compilada».** Falta `bun run build`.
 - **Los hooks no hacen nada.** Es lo previsto con el hub parado: cada hook sale con código 0 sin escribir nada (también si falta `~/.config/agent-office/headers`), así que tus sesiones de Claude Code no se bloquean. Sin hub no hay panel, ni guardia de permisos, ni puerta de tests, y las sesiones de Redacción y Mantenimiento se niegan a arrancar («El hub de Agent Office no responde»). Arráncalo con `bun run hub`; comprueba `curl http://127.0.0.1:4747/health`. Si el hub arranca pero los hooks siguen mudos, mira `hub.log` y comprueba que el plugin está activo con `claude plugin list`.
 - **Los hooks bloquean una herramienta de una sesión de la oficina.** Es la guardia o la puerta de tests: el motivo sale en la propia sesión y en la actividad del panel. Tus sesiones normales no se bloquean por la guardia de los departamentos.
