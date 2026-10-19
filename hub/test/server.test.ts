@@ -41,8 +41,11 @@ describe('hub server', () => {
     h.config.floors.mobile = floor(repo);
     const publicDir = join(h.root, 'public');
     mkdirSync(publicDir, { recursive: true });
+    mkdirSync(join(publicDir, 'assets'), { recursive: true });
     writeFileSync(join(publicDir, 'index.html'), '<!doctype html><html><head><title>Agent Office</title></head><body></body></html>');
     writeFileSync(join(publicDir, 'app.js'), 'console.log(1)');
+    writeFileSync(join(publicDir, 'assets', 'app-12345678.js'), 'console.log(2)');
+    writeFileSync(join(publicDir, 'assets', 'logo.png'), 'png');
     port = await freePort();
     base = `http://127.0.0.1:${port}`;
     ({ stop } = startServer({ office: h.office, port, key: () => KEY, publicDir }));
@@ -86,6 +89,17 @@ describe('hub server', () => {
       expect(html).not.toContain('__OFFICE_KEY__');
     }
     expect((await fetch(`${base}/app.js`)).status).toBe(200);
+  });
+
+  test('only the Vite assets with a content hash are cached forever', async () => {
+    const hashed = await fetch(`${base}/assets/app-12345678.js`);
+    expect(hashed.status).toBe(200);
+    expect(hashed.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
+    for (const path of ['/app.js', '/assets/logo.png']) {
+      const res = await fetch(`${base}${path}`);
+      expect(res.status, path).toBe(200);
+      expect(res.headers.get('cache-control') ?? '', path).not.toContain('immutable');
+    }
   });
 
   test('a launch link is claimed once for a panel token', async () => {
