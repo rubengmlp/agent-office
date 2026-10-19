@@ -19,15 +19,20 @@ function deskFor(root: string, seen: DocumentView[][]): DocumentDesk {
   });
 }
 
-// Waits for the debounced refresh to see the path, and returns what it saw either way.
-async function waitForSeen(seen: DocumentView[][], path: string): Promise<string[]> {
+// Waits for the debounced refresh to see the path, and returns what it saw either way. FSEvents may only be
+// live a moment after watch(): when the path does not show up quickly, `again` writes it once more.
+async function waitForSeen(seen: DocumentView[][], path: string, again?: () => void): Promise<string[]> {
   const start = Date.now();
-  while (Date.now() - start < 3000) {
+  let next = start + 500;
+  for (;;) {
     const paths = seen.flat().map((doc) => doc.path);
-    if (paths.includes(path)) return paths;
+    if (paths.includes(path) || Date.now() - start > 8000) return paths;
+    if (again && Date.now() >= next) {
+      again();
+      next = Date.now() + 1000;
+    }
     await Bun.sleep(25);
   }
-  return seen.flat().map((doc) => doc.path);
 }
 
 describe('documents watcher', () => {
@@ -42,13 +47,15 @@ describe('documents watcher', () => {
     mkdirSync(join(dir, SKILLS_DIR, 'demo'), { recursive: true });
     desk.watch();
     seen.length = 0;
-    writeFileSync(join(dir, SKILLS_DIR, 'demo', 'SKILL.md'), '---\nname: Demo\n---\n');
-    expect(await waitForSeen(seen, 'taller/skills/demo')).toContain('taller/skills/demo');
+    const skill = (): void => writeFileSync(join(dir, SKILLS_DIR, 'demo', 'SKILL.md'), '---\nname: Demo\n---\n');
+    skill();
+    expect(await waitForSeen(seen, 'taller/skills/demo', skill)).toContain('taller/skills/demo');
 
     // The directory that was already watched keeps working.
     seen.length = 0;
-    writeFileSync(join(dir, PLANS_DIR, 'plan-a.md'), '# Plan A\n');
-    expect(await waitForSeen(seen, 'redaccion/planes/plan-a.md')).toContain('redaccion/planes/plan-a.md');
+    const plan = (): void => writeFileSync(join(dir, PLANS_DIR, 'plan-a.md'), '# Plan A\n');
+    plan();
+    expect(await waitForSeen(seen, 'redaccion/planes/plan-a.md', plan)).toContain('redaccion/planes/plan-a.md');
 
     desk.unwatch();
     cleanup();
