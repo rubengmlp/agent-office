@@ -584,6 +584,7 @@ export function broadcast<C extends Sender>(clients: Iterable<C>, payload: strin
 }
 
 export const CUSTOM_MODELS_INDEX = '/assets/characters/custom/index.json';
+const HASHED_ASSET = /^\/assets\/[^/]+-[A-Za-z0-9_-]{8,}\.[A-Za-z0-9]+$/;
 
 export function customModels(publicDir: string): string[] {
   try {
@@ -616,7 +617,10 @@ function serveStatic(path: string, opts: ServerOptions): Response {
   } catch {
     return new Response('not found', { status: 404 });
   }
-  return new Response(Bun.file(file));
+  const response = new Response(Bun.file(file));
+  // Vite puts a content hash in the name: the file behind a URL never changes, so it can be cached forever.
+  if (HASHED_ASSET.test(decoded)) response.headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+  return response;
 }
 
 function indexResponse(opts: ServerOptions): Response {
