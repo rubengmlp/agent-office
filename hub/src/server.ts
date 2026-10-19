@@ -38,6 +38,11 @@ export const AUTH_TIMEOUT_MS = 1000;
 export const MAX_BODY_BYTES = 8 * 1024 * 1024;
 export const MAX_API_BODY_BYTES = 1024 * 1024;
 export const MAX_WS_PAYLOAD = 16 * 1024;
+const SECURITY_HEADERS: Readonly<Record<string, string>> = {
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Content-Security-Policy': "frame-ancestors 'none'",
+};
 const HOOK_ROUTE = /^\/(events|hook|ask|permission|gate[a-z-]*|guard|usage|chat|encargo)(\/|$)/;
 const PLAN_DECISIONS: readonly PlanDecision[] = ['ejecutar', 'aparcar', 'cerrar'];
 const ORDER_STATUSES: readonly OrderStatus[] = ['pendiente', 'en-curso', 'revision', 'hecho'];
@@ -64,13 +69,24 @@ const MISSING_UI = `<!doctype html><html lang="es"><head><meta charset="utf-8"><
 <body style="font-family:system-ui;padding:2rem"><h1>Agent Office</h1>
 <p>El hub está en marcha, pero la interfaz no está compilada. Ejecuta <code>bun run build</code> en el repositorio y recarga.</p></body></html>`;
 
+function secure(response: Response): Response {
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) response.headers.set(name, value);
+  return response;
+}
+
 export function createApp(opts: ServerOptions, holdRequest: (req: Request) => void): Hono {
   const app = new Hono();
   const { office, port } = opts;
 
   app.use('*', async (c, next) => {
-    if (!hostAllowed(c.req.header('host'), port)) return c.text('forbidden', 403);
+    if (!hostAllowed(c.req.header('host'), port)) return secure(c.text('forbidden', 403));
     await next();
+    return secure(c.res);
+  });
+
+  app.use('/api/*', async (c, next) => {
+    await next();
+    c.res.headers.set('Cache-Control', 'no-store');
   });
 
   // The scripts of the agents and the chat may carry whole files; the rest of the panel's API is small forms.

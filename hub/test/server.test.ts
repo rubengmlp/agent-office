@@ -56,6 +56,25 @@ describe('hub server', () => {
   test('a foreign Host header is refused', async () => {
     const res = await fetch(`${base}/api/state`, { headers: { ...withKey, Host: `evil.test:${port}` } });
     expect(res.status).toBe(403);
+    expect(res.headers.get('x-frame-options')).toBe('DENY');
+  });
+
+  test('responses carry anti-framing and no-sniff headers', async () => {
+    const cases = [
+      ['/', {}],
+      ['/app.js', {}],
+      ['/no-existe.js', {}],
+      ['/health', {}],
+      ['/api/state', withKey],
+    ] as const;
+    for (const [path, headers] of cases) {
+      const res = await fetch(`${base}${path}`, { headers });
+      expect(res.headers.get('x-frame-options'), path).toBe('DENY');
+      expect(res.headers.get('content-security-policy'), path).toBe("frame-ancestors 'none'");
+      expect(res.headers.get('x-content-type-options'), path).toBe('nosniff');
+    }
+    const api = await fetch(`${base}/api/state`, { headers: withKey });
+    expect(api.headers.get('cache-control')).toBe('no-store');
   });
 
   test('requests without the key are refused', async () => {
