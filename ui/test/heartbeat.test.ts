@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Heartbeat } from '../src/heartbeat';
 import type { ClientMessage } from '../src/types';
 
@@ -15,29 +15,31 @@ function fireVisibility(): void {
   for (const fn of [...listeners]) fn();
 }
 
-Object.assign(globalThis, {
-  document: {
-    get visibilityState() {
-      return page.visible ? 'visible' : 'hidden';
-    },
-    addEventListener: (type: string, fn: () => void) => {
-      if (type === 'visibilitychange') listeners.add(fn);
-    },
-    removeEventListener: (type: string, fn: () => void) => {
-      listeners.delete(fn);
-    },
+// The test files share the process: the stubs go in before each test and the globals come back after.
+const stubDocument = {
+  get visibilityState() {
+    return page.visible ? 'visible' : 'hidden';
   },
-  window: {
-    setInterval: (fn: () => void) => {
-      const id = nextTimer++;
-      intervals.set(id, fn);
-      return id;
-    },
-    clearInterval: (id: number) => {
-      intervals.delete(id);
-    },
+  addEventListener: (type: string, fn: () => void) => {
+    if (type === 'visibilitychange') listeners.add(fn);
   },
-});
+  removeEventListener: (type: string, fn: () => void) => {
+    listeners.delete(fn);
+  },
+  documentElement: { lang: 'es' },
+};
+const stubWindow = {
+  setInterval: (fn: () => void) => {
+    const id = nextTimer++;
+    intervals.set(id, fn);
+    return id;
+  },
+  clearInterval: (id: number) => {
+    intervals.delete(id);
+  },
+};
+
+let real: { document?: unknown; window?: unknown };
 
 function recorder() {
   const sent: ClientMessage[] = [];
@@ -49,10 +51,19 @@ function recorder() {
 }
 
 beforeEach(() => {
+  real = {
+    document: (globalThis as { document?: unknown }).document,
+    window: (globalThis as { window?: unknown }).window,
+  };
+  Object.assign(globalThis, { document: stubDocument, window: stubWindow });
   intervals.clear();
   listeners.clear();
   nextTimer = 1;
   page.visible = false;
+});
+
+afterEach(() => {
+  Object.assign(globalThis, real);
 });
 
 describe('Heartbeat', () => {
