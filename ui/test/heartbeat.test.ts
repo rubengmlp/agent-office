@@ -23,7 +23,7 @@ const stubDocument = {
   addEventListener: (type: string, fn: () => void) => {
     if (type === 'visibilitychange') listeners.add(fn);
   },
-  removeEventListener: (type: string, fn: () => void) => {
+  removeEventListener: (_type: string, fn: () => void) => {
     listeners.delete(fn);
   },
   documentElement: { lang: 'es' },
