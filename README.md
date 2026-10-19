@@ -1,5 +1,9 @@
 # Agent Office
 
+## Cómo pasar este repositorio
+
+Este repositorio es autocontenido: para ponerlo en marcha en otra máquina sigue [INSTALL.md](INSTALL.md) (requisitos, `bun install`, `bun run build`, `bun run setup`, desinstalación y problemas frecuentes). La carpeta [`office-docs/`](office-docs/SNAPSHOT.md) es una instantánea de solo lectura del repositorio de documentos del autor (planes, historial y una skill de ejemplo), no el repositorio de documentos en vivo. En el repositorio no hay nada de la configuración, la key ni la base de datos del autor: todo eso vive en `~/.config/agent-office/` y se crea en cada máquina con `bun run setup`.
+
 ## Qué es
 
 Oficina visual para los agentes de Claude Code. Cada repositorio es una planta; en ella se ve quién trabaja, quién pregunta, quién está bloqueado y quién pasa los tests. Un director reparte el trabajo entre los jefes de planta, cada jefe dirige su equipo (desarrollador, tester, revisor) y desde el panel puedes contestar preguntas y dar órdenes.
