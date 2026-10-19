@@ -3410,6 +3410,8 @@ button.order-tab-button.active {
 
 .timeline-search {
   margin-bottom: 8px;
+}
+
 /* Context window of each agent: 2 px under the row of Plantas and a bar in the card Ahora. */
 .floors-row {
   position: relative;
