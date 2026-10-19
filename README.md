@@ -1,5 +1,7 @@
 # Agent Office
 
+[![CI](https://github.com/victorsanblas-qynvo/agent-office/actions/workflows/ci.yml/badge.svg)](https://github.com/victorsanblas-qynvo/agent-office/actions/workflows/ci.yml)
+
 ## Cómo pasar este repositorio
 
 Este repositorio es autocontenido: para ponerlo en marcha en otra máquina sigue [INSTALL.md](INSTALL.md) (requisitos, `bun install`, `bun run build`, `bun run setup`, desinstalación y problemas frecuentes). La carpeta [`office-docs/`](office-docs/SNAPSHOT.md) es una instantánea de solo lectura del repositorio de documentos del autor (planes, historial y una skill de ejemplo), no el repositorio de documentos en vivo. En el repositorio no hay nada de la configuración, la key ni la base de datos del autor: todo eso vive en `~/.config/agent-office/` y se crea en cada máquina con `bun run setup`.

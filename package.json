@@ -2,6 +2,9 @@
   "name": "agent-office",
   "private": true,
   "type": "module",
+  "engines": {
+    "bun": ">=1.4.0"
+  },
   "workspaces": ["hub", "ui"],
   "scripts": {
     "setup": "bun hub/src/setup.ts",
