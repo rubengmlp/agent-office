@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { LiveConnection, type LiveStatus } from '../src/live';
 import type { ClientMessage, ServerMessage } from '../src/types';
 
@@ -61,21 +61,21 @@ function flushTimers(): void {
   for (const timer of pending) timer.fn();
 }
 
-Object.assign(globalThis, {
-  location: { protocol: 'http:', host: 'hub.local:4747' },
-  window: {
-    setTimeout: (fn: () => void, ms: number) => {
-      const id = nextTimer++;
-      delays.push(ms);
-      timers.set(id, { fn, ms });
-      return id;
-    },
-    clearTimeout: (id: number) => {
-      timers.delete(id);
-    },
+// The test files share the process: the stubs go in before each test and the globals come back after.
+const stubLocation = { protocol: 'http:', host: 'hub.local:4747' };
+const stubWindow = {
+  setTimeout: (fn: () => void, ms: number) => {
+    const id = nextTimer++;
+    delays.push(ms);
+    timers.set(id, { fn, ms });
+    return id;
   },
-  WebSocket: FakeSocket,
-});
+  clearTimeout: (id: number) => {
+    timers.delete(id);
+  },
+};
+
+let real: { location?: unknown; window?: unknown; WebSocket?: unknown };
 
 function recorder() {
   const statuses: LiveStatus[] = [];
@@ -95,10 +95,20 @@ const auth: ClientMessage = { type: 'auth', token: 'tok' };
 const snapshot: ServerMessage = { type: 'snapshot', data: {} } as unknown as ServerMessage;
 
 beforeEach(() => {
+  real = {
+    location: (globalThis as { location?: unknown }).location,
+    window: (globalThis as { window?: unknown }).window,
+    WebSocket: (globalThis as { WebSocket?: unknown }).WebSocket,
+  };
+  Object.assign(globalThis, { location: stubLocation, window: stubWindow, WebSocket: FakeSocket });
   FakeSocket.instances = [];
   timers.clear();
   delays.length = 0;
   nextTimer = 1;
+});
+
+afterEach(() => {
+  Object.assign(globalThis, real);
 });
 
 describe('LiveConnection', () => {
@@ -121,12 +131,12 @@ describe('LiveConnection', () => {
   });
 
   test('uses wss behind https', () => {
-    (globalThis as { location: { protocol: string } }).location.protocol = 'https:';
+    stubLocation.protocol = 'https:';
     try {
       new LiveConnection('tok', recorder().handlers).start();
       expect(FakeSocket.instances[0]!.url).toBe('wss://hub.local:4747/live');
     } finally {
-      (globalThis as { location: { protocol: string } }).location.protocol = 'http:';
+      stubLocation.protocol = 'http:';
     }
   });
 
